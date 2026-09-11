@@ -18,6 +18,14 @@ really does lift one. Almost everything you will write can be finished there.
 
 ---
 
+## Get the code
+
+    git clone https://github.com/mys3544/AMEC-roboARM.git
+    cd AMEC-roboARM
+
+Every command below is run from that folder. If your instructor handed you a
+zip instead, unpack it and use that folder -- it is the same tree.
+
 ## Install (for 1 and 2)
 
 You need **Python 3.10 or newer**. The project uses [uv](https://docs.astral.sh/uv/)
