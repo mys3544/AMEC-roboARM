@@ -1,0 +1,1150 @@
+<title>Arm, Eye, Intent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira:wght@500;600;700&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+
+<style>
+  :root {
+    --ground:   #F5F6F7;
+    --surface:  #FFFFFF;
+    --sunken:   #ECEEF1;
+    --ink:      #16191D;
+    --muted:    #5C666F;
+    --faint:    #8A939B;
+    --rule:     #D7DBE0;
+    --accent:   #1B4D8F;
+    --accent-soft: #E7EEF7;
+    --ok:       #1F6B4A;
+    --ok-soft:  #E3F0E9;
+    --warn:     #B4690E;
+    --warn-soft:#F8EEDC;
+    --risk:     #A3302B;
+    --risk-soft:#F8E7E5;
+
+    --display: "Saira", "Helvetica Neue", Arial, sans-serif;
+    --body: "Source Sans 3", -apple-system, "Segoe UI", sans-serif;
+    --mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:  #0F1216;
+      --surface: #171B21;
+      --sunken:  #1E242B;
+      --ink:     #E4E8EC;
+      --muted:   #9AA5B0;
+      --faint:   #6E7883;
+      --rule:    #2C333B;
+      --accent:  #7FB2EC;
+      --accent-soft: #17263A;
+      --ok:      #63BE92;
+      --ok-soft: #14261E;
+      --warn:    #E0A44A;
+      --warn-soft:#2A2113;
+      --risk:    #E58279;
+      --risk-soft:#2E1917;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:  #0F1216;
+    --surface: #171B21;
+    --sunken:  #1E242B;
+    --ink:     #E4E8EC;
+    --muted:   #9AA5B0;
+    --faint:   #6E7883;
+    --rule:    #2C333B;
+    --accent:  #7FB2EC;
+    --accent-soft: #17263A;
+    --ok:      #63BE92;
+    --ok-soft: #14261E;
+    --warn:    #E0A44A;
+    --warn-soft:#2A2113;
+    --risk:    #E58279;
+    --risk-soft:#2E1917;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 24px 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 940px; margin: 0 auto; }
+  .prose { max-width: 68ch; }
+
+  /* ---------- Masthead ---------- */
+  header.masthead {
+    padding: 56px 0 32px;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 40px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 18px;
+  }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(38px, 6vw, 62px);
+    line-height: 1.02;
+    letter-spacing: -0.02em;
+    margin: 0 0 20px;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 20px;
+    color: var(--muted);
+    max-width: 60ch;
+    margin: 0;
+  }
+  .standfirst strong { color: var(--ink); font-weight: 600; }
+
+  /* ---------- Readout strip ---------- */
+  .readout {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin: 36px 0 0;
+  }
+  .readout div { background: var(--surface); padding: 14px 16px; }
+  .readout dt {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin: 0 0 5px;
+  }
+  .readout dd {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 18px;
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+  }
+  .readout dd small { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+  /* ---------- Sections ---------- */
+  section { margin: 0 0 64px; }
+  h2 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 15px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 8px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  h2 + .section-lede {
+    font-size: 19px;
+    color: var(--ink);
+    margin: 20px 0 24px;
+    max-width: 64ch;
+    font-weight: 400;
+  }
+  h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 21px;
+    letter-spacing: -0.01em;
+    margin: 34px 0 10px;
+    text-wrap: balance;
+  }
+  h4 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 16px;
+    margin: 24px 0 6px;
+  }
+  p { margin: 0 0 16px; }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--sunken);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--faint); }
+
+  /* ---------- Chips ---------- */
+  .chip {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    padding: 2px 7px;
+    border-radius: 2px;
+    vertical-align: 1px;
+    white-space: nowrap;
+  }
+  .chip.ok   { background: var(--ok-soft);   color: var(--ok);   }
+  .chip.warn { background: var(--warn-soft); color: var(--warn); }
+  .chip.risk { background: var(--risk-soft); color: var(--risk); }
+  .chip.info { background: var(--accent-soft); color: var(--accent); }
+
+  /* ---------- Tables ---------- */
+  .scroll { overflow-x: auto; margin: 0 0 20px; border: 1px solid var(--rule); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; min-width: 560px; }
+  th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--faint);
+    text-align: left;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--rule);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.name { font-weight: 600; }
+
+  /* ---------- Callouts ---------- */
+  .callout {
+    border-left: 3px solid var(--warn);
+    background: var(--warn-soft);
+    padding: 16px 20px;
+    margin: 0 0 20px;
+  }
+  .callout.risk { border-left-color: var(--risk); background: var(--risk-soft); }
+  .callout.info { border-left-color: var(--accent); background: var(--accent-soft); }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .label {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    font-weight: 600;
+    display: block;
+    margin-bottom: 6px;
+    color: var(--warn);
+  }
+  .callout.risk .label { color: var(--risk); }
+  .callout.info .label { color: var(--accent); }
+
+  /* ---------- Phases ---------- */
+  .phase {
+    display: grid;
+    grid-template-columns: 68px 1fr;
+    gap: 24px;
+    padding: 26px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .phase:first-of-type { border-top: 1px solid var(--rule); }
+  .phase-num {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: 40px;
+    line-height: 0.9;
+    color: var(--rule);
+    font-variant-numeric: tabular-nums;
+  }
+  .phase-day {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-top: 6px;
+    display: block;
+  }
+  .phase h3 { margin: -4px 0 10px; }
+  .phase-body { min-width: 0; }
+  .gate {
+    background: var(--sunken);
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    margin-top: 16px;
+    font-size: 15px;
+  }
+  .gate strong {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+
+  /* ---------- Tier ladder ---------- */
+  .tiers { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); margin-bottom: 20px; }
+  .tier { background: var(--surface); padding: 18px 20px; display: grid; grid-template-columns: 116px 1fr; gap: 20px; }
+  .tier-key { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent); }
+  .tier-key span { display: block; color: var(--faint); font-weight: 400; margin-top: 3px; font-size: 11px; }
+  .tier h4 { margin: 0 0 4px; }
+  .tier p { margin: 0; font-size: 15px; color: var(--muted); }
+
+  /* ---------- Figure ---------- */
+  figure { margin: 24px 0 28px; }
+  figure .scroll { padding: 24px 20px; }
+  figcaption {
+    font-size: 13.5px;
+    color: var(--muted);
+    margin-top: 10px;
+    max-width: 62ch;
+  }
+  svg text { font-family: var(--mono); }
+
+  /* ---------- Tree ---------- */
+  pre.tree {
+    font-family: var(--mono);
+    font-size: 13px;
+    line-height: 1.7;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 20px 22px;
+    overflow-x: auto;
+    margin: 0 0 20px;
+  }
+  pre.tree b { color: var(--accent); font-weight: 600; }
+  pre.tree i { color: var(--faint); font-style: normal; }
+
+  details {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    padding: 14px 18px;
+    margin-bottom: 12px;
+  }
+  summary { cursor: pointer; font-weight: 600; font-family: var(--display); }
+  details[open] summary { margin-bottom: 12px; }
+
+  footer {
+    border-top: 2px solid var(--ink);
+    padding-top: 24px;
+    font-size: 14.5px;
+    color: var(--muted);
+  }
+
+  @media (max-width: 620px) {
+    body { font-size: 16px; padding: 0 18px 64px; }
+    .phase { grid-template-columns: 1fr; gap: 8px; }
+    .phase-num { font-size: 28px; }
+    .phase-day { display: inline; margin-left: 10px; }
+    .tier { grid-template-columns: 1fr; gap: 8px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Rosmaster X3 Plus &middot; 192.168.73.210 &middot; Build plan</p>
+  <h1>Arm, Eye, Intent</h1>
+  <p class="standfirst">
+    A seven-day path to two working demos on the lab's X3 Plus — <strong>name an object and the
+    arm picks it up</strong>, and <strong>show the arm a task once and it repeats it</strong> —
+    built on one small shared core we keep extending afterwards.
+  </p>
+
+  <dl class="readout">
+    <div><dt>Compute</dt><dd>Orin NX <small>16 GB · MAXN_SUPER</small></dd></div>
+    <div><dt>Battery</dt><dd>12.0 V <small>healthy</small></dd></div>
+    <div><dt>Arm servos</dt><dd>6 / 6 <small>all replying</small></dd></div>
+    <div><dt>Cameras</dt><dd>2 / 2 <small>both streaming</small></dd></div>
+    <div><dt>Repeatability</dt><dd>1&deg; <small>over 10 cycles</small></dd></div>
+  </dl>
+</header>
+
+<!-- ============================================================ -->
+<section>
+  <h2>01 &nbsp;What is actually on the robot</h2>
+  <p class="section-lede">
+    I scanned the machine before planning anything. Everything below is verified on the
+    hardware, not read off a datasheet — which matters, because three of these findings
+    change the plan.
+  </p>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Subsystem</th><th>What is there</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="name">Compute</td>
+        <td>Jetson Orin NX 16 GB Super, JetPack 6.2 (L4T R36.4.7), Ubuntu 22.04, CUDA 12.6, 8 cores, 688 GB free. Already in <code>MAXN_SUPER</code>.</td>
+        <td><span class="chip ok">Verified</span></td>
+      </tr>
+      <tr>
+        <td class="name">ROS 2</td>
+        <td>Humble, 359 packages — full Nav2, Cartographer, slam_toolbox, RTAB-Map. A second workspace <code>library_ws</code> adds astra_camera, sllidar, robot_localization, teb_local_planner, web_video_server.</td>
+        <td><span class="chip ok">Verified</span></td>
+      </tr>
+      <tr>
+        <td class="name">Arm</td>
+        <td>6 bus servos on <code>/dev/myserial</code> via <code>Rosmaster_Lib</code> 3.3.9. J1–J4 0–180°, J5 0–270°, gripper 30–180°. <strong>Position readback</strong> (±1–2°) and <strong>torque disable</strong> both work.</td>
+        <td><span class="chip ok">Verified</span></td>
+      </tr>
+      <tr>
+        <td class="name">Eye-to-hand</td>
+        <td>Orbbec RGB-D on the mast, 420 mm above <code>base_link</code>, overlooking the workspace. RGB on <code>/dev/video2</code>, MJPG up to 2048×1536.</td>
+        <td><span class="chip warn">RGB seen, depth untested</span></td>
+      </tr>
+      <tr>
+        <td class="name">Eye-in-hand</td>
+        <td>Mono camera mounted on <code>arm_link4</code>. Captures at 640×480, ~7 fps (uncompressed YUYV over USB 2).</td>
+        <td><span class="chip ok">Live capture OK</span></td>
+      </tr>
+      <tr>
+        <td class="name">Base</td>
+        <td>Mecanum, <code>set_car_motion(vx, vy, ωz)</code>, wheel encoders, IMU. RPLidar 4ROS on <code>/dev/rplidar</code>.</td>
+        <td><span class="chip ok">Present</span></td>
+      </tr>
+      <tr>
+        <td class="name">Vision stack</td>
+        <td>PyTorch 2.5 (CUDA confirmed on Orin), Ultralytics 8.3.65, TensorRT 10.7, ONNX Runtime 1.20, MediaPipe 0.10.18. OpenCV 4.10 built from source <em>with CUDA</em>.</td>
+        <td><span class="chip ok">Verified</span></td>
+      </tr>
+      <tr>
+        <td class="name">ArUco + hand-eye</td>
+        <td>Generated and re-detected a marker end-to-end. <code>cv2.calibrateHandEye</code> and <code>SOLVEPNP_IPPE_SQUARE</code> both present.</td>
+        <td><span class="chip ok">Round-trip tested</span></td>
+      </tr>
+      <tr>
+        <td class="name">Prior work</td>
+        <td><code>~/visionLanguageModels</code> holds CLIP, SigLIP, SmolVLM (quantised ONNX), FastVLM, Moondream from previous teams. Ollama installed, no models pulled.</td>
+        <td><span class="chip info">Available</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2>02 &nbsp;Where we stand</h2>
+  <p class="section-lede">
+    Both software blockers are cleared, the preflight passes end to end from inside a
+    container, and the hardware fault it appeared to find turned out not to exist. Nothing
+    now blocks phase 2.
+  </p>
+
+  <div class="callout info">
+    <span class="label">Resolved — the arm is fine, and the SDK was lying to us</span>
+    <p>
+      The first preflight showed J3 reading <code>-1</code> on every individual query and
+      <code>-57</code> in the batch call, which reads exactly like a dead elbow servo. It was not.
+      Releasing torque and moving the arm by hand brought J3 back immediately, reporting a clean
+      95° sweep, and all six servos now reply.
+    </p>
+    <p>
+      The cause is a trap in the SDK worth knowing about permanently:
+      <code>get_uart_servo_angle()</code> returns <code>-1</code> for <strong>both</strong> a servo
+      that never replied <strong>and</strong> a servo that replied normally while sitting outside
+      its valid range. It clamps with <code>if angle &gt; 180 or angle &lt; 0: angle = -1</code>,
+      and only reaches that line <em>after</em> the servo has answered. The arm had been resting
+      below J3's zero position. A working servo came close to being replaced.
+    </p>
+    <p>
+      <strong>The fix, now in the preflight:</strong> liveness is tested with
+      <code>get_uart_servo_value()</code>, whose returned <code>read_id</code> matching the address
+      proves the servo answered regardless of where it is sitting. The angle is read separately,
+      and "replied but angle is <code>-1</code>" is reported as <em>out of range</em>, not as a
+      fault. Reads are also retried, because each call is its own bus transaction and single
+      reads are occasionally missed — which produced a second false positive on J4 before it was
+      fixed.
+    </p>
+  </div>
+
+  <div class="callout info">
+    <span class="label">Cleared — the factory app no longer owns the hardware</span>
+    <p>
+      Yahboom's <code>rosmaster_main.py</code> was holding both <code>/dev/ttyUSB0</code> and
+      <code>/dev/video2</code>, which is why the arm SDK reported every servo as <code>-1</code> and
+      the battery as <code>0.0 V</code>. Stopped, and the autostart entry renamed to
+      <code>start_app.sh.desktop.disabled-by-roboarm</code>. Restoring the factory web UI is one
+      <code>mv</code> away. With it gone, the battery reads <strong>12.0 V</strong> and the Orbbec
+      RGB camera streams 1280×720 at ~10 fps.
+    </p>
+  </div>
+
+  <div class="callout info">
+    <span class="label">Cleared — the broken login environment no longer matters</span>
+    <p>
+      <code>~/.bashrc</code> is still a stale ROS 1 Melodic leftover that leaves
+      <code>ROS_DISTRO</code> empty and <code>ros2</code> off <code>PATH</code>. We no longer care,
+      and we have not touched it: our code runs inside its own container with its own Python,
+      so whatever other teams have done to the host environment cannot reach us. That is what
+      section 03 is about.
+    </p>
+  </div>
+
+  <div class="callout">
+    <span class="label">Still worth knowing</span>
+    <p>
+      The robot is on <strong>WiFi only</strong> (<code>wlP1p1s0</code>), and the host sets
+      <code>ROS_DOMAIN_ID=6</code> — if another machine in the lab shares that domain, topics will
+      cross. We pick a private domain ID if and when we add ROS nodes.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2>03 &nbsp;Staying out of everyone else's way</h2>
+  <p class="section-lede">
+    Five teams have left state in <code>/home/jetson</code>. The host Python already has a
+    source-built OpenCV shadowing two pip wheels of a different version. We isolate completely —
+    <code>uv</code> for reproducible Python, Compose for everything else.
+  </p>
+
+  <p class="prose">
+    The split is deliberate: <strong>two services, and the one that matters most has no CUDA in
+    it at all.</strong> Days 1–3 need serial, ArUco and geometry — nothing that requires a GPU.
+    Making the demo-safe path depend on a multi-gigabyte CUDA image would put the whole
+    demonstration behind the most fragile part of the stack.
+  </p>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Service</th><th>Base</th><th class="num">Size</th><th>Holds</th><th>When</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="name">core</td>
+        <td><code>python:3.10-slim</code> + uv</td>
+        <td class="num">801 MB</td>
+        <td>Arm, cameras, ArUco, geometry, teleop</td>
+        <td>Always</td>
+      </tr>
+      <tr>
+        <td class="name">vision</td>
+        <td><code>dustynv/l4t-pytorch:r36.4.0</code></td>
+        <td class="num">~10 GB</td>
+        <td>YOLO26 / YOLOE-26 behind an HTTP endpoint</td>
+        <td><code>--profile vision</code>, day 4</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p class="prose">
+    The vision service holds <strong>no camera</strong>. Core grabs the frames and posts them
+    across, which avoids V4L2 contention between containers and means the detector ladder from
+    section 05 degrades on its own: if the vision container is not running, core simply falls
+    back to ArUco.
+  </p>
+
+  <h3>Four mechanics I checked rather than assumed</h3>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Question</th><th>Answer</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="name">How does a container get CUDA on JetPack 6?</td>
+        <td>Not the legacy CSV path — this toolkit (1.18) uses <strong>CDI</strong>. Neither <code>--runtime nvidia</code> nor the <code>NVIDIA_*</code> env vars inject anything; <code>devices: [nvidia.com/gpu=all]</code> does, and puts <code>libcuda.so.1</code> in place. <span class="chip ok">Tested</span></td>
+      </tr>
+      <tr>
+        <td class="name">Can devices be passed by stable name?</td>
+        <td>Yes — Compose resolves <code>/dev/serial/by-id/…</code> and <code>/dev/v4l/by-id/…</code> symlinks and remaps them to fixed names inside the container. USB re-enumeration on the host can no longer shuffle which camera is which. <span class="chip ok">Tested</span></td>
+      </tr>
+      <tr>
+        <td class="name">Is the arm SDK installable?</td>
+        <td>No — <code>Rosmaster_Lib</code> is not on PyPI. It is a single 1331-line pure-Python file in a zipped egg, needing only pyserial. <code>tools/vendor_sdk.sh</code> extracts it from the robot's own install, so the vendored copy always matches this hardware. We wrap it; we do not edit it. <span class="chip ok">Working</span></td>
+      </tr>
+      <tr>
+        <td class="name">Does upgrading Ultralytics break CUDA torch?</td>
+        <td>Not in the core image, which has no torch at all. In the vision image we install with <code>--no-deps</code> into the base image's existing Python, and the build <strong>fails</strong> rather than the demo if <code>torch.cuda.is_available()</code> stops being true. <span class="chip info">Guarded</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout info">
+    <span class="label">What this buys us</span>
+    <p>
+      Nothing we do can break another team's project, and nothing they do can break ours. The
+      full list of what we changed on the host is: installed <code>uv</code> into
+      <code>~/.local/bin</code>, created <code>~/roboarm</code>, stopped the factory app, and renamed
+      one autostart file. No shared config edited, no system package installed, no
+      <code>.bashrc</code> touched.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2>04 &nbsp;The arm, and why we do not need MoveIt</h2>
+  <p class="section-lede">
+    MoveIt is not installed. It also is not needed: a previous team left a URDF with the full
+    arm chain, and the geometry it describes has a closed-form solution.
+  </p>
+
+  <p class="prose">
+    The chain is base yaw, then three pitch joints that all rotate in the same plane, then a
+    wrist roll. That is the textbook <em>planar 3R on a turntable</em> — it inverts analytically
+    in about eighty lines of Python we can read in one sitting, with no solver, no planning
+    scene, and no dependency to keep alive.
+  </p>
+
+  <figure>
+    <div class="scroll">
+      <svg viewBox="0 0 700 300" width="700" height="300" role="img"
+           aria-label="Side view of the arm chain showing joint 1 at the base, then link lengths of 82.9 mm, 82.9 mm and 174.55 mm to the gripper.">
+        <!-- base -->
+        <rect x="40" y="238" width="150" height="26" fill="var(--sunken)" stroke="var(--rule)"/>
+        <text x="115" y="255" font-size="11" fill="var(--muted)" text-anchor="middle">base_link</text>
+
+        <!-- mast + camera -->
+        <line x1="72" y1="238" x2="72" y2="60" stroke="var(--rule)" stroke-width="6"/>
+        <rect x="52" y="42" width="42" height="24" rx="2" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text x="73" y="58" font-size="10" fill="var(--accent)" text-anchor="middle">RGB-D</text>
+        <text x="104" y="52" font-size="10" fill="var(--muted)">eye-to-hand</text>
+        <text x="104" y="65" font-size="10" fill="var(--faint)">+419.6 mm</text>
+
+        <!-- J1 -->
+        <circle cx="190" cy="238" r="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2.5"/>
+        <text x="190" y="277" font-size="11" fill="var(--ink)" text-anchor="middle">J1 yaw</text>
+        <text x="190" y="290" font-size="10" fill="var(--faint)" text-anchor="middle">±90°</text>
+
+        <!-- J1 -> J2 riser -->
+        <line x1="190" y1="238" x2="190" y2="200" stroke="var(--ink)" stroke-width="4"/>
+
+        <!-- J2 -->
+        <circle cx="190" cy="200" r="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2.5"/>
+        <text x="176" y="196" font-size="11" fill="var(--ink)" text-anchor="end">J2</text>
+
+        <!-- J2 -> J3 : 82.9 -->
+        <line x1="190" y1="200" x2="285" y2="140" stroke="var(--ink)" stroke-width="4"/>
+        <text x="222" y="160" font-size="10.5" fill="var(--accent)" transform="rotate(-32 222 160)">82.9 mm</text>
+
+        <!-- J3 -->
+        <circle cx="285" cy="140" r="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2.5"/>
+        <text x="285" y="124" font-size="11" fill="var(--ink)" text-anchor="middle">J3</text>
+
+        <!-- J3 -> J4 : 82.9 -->
+        <line x1="285" y1="140" x2="380" y2="140" stroke="var(--ink)" stroke-width="4"/>
+        <text x="332" y="131" font-size="10.5" fill="var(--accent)" text-anchor="middle">82.9 mm</text>
+
+        <!-- J4 -->
+        <circle cx="380" cy="140" r="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2.5"/>
+        <text x="380" y="124" font-size="11" fill="var(--ink)" text-anchor="middle">J4</text>
+
+        <!-- wrist cam on link4 -->
+        <rect x="366" y="152" width="30" height="17" rx="2" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.3"/>
+        <text x="381" y="164" font-size="8.5" fill="var(--accent)" text-anchor="middle">mono</text>
+        <text x="404" y="166" font-size="10" fill="var(--muted)">eye-in-hand</text>
+
+        <!-- J4 -> J5 : 174.55 -->
+        <line x1="380" y1="140" x2="560" y2="188" stroke="var(--ink)" stroke-width="4"/>
+        <text x="452" y="160" font-size="10.5" fill="var(--accent)" transform="rotate(15 452 160)">174.55 mm</text>
+
+        <!-- J5 + gripper -->
+        <circle cx="560" cy="188" r="7" fill="var(--surface)" stroke="var(--accent)" stroke-width="2.5"/>
+        <text x="560" y="172" font-size="11" fill="var(--ink)" text-anchor="middle">J5 roll</text>
+        <line x1="566" y1="182" x2="600" y2="172" stroke="var(--ink)" stroke-width="3"/>
+        <line x1="566" y1="196" x2="600" y2="206" stroke="var(--ink)" stroke-width="3"/>
+        <text x="614" y="194" font-size="11" fill="var(--muted)">gripper</text>
+
+        <!-- table -->
+        <line x1="40" y1="264" x2="660" y2="264" stroke="var(--rule)" stroke-width="1.5" stroke-dasharray="4 4"/>
+      </svg>
+    </div>
+    <figcaption>
+      The arm chain with the link lengths taken from the URDF. Both cameras are shown in the
+      frames they are actually mounted in — the RGB-D sensor is fixed to the base and watches the
+      workspace, while the mono camera rides on <code>arm_link4</code> and sees what the gripper sees.
+    </figcaption>
+  </figure>
+
+  <div class="callout">
+    <span class="label">The constraint this puts on us</span>
+    <p>
+      Five degrees of freedom means the tool's yaw is tied to the base yaw — the arm cannot reach
+      an arbitrary 6D pose. <strong>Top-down and angled grasps are fine; side grasps at an
+      arbitrary heading are not.</strong> Every demo below is designed around top-down picking,
+      which is also the most reliable kind.
+    </p>
+    <p>
+      Second constraint: ±1–2° of servo readback error at ~250 mm reach is roughly 4–9 mm at the
+      fingertip, and the gripper has no force feedback. We pick objects that are forgiving —
+      graspable in a 25–45 mm window, slightly compliant, not fragile.
+    </p>
+  </div>
+
+  <div class="callout risk">
+    <span class="label">The single biggest unknown</span>
+    <p>
+      That URDF came from a previous team's folder and has never been checked against this
+      physical robot, and nothing anywhere maps <em>servo angle</em> (0–180°, the units the SDK
+      speaks) onto <em>URDF joint angle</em> (radians, signed, with offsets). Getting that mapping
+      wrong is the classic way to lose two days. Phase 2 exists to nail it down and measure the
+      residual error, before anything depends on it.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2>05 &nbsp;Detection: a ladder, not a bet</h2>
+  <p class="section-lede">
+    You flagged object detection as the thing you are least sure of. The fix is not to pick the
+    best detector — it is to make the detector swappable, so the demo can never hard-fail on it.
+  </p>
+
+  <p class="prose">
+    Everything downstream consumes one small structure: a label, a pixel position, and a
+    confidence. Four detectors implement it. We build the ladder bottom-up, and at every point
+    in the week there is a rung that is known to work.
+  </p>
+
+  <div class="tiers">
+    <div class="tier">
+      <div class="tier-key">TIER&nbsp;0<span>Day 3</span></div>
+      <div>
+        <h4>ArUco markers <span class="chip ok">Guaranteed</span></h4>
+        <p>A marker on each object. Deterministic, lighting-insensitive, gives full 6D pose, already verified working on this machine. This is the rung we demo from if anything else misbehaves on the day.</p>
+      </div>
+    </div>
+    <div class="tier">
+      <div class="tier-key">TIER&nbsp;1<span>Day 3</span></div>
+      <div>
+        <h4>Colour + shape</h4>
+        <p>HSV segmentation for objects that are distinct by colour. Thirty lines, no model, no GPU. Useful as a sanity check that the whole pick pipeline works before neural detection enters the picture.</p>
+      </div>
+    </div>
+    <div class="tier">
+      <div class="tier-key">TIER&nbsp;2<span>Day 4</span></div>
+      <div>
+        <h4>YOLO26 <span class="chip info">Primary</span></h4>
+        <p>Released January 2026 and genuinely a better fit for us than YOLO11: it is <strong>NMS-free and end-to-end</strong>, so there is no NMS threshold to tune and latency is predictable — both of which matter more on a demo floor than a point of mAP. <code>yolo26n</code> is 40.9 mAP at 1.7 ms on a T4; the Orin will be comfortably real-time. Fine-tuned on our actual objects it becomes very hard to break.</p>
+      </div>
+    </div>
+    <div class="tier">
+      <div class="tier-key">TIER&nbsp;3<span>Day 5</span></div>
+      <div>
+        <h4>YOLOE-26 open-vocabulary</h4>
+        <p>Text-prompted detection and segmentation with no retraining — this is what makes "say any object name and the arm picks it" real rather than a fixed class list. Strongest story, loosest guarantees, so it sits on top of a stack that already works without it.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout info">
+    <span class="label">One upgrade, handled carefully</span>
+    <p>
+      YOLO26 needs Ultralytics ≥ 8.4; the robot has 8.3.65. I checked the dependency metadata:
+      core Ultralytics only requires <code>torch&gt;=1.8</code>, so the NVIDIA CUDA build of
+      PyTorch 2.5 survives the upgrade — the <code>torch&gt;=2.12</code> pins people worry about
+      apply only to the <code>export</code> extras, which we do not install. We still do it inside
+      a virtualenv with <code>--system-site-packages</code> so the system Python stays exactly as
+      other people on this robot left it.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2>06 &nbsp;One core, two demos</h2>
+  <p class="section-lede">
+    Both demos you picked share the same foundation. Building that foundation once, well, is what
+    makes the second demo cost a day instead of a week — and what makes everything after this
+    week cheap.
+  </p>
+
+<pre class="tree">roboarm/
+├── <b>compose.yaml</b>          <i>two services, devices by stable by-id path</i>  <span style="color:var(--ok)">✓ built</span>
+├── <b>pyproject.toml</b>        <i>core deps · uv.lock committed</i>              <span style="color:var(--ok)">✓ locked</span>
+├── docker/
+│   ├── <b>core.Dockerfile</b>   <i>python:3.10-slim + uv        801 MB</i>        <span style="color:var(--ok)">✓ builds</span>
+│   └── <b>vision.Dockerfile</b> <i>l4t-pytorch + ultralytics</i>                  <i>day 4</i>
+├── roboarm/
+│   ├── <b>config.py</b>         <i>every measured constant, one place</i>          <span style="color:var(--ok)">✓ done</span>
+│   ├── <b>arm.py</b>            <i>safe wrapper: limits, interpolation,</i>          <span style="color:var(--ok)">✓ done</span>
+│   │                     <i>readback verification, hold-on-exit</i>
+│   ├── <b>kinematics.py</b>     <i>FK + closed-form IK          ~120 lines</i>
+│   ├── <b>camera.py</b>         <i>table + wrist capture, one interface</i>
+│   ├── <b>detect.py</b>         <i>the four-rung ladder behind one call</i>
+│   ├── <b>workspace.py</b>      <i>pixels → table coordinates</i>
+│   ├── <b>grasp.py</b>          <i>target → approach → grasp → lift → place</i>
+│   └── <b>teach.py</b>          <i>record and replay demonstrations</i>
+├── apps/
+│   ├── <b>demo_pick.py</b>      <i>Demo A — name it, the arm picks it</i>
+│   ├── <b>demo_teach.py</b>     <i>Demo B — show once, it repeats</i>
+│   └── <b>teleop.py</b>         <i>manual driving + arm jogging</i>
+├── tests/
+│   ├── <b>test_arm_safety.py</b>  <i>17 tests, fake board, no hardware</i>          <span style="color:var(--ok)">✓ 17/17</span>
+│   └── <b>test_kinematics.py</b>  <i>FK/IK round-trip — no hardware needed</i>
+├── vendor/<b>Rosmaster_Lib/</b>  <i>extracted from the robot, never edited</i>     <span style="color:var(--ok)">✓ done</span>
+└── tools/
+    ├── <b>vendor_sdk.sh</b>     <i>pulls the SDK out of the robot's own egg</i>    <span style="color:var(--ok)">✓ done</span>
+    ├── <b>check_hardware.py</b> <i>one command, PASS/FAIL for every subsystem</i>  <span style="color:var(--ok)">✓ 9/9</span>
+    ├── <b>arm_release.py</b>    <i>hand-guide the arm; emits SAFE_LIMITS</i>       <span style="color:var(--ok)">✓ done</span>
+    └── <b>arm_smoke.py</b>      <i>staged motion test + repeatability</i>          <span style="color:var(--ok)">✓ passed</span></pre>
+
+  <p class="prose">
+    Around fifteen files. <code>arm.py</code> is the only thing in the project allowed to talk to
+    the servos, which means every safety rule is written once and cannot be bypassed by a demo
+    script written in a hurry. <code>config.py</code> holds every measured constant, so no limit or
+    link length is ever hard-coded twice.
+  </p>
+
+  <p class="prose">
+    The scaffold above already runs on the robot. One command is the whole preflight:
+  </p>
+
+<pre class="tree">docker compose run --rm core python tools/check_hardware.py
+
+[  ok  ] serial port   /dev/robot_serial
+[  ok  ] firmware      v3.5
+[  ok  ] battery       12.0 V
+[  ok  ] arm readback  J1=91 J2=86 J3=89 J4=87 J5=90 J6=31
+[  ok  ] imu           roll=0.3 pitch=0.0 yaw=16.9
+[  ok  ] wrist camera  640x480 @ ~7 fps
+[  ok  ] table camera  1280x720 @ ~10 fps
+[  ok  ] aruco         generate/detect round-trip</pre>
+
+  <div class="callout">
+    <span class="label">And immediately, a lesson</span>
+    <p>
+      Look at <code>J3=-57</code> — a number that sailed through a check written to catch exactly
+      this. The tool trusted the batch readback, which reports a garbage byte rather than an error
+      for a servo that never answered. <strong>The preflight now cross-checks every joint with an
+      individual read</strong>, because a health check that reports a dead joint as a plausible
+      number is worse than no health check at all.
+    </p>
+  </div>
+
+  <h3>The one design decision worth arguing about</h3>
+  <p class="prose">
+    I want to make <strong>table-plane homography the primary way we locate objects</strong>, and
+    treat depth as an enhancement rather than a dependency.
+  </p>
+  <p class="prose">
+    We are picking objects off a flat table with a camera bolted to the robot. Under those
+    conditions, four ArUco corners define a plane, and a single 3×3 homography maps any image
+    pixel straight to table coordinates — about twenty lines, sub-centimetre, and completely
+    immune to the depth-sensor problems that eat demo days (specular objects, IR interference,
+    dropouts at close range, a driver we have not yet been able to test because the factory app
+    was holding the camera).
+  </p>
+  <p class="prose">
+    Depth then earns its place where it genuinely adds something — object height for stacking,
+    obstacle awareness, bin-picking later — instead of being a single point of failure under the
+    entire demo. If the Orbbec depth stream turns out to work perfectly on day one, we lose
+    nothing by having built this way.
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2>07 &nbsp;The week</h2>
+  <p class="section-lede">
+    Seven working days. Each phase ends in a gate that is measured, not eyeballed — if a gate does
+    not pass, we do not start the next phase, because everything downstream inherits the error.
+  </p>
+
+  <div class="phase">
+    <div><div class="phase-num">01</div><span class="phase-day">Day 1 · mostly done</span></div>
+    <div class="phase-body">
+      <h3>Take control, and make the arm safe to be wrong</h3>
+      <p>
+        <span class="chip ok">Done</span> Factory app stopped and autostart disabled. Isolated
+        <code>core</code> container building in about thirty seconds. SDK vendored.
+        <code>config.py</code> and <code>check_hardware.py</code> written, and the preflight passes
+        8/8 against real hardware — which is how we found the elbow fault on day zero instead of
+        day two.
+      </p>
+      <p>
+        <span class="chip ok">Done</span> <code>arm.py</code> is the only module allowed to command
+        the servos. It refuses to start on a silent board, a flat battery, or any joint outside its
+        range; asserts the SDK's command gate rather than assuming it; interpolates every move so
+        no step exceeds 8&deg;; verifies arrival by readback; and leaves the arm holding, never
+        limp, on exit. Backed by 17 tests that need no hardware.
+      </p>
+      <div class="gate">
+        <strong>Gate &mdash; passed</strong>
+        Preflight 9/9. Ten home/start round trips, every commanded angle confirmed by readback,
+        <strong>worst-case spread 1&deg;</strong> &mdash; about 4&ndash;5 mm at the fingertip, so the
+        10 mm target in phase 2 is reachable.
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div><div class="phase-num">02</div><span class="phase-day">Day 2</span></div>
+    <div class="phase-body">
+      <h3>Kinematics, and proving the URDF is true</h3>
+      <p>
+        Measure the physical arm and check it against the URDF. Pin down the servo-angle to
+        joint-angle mapping empirically: command each joint to known values, read it back,
+        photograph the pose, and fit the sign and offset. Write FK and the closed-form IK, with
+        unit tests that round-trip random poses through IK and FK on a laptop — no hardware, no
+        robot time.
+      </p>
+      <div class="gate">
+        <strong>Gate</strong>
+        IK/FK round-trip error under 1 mm in software. On the robot, commanding ten known
+        Cartesian points puts the fingertip within <strong>10 mm</strong> of each, measured
+        against a printed grid.
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div><div class="phase-num">03</div><span class="phase-day">Day 3</span></div>
+    <div class="phase-body">
+      <h3>Teaching the camera where the table is</h3>
+      <p>
+        Print an ArUco board, fix it to the table, and solve the homography from camera pixels to
+        table coordinates. Cross-check it with hand-eye calibration using a marker on the gripper
+        and <code>cv2.calibrateHandEye</code>. Then close the loop: the robot touches a point you
+        indicate on a live camera image. Build the pick, place and home primitives on top.
+      </p>
+      <div class="gate">
+        <strong>Gate</strong>
+        Click any point on the table in the camera view and the fingertip lands within
+        <strong>10 mm</strong> of it. A cube with an ArUco marker is picked and dropped in a bin
+        <strong>9 times out of 10</strong>. <span class="chip ok">Demo-safe from here on</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div><div class="phase-num">04</div><span class="phase-day">Day 4</span></div>
+    <div class="phase-body">
+      <h3>Demo A — name it, and the arm picks it up</h3>
+      <p>
+        Upgrade Ultralytics inside a venv, pull <code>yolo26n</code>, and drop it behind the
+        detector interface built on day 3 — the pick pipeline does not change, only where the
+        pixel comes from. Fine-tune on a few hundred images of our actual demo objects, which is
+        an afternoon on this Orin and buys a large amount of reliability. Export to TensorRT.
+      </p>
+      <div class="gate">
+        <strong>Gate</strong>
+        Five different objects, ten attempts each, picked and placed at <strong>8/10 or better</strong>
+        per object, with the ArUco path still working as a fallback on the same code.
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div><div class="phase-num">05</div><span class="phase-day">Day 5</span></div>
+    <div class="phase-body">
+      <h3>Demo B — show it once, it repeats</h3>
+      <p>
+        This is where the arm's torque-disable and position readback pay off. Cut torque, guide
+        the arm through a task by hand while recording joint angles at 20 Hz, then replay it
+        through the same safety layer. The important part is the next step: record the trajectory
+        <em>relative to a detected object</em>, so replay follows the object when you move it,
+        instead of blindly repeating fixed angles.
+      </p>
+      <div class="gate">
+        <strong>Gate</strong>
+        A demonstrated pick-and-place replays <strong>5 out of 5</strong> from three object
+        positions the demonstration never visited.
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div><div class="phase-num">06</div><span class="phase-day">Day 6</span></div>
+    <div class="phase-body">
+      <h3>Manual driving, and one screen to run it all</h3>
+      <p>
+        Gamepad or keyboard teleop for the mecanum base so you can reposition the robot between
+        runs, with the arm forced to a safe stowed pose whenever the wheels are live. A single
+        operator view: camera feed with detections drawn, current joint angles, battery, and the
+        active demo mode. Add open-vocabulary YOLOE-26 as a selectable rung now that everything
+        beneath it is solid.
+      </p>
+      <div class="gate">
+        <strong>Gate</strong>
+        Drive the robot to a new table position, re-run the table calibration in under two
+        minutes, and pick successfully from the new position.
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div><div class="phase-num">07</div><span class="phase-day">Day 7</span></div>
+    <div class="phase-body">
+      <h3>Break it on purpose, then rehearse</h3>
+      <p>
+        Deliberate failure injection: cover the camera, move an object mid-grasp, yank the object
+        out of the gripper, pull the serial cable. Each one should produce a clear message and a
+        safe state, never a thrown exception with the arm mid-air. Then run the demo end to end
+        five times in the actual room, with the actual lighting, on battery.
+      </p>
+      <div class="gate">
+        <strong>Gate</strong>
+        Five consecutive clean runs. A written one-page run sheet, including what to say while the
+        arm is moving and which rung to drop to if detection misbehaves in the room.
+      </div>
+    </div>
+  </div>
+
+  <div class="callout">
+    <span class="label">If the week compresses</span>
+    <p>
+      The demo is safe from the end of day 3 — ArUco picking is a complete, honest demonstration
+      of vision-guided manipulation. Days 4–7 raise the ceiling. Protect days 1–3 at all costs;
+      everything after them is negotiable.
+    </p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2>08 &nbsp;Risk register</h2>
+  <p class="section-lede">
+    The things most likely to cost us a day, and what we do about each.
+  </p>
+
+  <div class="scroll">
+  <table>
+    <thead>
+      <tr><th>Risk</th><th class="num">Impact</th><th>Mitigation</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="name">Trusting a single SDK read</td>
+        <td class="num"><span class="chip warn">Medium</span></td>
+        <td><strong>Already bit us twice in one session</strong> — once reporting a healthy servo as dead, once flagging an in-range joint as out of range. Every read is retried, liveness and position are asked as separate questions, and no diagnosis is made from one sample.</td>
+      </tr>
+      <tr>
+        <td class="name">Servo ↔ URDF angle mapping is wrong</td>
+        <td class="num"><span class="chip risk">High</span></td>
+        <td>Phase 2 exists solely to establish it empirically and measure the residual. Nothing downstream starts until the 10 mm gate passes.</td>
+      </tr>
+      <tr>
+        <td class="name">Orbbec depth driver does not come up</td>
+        <td class="num"><span class="chip warn">Medium</span></td>
+        <td>Already designed around: homography is the primary path, depth is an enhancement. Costs us stacking, not the demo.</td>
+      </tr>
+      <tr>
+        <td class="name">Detection unreliable in demo lighting</td>
+        <td class="num"><span class="chip warn">Medium</span></td>
+        <td>The four-rung ladder, plus a rehearsal in the actual room on day 7. Fine-tuning on our own objects is the single biggest win here.</td>
+      </tr>
+      <tr>
+        <td class="name">Gripper drops or crushes objects</td>
+        <td class="num"><span class="chip warn">Medium</span></td>
+        <td>No force feedback exists on this arm. We choose compliant objects in a 25–45 mm grasp window and verify grip by readback — if the gripper closes further than expected, the object is not there.</td>
+      </tr>
+      <tr>
+        <td class="name">Ultralytics upgrade breaks CUDA PyTorch</td>
+        <td class="num"><span class="chip ok">Low</span></td>
+        <td>Dependency metadata already checked — core needs only <code>torch&gt;=1.8</code>. Done in a venv regardless, so the system Python is untouched.</td>
+      </tr>
+      <tr>
+        <td class="name">WiFi drops mid-demo</td>
+        <td class="num"><span class="chip warn">Medium</span></td>
+        <td>Everything runs on the robot. The laptop is a viewer, not a participant — pulling the network mid-demo must not stop the arm.</td>
+      </tr>
+      <tr>
+        <td class="name">Someone else uses the robot mid-week</td>
+        <td class="num"><span class="chip ok">Low</span></td>
+        <td>We change no shared config. Our environment is one file, our code is one folder, and the factory app restore is one command.</td>
+      </tr>
+      <tr>
+        <td class="name">Battery sags under arm load</td>
+        <td class="num"><span class="chip warn">Medium</span></td>
+        <td>Voltage logged in the operator view from day 1, so we learn the real endurance early rather than discovering it during the demo.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section>
+  <h2>09 &nbsp;After the demo</h2>
+  <p class="section-lede">
+    The core built this week is deliberately the substrate these need. Roughly in order of
+    value-for-effort, not difficulty.
+  </p>
+
+  <h3>Weeks 2–4 — learned manipulation</h3>
+  <p class="prose">
+    Day 5 gives us demonstration recording; the natural next step is to stop replaying
+    trajectories and start learning policies from them. LeRobot is the obvious vehicle — an arm
+    with torque-disable and position readback is exactly the hardware its recording pipeline
+    expects, and ACT or a diffusion policy trained on a few dozen demonstrations generalises where
+    a replay cannot. Everything trains and runs on this Orin.
+  </p>
+
+  <h3>Weeks 4–8 — language over the top</h3>
+  <p class="prose">
+    A vision-language model turning "clear the table" into a sequence of the picks we already
+    have. The groundwork is on the machine already — SmolVLM in quantised ONNX and Moondream both
+    sit in <code>~/visionLanguageModels</code>, and there is a USB microphone for spoken commands.
+    The interesting question is not whether the VLM can plan, it is how the plan is verified before
+    a real arm executes it.
+  </p>
+
+  <h3>Weeks 8+ — the whole robot</h3>
+  <p class="prose">
+    Nav2 and the RPLidar are installed and untouched by this plan. Mobile manipulation — drive
+    somewhere, pick something, bring it back — is the demo that uses the entire machine, and it is
+    a great deal easier once picking is a solved, measured primitive rather than the thing being
+    debugged.
+  </p>
+
+  <h3>The honest research direction</h3>
+  <p class="prose">
+    Vision-language-action models are where this field is, and this Orin NX can run the small
+    ones. That is a genuine research project rather than a demo, and it wants the data
+    infrastructure from weeks 2–4 to exist first. Worth planning toward; not worth starting from.
+  </p>
+</section>
+
+<footer>
+  <p>
+    <strong>Next at the robot:</strong> the arm is currently limp — torque is still off from the
+    diagnostic. Re-engage with
+    <code>docker compose run --rm core python tools/arm_release.py --engage</code>, holding the arm
+    while it re-stiffens.
+  </p>
+  <p>
+    <strong>Still open:</strong> which objects should the demo pick (I would like five that are
+    25–45 mm across and slightly compliant); is the robot on a fixed table or does it move between
+    rooms; and is there a wired network option in the demo room, or are we on WiFi.
+  </p>
+  <p>
+    Every hardware claim on this page was verified over SSH on 1 September 2026 and re-confirmed
+    from inside the <code>core</code> container. The one thing still untested is the Orbbec
+    <em>depth</em> stream — its RGB stream works, and the plan deliberately does not depend on
+    depth.
+  </p>
+</footer>
+
+</div>

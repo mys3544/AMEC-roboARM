@@ -1,0 +1,107 @@
+name: roboarm
+
+# Devices are referenced by their stable /dev/*/by-id/ paths and remapped to fixed
+# names inside the container, so USB re-enumeration on the host cannot shuffle them.
+#   1a86 CH340        -> Rosmaster expansion board (arm + base + IMU)
+#   Sonix (no serial) -> wrist camera on arm_link4      (eye-in-hand)
+#   Sonix SN0001      -> Orbbec RGB on the mast         (eye-to-hand)
+x-robot-devices: &robot-devices
+  - /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0:/dev/robot_serial
+  - /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera-video-index0:/dev/video0
+  - /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0:/dev/video1
+
+services:
+  # ---------------------------------------------------------------- core ----
+  # Arm control, ArUco, table-plane geometry, teleop. No CUDA, no torch.
+  # This is the demo-safe path: it must build in a minute and start in a second.
+  core:
+    build:
+      context: .
+      dockerfile: docker/core.Dockerfile
+    image: roboarm-core:dev
+    devices: *robot-devices
+    volumes:
+      - ./roboarm:/app/roboarm:ro
+      - ./tools:/app/tools:ro
+      - ./tests:/app/tests:ro
+      # Source only, so tests/test_vision.py can import the detector's pure logic.
+      # detector.py imports torch and ultralytics lazily inside _load_model, which
+      # is what lets it be imported here at all -- core has no CUDA and no torch.
+      - ./vision_service:/app/vision_service:ro
+      - ./data:/app/data          # calibration, recorded demos, logs
+      - ./out:/out                # annotated frames for a human to look at
+    environment:
+      PYTHONUNBUFFERED: "1"
+      ROBOARM_SERIAL: /dev/robot_serial
+      ROBOARM_WRIST_CAM: "0"
+      ROBOARM_TABLE_CAM: "1"
+      ROBOARM_DETECTOR_URL: http://vision:8760   # ignored unless vision is up
+    user: "1000:1000"             # matches host jetson uid, so ./data stays writable
+    group_add: ["20", "44"]       # dialout, video
+    stdin_open: true
+    tty: true
+    command: sleep infinity
+
+  # ----------------------------------------------------------------- web ----
+  # The browser control panel: live wrist camera, detector views, manual joint /
+  # Cartesian control and the automatic sweep-pick-place. Same image, devices
+  # and volumes as core -- it IS core, with a command and a published port.
+  #   docker compose --profile web up web      ->  http://<robot-ip>:8080/
+  # Holds the serial port and the wrist camera while it runs, so stop it before
+  # running a command-line tool against the same hardware.
+  web:
+    extends:
+      service: core
+    profiles: ["web"]
+    command: python tools/webapp.py --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+
+  # -------------------------------------------------------------- bridge ----
+  # The arm and the cameras over HTTP, for a control panel running SOMEWHERE ELSE
+  # (a laptop on the same WiFi): `python tools/webapp.py --robot http://<robot-ip>:8761`.
+  # Serves MJPEG for each camera, JSON calls onto roboarm.arm, and the table
+  # calibration. No page of its own. Holds the serial port and cameras like web.
+  #   docker compose --profile bridge up -d bridge
+  bridge:
+    extends:
+      service: core
+    profiles: ["bridge"]
+    command: python tools/hwbridge.py --host 0.0.0.0 --port 8761
+    ports:
+      - "8761:8761"
+
+  # -------------------------------------------------------------- vision ----
+  # YOLO26 / YOLOE-26 behind a tiny HTTP endpoint. GPU via CDI.
+  # Started only with `--profile vision` -- days 1-3 never need it, and the core
+  # container falls back down the detector ladder when it is absent.
+  # Holds NO camera: core grabs frames and posts them here, so there is no
+  # V4L2 contention between the two containers.
+  vision:
+    profiles: ["vision"]
+    build:
+      context: .
+      dockerfile: docker/vision.Dockerfile
+    image: roboarm-vision:dev
+    devices:
+      - nvidia.com/gpu=all        # CDI (nvidia-container-toolkit 1.18)
+    volumes:
+      - ./vision_service:/app/vision_service:ro
+      - ./tools:/app/tools:ro     # for tools/export_engine.py (TensorRT build)
+      - ./models:/app/models      # weights + built TensorRT engines
+    environment:
+      PYTHONUNBUFFERED: "1"
+      # The detector. A .pt path under /app/models, or a name Ultralytics can
+      # fetch on first run while the robot has WiFi. A name containing "yoloe"
+      # is loaded open-vocabulary and then honours an X-Vision-Prompt header.
+      # 2026-09-11: the prompt-free YOLOE. Text prompts ("cube", "block", ...) found
+      # NOTHING on the lab's tag-covered cube; the prompt-free model boxes it well
+      # (as a "speed limit sign" -- the label is ignored, the box is what counts,
+      # and detect.cube_range() sizes it). Weights fetched by name on first run.
+      ROBOARM_VISION_MODEL: ${ROBOARM_VISION_MODEL:-/app/models/yoloe-11s-seg-pf.pt}
+      ROBOARM_VISION_IMGSZ: ${ROBOARM_VISION_IMGSZ:-640}
+      ROBOARM_VISION_CONF: ${ROBOARM_VISION_CONF:-0.25}
+      # Default classes for a YOLOE model when a request carries no prompt.
+      ROBOARM_VISION_CLASSES: ${ROBOARM_VISION_CLASSES:-}
+    ports:
+      - "127.0.0.1:8760:8760"     # localhost only, for debugging

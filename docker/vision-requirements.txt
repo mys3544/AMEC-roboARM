@@ -1,0 +1,23 @@
+# Stage 1 of the vision image install (see vision.Dockerfile).
+#
+# Installed with `uv pip install --system --no-deps`. Just the packages that sit
+# next to torch: ultralytics itself (whose deps we do NOT want uv resolving, so it
+# can never swap the l4t-pytorch base's CUDA torch / torchvision / opencv for a
+# PyPI wheel) and its two small helpers.
+#
+# Everything ultralytics actually needs on top of the base -- pyyaml, tqdm, scipy,
+# matplotlib, ... -- plus the whole HTTP layer is in vision-extra-requirements.txt
+# and IS resolved by uv (stage 2). None of that depends on torch, so it is safe.
+#
+# Base image (dustynv/l4t-pytorch:r36.4.0) already provides, verified 2026-09-09:
+#   torch 2.4.0, torchvision 0.19, torchaudio, torch2trt, numpy 1.26.4,
+#   opencv-contrib-python 4.10, pillow 10.4, requests 2.32.3 (+idna/urllib3/
+#   certifi/charset-normalizer), psutil 6.0.
+
+ultralytics==8.4.137        # >=8.4 is what brings YOLO26 / YOLOE-26
+# YOLOE's text encoder, for prompting an open-vocabulary model with class names
+# (models/yoloe-cubes.pt was made this way, 2026-09-11). Ultralytics' own CLIP
+# fork; its setup.py wants torch, so it MUST stay in this --no-deps stage.
+clip @ https://github.com/ultralytics/CLIP/archive/main.zip
+ultralytics-thop==2.1.6
+py-cpuinfo==9.0.0

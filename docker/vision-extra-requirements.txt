@@ -1,0 +1,33 @@
+# Stage 2 of the vision image install (see vision.Dockerfile).
+#
+# Installed WITH uv's dependency resolution, so sub-deps (exceptiongroup,
+# python-dateutil, fonttools, ...) come along. Nothing here pulls torch /
+# torchvision / opencv, and the base's numpy 1.26 + pillow 10.4 satisfy the ones
+# that care, so uv leaves the CUDA stack from stage 1 alone.
+
+# --- ultralytics deps the l4t-pytorch base does not ship ---
+# pyyaml + tqdm are import-time for `import ultralytics`; the rest are on the
+# predict/plotting path or lazy. Generous rather than minimal so a lazy import
+# cannot fail mid-demo instead of at build.
+pyyaml>=6.0
+tqdm>=4.66
+scipy>=1.11
+matplotlib>=3.7
+pandas>=2.0
+polars>=1.0
+
+# For `tools/export_engine.py`: ultralytics' ONNX->TensorRT path simplifies the
+# graph with onnxslim before handing it to the (base-image) tensorrt bindings.
+# onnx itself and the tensorrt python package are already in the l4t base.
+onnxslim>=0.1.48
+
+# What the CLIP fork (stage 1) imports at runtime. All pure Python.
+ftfy>=6.0
+regex>=2023.0
+wcwidth>=0.2
+
+# --- the HTTP layer for vision_service.serve ---
+# Pinned versions, uv-resolved deps. All pure-Python, none torch-adjacent.
+fastapi==0.115.6
+uvicorn==0.34.0
+python-multipart==0.0.20

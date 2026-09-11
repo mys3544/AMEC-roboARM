@@ -1,0 +1,452 @@
+"""Sweep tests. Pure geometry against the REAL calibration -- no hardware.
+
+The homography below is the one actually fitted on the robot on 2026-09-08 (the
+fit that was then validated end to end to 2 mm), copied out of
+data/table_homography.json. Using the real matrix rather than a synthetic one is
+the point: the coverage numbers these tests assert are the coverage numbers the
+robot actually gets, so if a future recalibration moves the camera enough to open
+a hole in the ring, this suite says so instead of passing on a made-up matrix.
+"""
+
+import math
+
+import numpy as np
+import pytest
+
+from roboarm import config as cfg
+from roboarm import detect, sweep
+from roboarm import kinematics as kin
+
+# data/table_homography.json, fitted 2026-09-08, worst residual 0.48 mm over 8 points.
+REAL_H = np.array([
+    [1.5806220846933396e-05, -2.412854587985502e-04, 2.1607999921844648e-01],
+    [-2.2744926875526548e-04, -3.5041628047172227e-07, 9.179117812253038e-02],
+    [5.9373685046794684e-05, -8.77513698668719e-05, 1.0],
+])
+REAL_SURVEY = {1: 90, 2: 56, 3: 23, 4: 10, 5: 89, 6: 30}
+
+# Enumerating the reachable set asks the IK about 20000 points, which is a second
+# or so. Every coverage test wants the same answer, so it is computed once.
+GRASPABLE = sweep.reachable_grasp_points()
+
+
+def _rotate2(point, degrees):
+    """An independent rotation, written out longhand to check `rotate` against."""
+    turn = math.radians(degrees)
+    x, y = point
+    return (x * math.cos(turn) - y * math.sin(turn),
+            x * math.sin(turn) + y * math.cos(turn))
+
+
+# --------------------------------------------------------------- rotate ----
+def test_rotate_by_nothing_changes_nothing():
+    assert sweep.rotate(REAL_H, 0.0) == pytest.approx(REAL_H)
+
+
+def test_rotate_turns_the_mapped_point_about_the_base():
+    """The rotated homography must agree with rotating its answer by hand."""
+    from roboarm import workspace as ws
+    for pixel in [(10, 10), (320, 240), (630, 470), (100, 400)]:
+        plain = ws.apply(REAL_H, [pixel])[0]
+        for dyaw in (-75, -25, 0, 25, 75):
+            spun = ws.apply(sweep.rotate(REAL_H, dyaw), [pixel])[0]
+            assert spun == pytest.approx(_rotate2(plain, dyaw), abs=1e-12)
+
+
+def test_rotate_preserves_distance_from_the_base():
+    """A yaw cannot change how far away something is -- only its bearing."""
+    from roboarm import workspace as ws
+    pixel = [(320, 240)]
+    reference = np.linalg.norm(ws.apply(REAL_H, pixel)[0])
+    for dyaw in range(-80, 81, 10):
+        moved = np.linalg.norm(ws.apply(sweep.rotate(REAL_H, dyaw), pixel)[0])
+        assert moved == pytest.approx(reference, abs=1e-12)
+
+
+def test_rotations_compose():
+    assert sweep.rotate(sweep.rotate(REAL_H, 20), 15) == pytest.approx(
+        sweep.rotate(REAL_H, 35))
+
+
+# --------------------------------------------------------------- pose_at ----
+def test_pose_at_agrees_with_the_kinematics_own_yaw():
+    """THE sign test.
+
+    `rotate` turns the map one way and `pose_at` turns the arm the other; if the
+    two conventions disagree the whole module is a mirror image of itself and every
+    pick off-centre goes to the wrong side of the table. kinematics.camera_nadir()
+    is an independent witness -- it derives the lens position from the joint angles
+    without going anywhere near a homography -- so the two must land together.
+    """
+    reference = kin.camera_nadir(REAL_SURVEY)
+    for dyaw in (-80, -55, -25, -5, 5, 25, 55, 80):
+        moved = kin.camera_nadir(sweep.pose_at(REAL_SURVEY, dyaw))
+        assert moved == pytest.approx(_rotate2(reference, dyaw), abs=1e-9)
+
+
+def test_pose_at_moves_only_the_base():
+    pose = sweep.pose_at(REAL_SURVEY, 40)
+    assert pose[1] == 50, "yawing 40 degrees LEFT takes J1 down by 40"
+    for joint in (2, 3, 4, 5, 6):
+        assert pose[joint] == REAL_SURVEY[joint], f"J{joint} must not move"
+
+
+def test_pose_at_refuses_to_leave_the_safe_range():
+    low, high = cfg.SAFE_LIMITS[1]
+    with pytest.raises(sweep.NoLook):
+        sweep.pose_at(REAL_SURVEY, REAL_SURVEY[1] - low + 1)
+    with pytest.raises(sweep.NoLook):
+        sweep.pose_at(REAL_SURVEY, REAL_SURVEY[1] - high - 1)
+
+
+def test_positive_yaw_goes_left():
+    """Sanity in the direction a human would check it: +y is left."""
+    _x, y = kin.camera_nadir(sweep.pose_at(REAL_SURVEY, 60))
+    _x0, y0 = kin.camera_nadir(REAL_SURVEY)
+    assert y > y0
+
+
+# ------------------------------------------------------------------ ring ----
+def test_ring_stations_are_all_legal_and_share_every_other_joint():
+    looks = sweep.ring(REAL_SURVEY, REAL_H)
+    assert len(looks) >= 5
+    low, high = cfg.SAFE_LIMITS[1]
+    for look in looks:
+        assert low <= look.pose[1] <= high
+        for joint in (2, 3, 4, 5, 6):
+            assert look.pose[joint] == REAL_SURVEY[joint]
+
+
+def test_ring_includes_the_calibrated_look_itself():
+    """The one look whose accuracy was actually measured must be in the set."""
+    looks = sweep.ring(REAL_SURVEY, REAL_H)
+    assert any(look.dyaw == 0 for look in looks)
+    home = next(look for look in looks if look.dyaw == 0)
+    assert home.pose == REAL_SURVEY
+    assert home.matrix == pytest.approx(REAL_H)
+
+
+def test_every_ring_station_clears_the_mast():
+    """Inherited from the calibrated pose, but assert it rather than assume it."""
+    for look in sweep.ring(REAL_SURVEY, REAL_H):
+        assert cfg.mast_clearance(look.pose) >= cfg.MIN_MAST_CLEARANCE_M
+
+
+def test_the_fingers_sweep_well_above_the_table():
+    """The base may turn through the ring without raking objects off the table."""
+    for look in sweep.ring(REAL_SURVEY, REAL_H):
+        _x, _y, z = kin.forward(look.pose)
+        above_table = z + cfg.TABLE_BELOW_PLATE
+        assert above_table > 0.075, "must clear a 40 mm cube with room to spare"
+
+
+def test_ring_rejects_a_nonsense_step():
+    for step in (0, -5):
+        with pytest.raises(ValueError):
+            sweep.ring(REAL_SURVEY, REAL_H, step_deg=step)
+
+
+# -------------------------------------------------------------- coverage ----
+def test_one_look_alone_covers_only_a_corner_of_the_workspace():
+    """The problem this module exists to solve, pinned as a number."""
+    only = [sweep.Look(0.0, REAL_SURVEY, REAL_H)]
+    fraction, _missed = sweep.coverage(only, GRASPABLE)
+    assert 0.11 < fraction < 0.17, f"one pose can measure {fraction:.1%}"
+
+
+def test_the_ring_multiplies_what_one_look_can_measure():
+    one, _ = sweep.coverage([sweep.Look(0.0, REAL_SURVEY, REAL_H)], GRASPABLE)
+    many, _ = sweep.coverage(sweep.ring(REAL_SURVEY, REAL_H), GRASPABLE)
+    assert many > 4 * one, f"{one:.1%} -> {many:.1%} is not worth the sweep"
+    assert many > 0.65
+
+
+def test_the_ring_fixes_bearing_and_leaves_radius_alone():
+    """The honest shape of what a yaw ring can and cannot do.
+
+    Turning the base sweeps the camera round in BEARING, so every heading the arm
+    can reach gets looked at. It cannot change how FAR the camera looks, because a
+    yaw maps the table to itself and a tilt does not. So the blind spot must be an
+    outer RIM -- never a missing wedge, which would mean the ring had a hole in it.
+    """
+    looks = sweep.ring(REAL_SURVEY, REAL_H)
+    _fraction, missed = sweep.coverage(looks, GRASPABLE)
+    assert len(missed), "if this ever covers everything, tighten the claim"
+    radii = np.hypot(missed[:, 0], missed[:, 1])
+    assert radii.min() > 0.180, "the blind spot must be the outer rim, not a wedge"
+
+    # And inside the band it does cover, EVERY bearing must work -- that is the
+    # whole point of the ring, and the thing the old single look could not do.
+    for bearing in range(-78, 79, 6):
+        for radius in (0.135, 0.155, 0.175):
+            x = radius * math.cos(math.radians(bearing))
+            y = radius * math.sin(math.radians(bearing))
+            assert any(sweep.sees(look, x, y) for look in looks), (
+                f"nothing looks at {radius * 1000:.0f} mm, {bearing} deg")
+
+
+def test_a_finer_ring_only_ever_helps():
+    coarse, _ = sweep.coverage(sweep.ring(REAL_SURVEY, REAL_H, 25), GRASPABLE)
+    fine, _ = sweep.coverage(sweep.ring(REAL_SURVEY, REAL_H, 15), GRASPABLE)
+    assert fine >= coarse
+
+
+# ------------------------------------------------ standing above the table ----
+def test_magnification_matches_the_cube_measured_on_the_robot():
+    """212 mm lens, 40 mm cube -> 1.23. The real tag measured 1.22 on 2026-09-10."""
+    grown = sweep.magnification(REAL_SURVEY, sweep.OBJECT_HEIGHT_M)
+    assert grown == pytest.approx(1.23, abs=0.02)
+
+
+def test_nothing_on_the_table_is_magnified():
+    assert sweep.magnification(REAL_SURVEY, 0.0) == 1.0
+
+
+def test_an_object_taller_than_the_lens_is_refused():
+    with pytest.raises(ValueError):
+        sweep.magnification(REAL_SURVEY, 0.5)
+
+
+def test_height_pushes_an_object_away_from_the_nadir():
+    """The direction matters: parallax throws things OUTWARD from under the lens."""
+    look = sweep.Look(0.0, REAL_SURVEY, REAL_H)
+    nadir = np.array(look.nadir)
+    point = np.array([0.200, 0.060])
+    shown = np.array(sweep.apparent(look, *point, sweep.OBJECT_HEIGHT_M))
+    assert np.linalg.norm(shown - nadir) > np.linalg.norm(point - nadir)
+    # and straight out along the same line, not off at an angle
+    along, out = point - nadir, shown - nadir
+    assert along[0] * out[1] - along[1] * out[0] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_a_point_at_the_nadir_does_not_move():
+    look = sweep.Look(0.0, REAL_SURVEY, REAL_H)
+    shown = sweep.apparent(look, *look.nadir, sweep.OBJECT_HEIGHT_M)
+    assert shown == pytest.approx(look.nadir, abs=1e-12)
+
+
+def test_apparent_is_the_inverse_of_the_detector_unlift():
+    """sweep predicts where a raised object appears; detect._unlift undoes it.
+
+    They are the same relation read in opposite directions, so a round trip has to
+    come back to where it started -- if these two ever drift apart, every tagged
+    pick acquires a silent offset.
+    """
+    look = sweep.Look(0.0, REAL_SURVEY, REAL_H)
+    nadir = np.array(look.nadir)
+    truth = np.array([0.175, 0.030])
+    grown = sweep.magnification(REAL_SURVEY, sweep.OBJECT_HEIGHT_M)
+    shown = np.array(sweep.apparent(look, *truth, sweep.OBJECT_HEIGHT_M))
+    # _unlift measures the magnification from the tag's apparent size; feed it a
+    # quad of exactly that size so the two describe the same situation.
+    quad = shown + np.array([[-1, -1], [1, -1], [1, 1], [-1, 1]]) * (
+        0.5 * sweep.TAG_SPAN_M * grown)
+    back = detect._unlift(quad, nadir, sweep.TAG_SPAN_M)
+    assert back.mean(axis=0) == pytest.approx(truth, abs=1e-9)
+
+
+def test_pixels_per_metre_is_about_four_and_a_half_per_mm():
+    for x, y in [(0.130, 0.0), (0.164, 0.019), (0.200, 0.050)]:
+        scale = sweep.pixels_per_metre(REAL_H, x, y)
+        assert 3500 < scale < 5500, f"{scale:.0f} px/m at {x}, {y}"
+
+
+# ------------------------------------------------------------------ sees ----
+def test_sees_reproduces_what_the_robot_actually_did():
+    """The cube sat at (165, +5) mm on 2026-09-10.
+
+    Driving the ring, the tag decoded ONLY from the calibrated station: at -25 deg
+    the cube was clipped by the left edge of the frame, exactly as the photograph
+    in docs shows. If this model ever stops agreeing with that run, it has stopped
+    describing this camera.
+    """
+    x, y = 0.165, 0.005
+    decoded = {look.dyaw: sweep.sees(look, x, y, sweep.TAG_SPAN_M)
+               for look in sweep.ring(REAL_SURVEY, REAL_H)}
+    assert decoded[0.0] is True
+    assert not any(seen for dyaw, seen in decoded.items() if dyaw != 0.0)
+
+
+def test_a_bigger_object_is_harder_to_see_than_a_smaller_one():
+    """Never the other way round -- more of it has to fit in the same frame."""
+    looks = sweep.ring(REAL_SURVEY, REAL_H)
+    for look in looks:
+        for radius in (0.140, 0.170, 0.195):
+            for bearing in (-40, 0, 40):
+                x = radius * math.cos(math.radians(bearing))
+                y = radius * math.sin(math.radians(bearing))
+                if sweep.sees(look, x, y, sweep.OBJECT_SPAN_M):
+                    assert sweep.sees(look, x, y, sweep.TAG_SPAN_M)
+
+
+def test_sees_is_stricter_than_in_frame():
+    """in_frame asks about a point; sees asks about an object. Never the reverse."""
+    look = sweep.Look(0.0, REAL_SURVEY, REAL_H)
+    for radius in (0.130, 0.150, 0.170, 0.190, 0.205):
+        for bearing in (-30, -10, 10, 30):
+            x = radius * math.cos(math.radians(bearing))
+            y = radius * math.sin(math.radians(bearing))
+            if sweep.sees(look, x, y):
+                assert sweep.in_frame(look.matrix, x, y)
+
+
+# -------------------------------------------------------------- stations ----
+def test_stations_rings_every_calibrated_look():
+    calibrated = [(REAL_H, REAL_SURVEY, "primary"),
+                  (REAL_H, {**REAL_SURVEY, 2: 50}, "outer")]
+    one = sweep.ring(REAL_SURVEY, REAL_H)
+    both = sweep.stations(calibrated)
+    assert len(both) == 2 * len(one)
+
+
+def test_stations_of_one_look_is_just_its_ring():
+    only = sweep.stations([(REAL_H, REAL_SURVEY, "primary")])
+    assert [look.dyaw for look in only] == [
+        look.dyaw for look in sweep.ring(REAL_SURVEY, REAL_H)]
+
+
+def test_best_refine_prefers_the_primary_calibration():
+    """The primary is the only look validated end to end; it gets first refusal."""
+    calibrated = [(REAL_H, REAL_SURVEY, "primary"),
+                  (REAL_H, REAL_SURVEY, "outer")]
+    look = sweep.best_refine(calibrated, 0.170, 0.020)
+    assert look.pose[1] == sweep.refine_look(REAL_SURVEY, REAL_H, 0.170, 0.020).pose[1]
+
+
+def test_best_refine_reports_every_reason_when_none_will_do():
+    calibrated = [(REAL_H, REAL_SURVEY, "primary")]
+    with pytest.raises(sweep.NoLook, match="primary"):
+        sweep.best_refine(calibrated, 0.320, 0.0)
+
+
+# ------------------------------------------------------------ refine look ----
+def test_refine_puts_the_object_in_the_middle_of_the_picture():
+    """Whatever bearing an object sits at, the refine look must centre it.
+
+    Radii are the measured working band, 129..189 mm: past that the cube is thrown
+    off the edge by its own parallax however the base is turned, which
+    test_refine_refuses_what_it_cannot_centre pins from the other side.
+    """
+    width, height = cfg.WRIST_CAM_SIZE
+    middle = np.array([width / 2, height / 2])
+    for bearing in range(-70, 71, 10):
+        for radius in (0.135, 0.160, 0.185):
+            x = radius * math.cos(math.radians(bearing))
+            y = radius * math.sin(math.radians(bearing))
+            look = sweep.refine_look(REAL_SURVEY, REAL_H, x, y)
+            pixel = sweep.to_pixel(look.matrix, x, y)
+            assert sweep.sees(look, x, y)
+            # Only the BEARING can be steered, so the object lands on the centre
+            # line at its own radius -- across the frame it must be dead centre,
+            # along it wherever the distance puts it.
+            assert abs(pixel[0] - middle[0]) < 40, (
+                f"{radius * 1000:.0f} mm at {bearing} deg landed at x={pixel[0]:.0f}")
+
+
+def test_refine_only_turns_the_base():
+    look = sweep.refine_look(REAL_SURVEY, REAL_H, 0.06, -0.16)
+    for joint in (2, 3, 4, 5, 6):
+        assert look.pose[joint] == REAL_SURVEY[joint]
+
+
+def test_refine_reports_the_yaw_it_actually_commanded():
+    """J1 is whole degrees, so the matrix must describe the pose as ROUNDED."""
+    for bearing in range(-70, 71, 7):
+        x = 0.165 * math.cos(math.radians(bearing))
+        y = 0.165 * math.sin(math.radians(bearing))
+        look = sweep.refine_look(REAL_SURVEY, REAL_H, x, y)
+        assert look.dyaw == float(REAL_SURVEY[1] - look.pose[1])
+        assert look.matrix == pytest.approx(sweep.rotate(REAL_H, look.dyaw))
+
+
+def test_refine_refuses_what_it_cannot_centre():
+    """Beyond the middle of the frame it must raise, not quietly do worse."""
+    with pytest.raises(sweep.NoLook):
+        sweep.refine_look(REAL_SURVEY, REAL_H, 0.320, 0.0)
+
+
+def test_yaw_to_centre_is_the_inverse_of_the_look_bearing():
+    for bearing in (-60.0, -12.5, 0.0, 33.0, 75.0):
+        radius = 0.17
+        x = radius * math.cos(math.radians(bearing))
+        y = radius * math.sin(math.radians(bearing))
+        dyaw = sweep.yaw_to_centre(REAL_H, x, y)
+        assert dyaw + sweep.look_bearing(REAL_H) == pytest.approx(bearing)
+
+
+def test_the_look_bearing_is_not_the_nadir():
+    """Pinned because conflating the two is exactly the 20 mm bug detect.py hit."""
+    centre = sweep.look_bearing(REAL_H)
+    nadir = kin.camera_nadir(REAL_SURVEY)
+    assert centre == pytest.approx(6.6, abs=1.0)
+    assert math.degrees(math.atan2(nadir[1], nadir[0])) == pytest.approx(-20.0, abs=1.0)
+
+
+# -------------------------------------------------------------- in_frame ----
+def test_in_frame_rejects_what_falls_outside_the_picture():
+    assert sweep.in_frame(REAL_H, 0.164, 0.019), "the middle of the frame"
+    assert not sweep.in_frame(REAL_H, 0.164, -0.300), "well off to the right"
+    assert not sweep.in_frame(REAL_H, 0.400, 0.0), "far past the far edge"
+
+
+def test_a_bigger_margin_never_admits_more():
+    points = [(0.12, 0.08), (0.20, -0.04), (0.16, 0.02), (0.11, -0.05)]
+    for x, y in points:
+        if sweep.in_frame(REAL_H, x, y, margin_px=60):
+            assert sweep.in_frame(REAL_H, x, y, margin_px=10)
+
+
+# ----------------------------------------------------------------- merge ----
+def _target(x, y, label="cube"):
+    return detect.Target(x=x, y=y, width_m=0.040, length_m=0.040, angle_deg=0.0,
+                         label=label)
+
+
+def test_merge_collapses_one_object_seen_from_two_stations():
+    looks = sweep.ring(REAL_SURVEY, REAL_H)
+    left = next(look for look in looks if look.dyaw == 25)
+    home = next(look for look in looks if look.dyaw == 0)
+    merged = sweep.merge([(home, _target(0.170, 0.030)),
+                          (left, _target(0.171, 0.031))])
+    assert len(merged) == 1
+
+
+def test_merge_keeps_genuinely_separate_objects():
+    home = sweep.Look(0.0, REAL_SURVEY, REAL_H)
+    merged = sweep.merge([(home, _target(0.150, 0.000)),
+                          (home, _target(0.150, 0.060))])
+    assert len(merged) == 2
+
+
+def test_merge_prefers_the_view_that_saw_it_nearest_the_middle():
+    """The tie-break that makes overlapping stations an advantage, not a wobble."""
+    looks = sweep.ring(REAL_SURVEY, REAL_H)
+    home = next(look for look in looks if look.dyaw == 0)
+    far = next(look for look in looks if look.dyaw == 50)
+    centred = _target(0.164, 0.019, label="good")     # the middle of home's frame
+    edge = _target(0.166, 0.021, label="edgy")
+    for order in ([(home, centred), (far, edge)], [(far, edge), (home, centred)]):
+        merged = sweep.merge(order)
+        assert len(merged) == 1
+        assert merged[0].label == "good"
+
+
+def test_merge_of_nothing_is_nothing():
+    assert sweep.merge([]) == []
+
+
+def test_merge_returns_nearest_first():
+    home = sweep.Look(0.0, REAL_SURVEY, REAL_H)
+    merged = sweep.merge([(home, _target(0.200, 0.0)), (home, _target(0.140, 0.0))])
+    assert [round(t.x, 3) for t in merged] == [0.140, 0.200]
+
+
+# ------------------------------------------------- the reachable envelope ----
+def test_the_graspable_envelope_is_an_annulus_we_can_state():
+    """Numbers quoted in the module docstring and in pick.py's help."""
+    radii = np.hypot(GRASPABLE[:, 0], GRASPABLE[:, 1])
+    bearings = np.degrees(np.arctan2(GRASPABLE[:, 1], GRASPABLE[:, 0]))
+    assert radii.min() == pytest.approx(0.131, abs=0.006)
+    assert radii.max() == pytest.approx(0.210, abs=0.006)
+    assert bearings.min() == pytest.approx(-80, abs=2)
+    assert bearings.max() == pytest.approx(80, abs=2)

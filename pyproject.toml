@@ -1,0 +1,27 @@
+[project]
+name = "roboarm"
+version = "0.1.0"
+description = "Vision-guided manipulation demos for the Rosmaster X3 Plus"
+requires-python = ">=3.10"
+
+# Core deps only: arm control, ArUco, table-plane geometry.
+# Deliberately NO torch/CUDA here -- the demo-safe path must stay small and fast.
+dependencies = [
+    "numpy>=1.26",
+    "opencv-contrib-python-headless>=4.10,<5",  # contrib = ArUco. Headless = no GUI libs.
+    "pyserial>=3.5",                            # required by the vendored Rosmaster SDK
+    "scipy>=1.11",                              # Rotation utils for hand-eye calibration
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+# __enter__ returning the concrete class is fine here; typing.Self needs 3.11.
+ignore = ["PYI034"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

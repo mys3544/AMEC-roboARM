@@ -1,0 +1,5 @@
+# This tree is CRLF everywhere, on Windows, on the Jetson and in the
+# containers. tools/sync_robot.py compares to the robot by sha256, so a
+# line-ending conversion would make every file look modified. Store bytes
+# exactly as they are and convert nothing.
+* -text

@@ -1,0 +1,28 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webapp-sim",
+      "runtimeExecutable": ".venv/Scripts/python",
+      "runtimeArgs": [
+        "tools/webapp.py",
+        "--sim",
+        "--port",
+        "8090"
+      ],
+      "port": 8090
+    },
+    {
+      "name": "webapp-robot",
+      "runtimeExecutable": ".venv/Scripts/python",
+      "runtimeArgs": [
+        "tools/webapp.py",
+        "--robot",
+        "http://192.168.73.210:8761",
+        "--port",
+        "8091"
+      ],
+      "port": 8091
+    }
+  ]
+}
