@@ -32,12 +32,13 @@ placement is off, and only the arm can tell us that.
 """
 
 import argparse
+import math
 import sys
 import time
 
 import numpy as np
 
-from roboarm import camera
+from roboarm import camera, sweep
 from roboarm import config as cfg
 from roboarm import kinematics as kin
 from roboarm import workspace as ws
@@ -60,8 +61,14 @@ SURVEY_LIFT = 0.090
 # -- enough to cover the 188..210 mm rim the primary cannot reach, with overlap.
 # Pushing harder (195/50) buys 5 mm more but drops the fingers to 77 mm and the lens
 # to 173 mm, which shrinks the footprint; not worth it.
+# 2026-09-14: raised and tilted out. The 190/65 pose (lens 179 mm up, 10 deg off
+# vertical, fitted) lost a 40 mm cube's top out of the frame past ~198 mm -- a low
+# lens lifts the top more and sees less table per degree. Searched again with the
+# J2 floor at 5 and tilt allowed to 20 deg: 190 fwd / 125 up -> lens ~241 mm up,
+# nadir ~155, near edge ~185 (overlaps the primary band), and a 40 mm cube stays
+# whole to ~260 mm by the model, past the arm's reach. Fit it with --yaws.
 OUTER_FWD = 0.190
-OUTER_LIFT = 0.065
+OUTER_LIFT = 0.125
 
 # What the outer look is called in the calibration file. sweep.stations() rings
 # every look it finds, so the name is only for humans and for re-fitting in place.
@@ -89,20 +96,56 @@ def outer_pose() -> dict[int, int]:
     return pose
 
 
-def do_fit(arm: Arm, outer: bool = False) -> int:
-    pose = outer_pose() if outer else survey_pose()
-    reached = arm.move_to(pose, speed_dps=15, verify=False)
-    time.sleep(1.5)
-    frames = camera.grab(6)
+def _spun(points: np.ndarray, degrees: float) -> np.ndarray:
+    """Table points turned about the base by `degrees` (+ = left)."""
+    turn = math.radians(degrees)
+    spin = np.array([[math.cos(turn), -math.sin(turn)], [math.sin(turn), math.cos(turn)]])
+    return np.asarray(points, dtype=float).reshape(-1, 2) @ spin.T
 
-    pixels, table = ws.average_corners(frames)
-    print(f"detected {len(pixels)} marker corners ({len(pixels) // 4} whole markers)")
+
+def do_fit(arm: Arm, outer: bool = False, yaws: tuple[float, ...] = (0.0,)) -> int:
+    """Fit one look. With several `yaws` the look is fitted from the board seen at
+    each of those base yaws, pooled.
+
+    WHY POOL. The outer look sits low and close: its picture holds one whole
+    marker (four corners, 38 mm across) in a frame that spans 150 mm of table.
+    A homography through four points is exactly determined -- zero residual,
+    no redundancy -- and its perspective terms are set by the foreshortening
+    across one small patch, so it extrapolates badly to the frame's edges.
+    Yawing the base by d moves that same marker across the picture (and swings
+    others in), and because the table is invariant under a yaw about J1 (see
+    roboarm/sweep.py), a pixel that sees table point q at yaw d sees R(-d) q at
+    yaw 0. So every frame's correspondences can be turned back into the
+    unyawed look and pooled: one fit, points spread across the whole width of
+    the picture, and a residual that now also measures J1's repeatability.
+    """
+    pose = outer_pose() if outer else survey_pose()
+    reached = None
+    pooled_px, pooled_tb = [], []
+    for index, yaw in enumerate(yaws):
+        at = sweep.pose_at(pose, yaw)
+        here = arm.move_to(at, speed_dps=15, verify=False)
+        if yaw == 0.0:
+            reached = here
+        time.sleep(1.5 if index == 0 else 0.5)
+        frames = camera.grab(6)
+        pixels, table = ws.average_corners(frames)
+        print(f"yaw {yaw:+5.1f}: {len(pixels)} marker corners ({len(pixels) // 4} whole markers)")
+        if len(pixels):
+            pooled_px.append(pixels)
+            pooled_tb.append(_spun(table, -yaw))
+    if reached is None:
+        reached = arm.move_to(pose, speed_dps=15, verify=False)
+    pixels = np.concatenate(pooled_px) if pooled_px else np.empty((0, 2))
+    table = np.concatenate(pooled_tb) if pooled_tb else np.empty((0, 2))
+    print(f"{len(pixels)} marker corners in all")
     if len(pixels) < 4:
         print("not enough corners -- move the board so more of it is in view",
               file=sys.stderr)
         return 1
 
-    matrix, worst, n = ws.fit(frames)
+    matrix, worst, n = ws.fit_points(pixels, table)
+    frames = camera.grab(1)
     if outer:
         # Appended beside the primary rather than replacing it: the primary is the
         # only look validated end to end to 2 mm, and sweep.best_refine() gives it
@@ -178,12 +221,18 @@ def main() -> int:
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--outer", action="store_true",
                         help="fit (or verify) the second, further-out look")
+    parser.add_argument("--yaws", default="0",
+                        help="comma-separated base yaws (deg, + = left) to pool the fit "
+                             "over, e.g. -24,-12,0,12,24 for a look that sees one marker")
     args = parser.parse_args()
+    yaws = tuple(float(v) for v in args.yaws.split(",") if v.strip())
+    if 0.0 not in yaws:
+        yaws = (0.0,) + yaws
     try:
         with Arm() as arm:
             if args.verify:
                 return do_verify(arm, args.outer)
-            return do_fit(arm, args.outer)
+            return do_fit(arm, args.outer, yaws)
     except (ArmError, camera.CameraError, ValueError, FileNotFoundError) as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)
         return 1

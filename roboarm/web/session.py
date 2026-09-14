@@ -824,11 +824,18 @@ class Session:
         return dict(self.calibrated[0][1])
 
     def _look_once(self, look: sweep.Look) -> list[detect.Target]:
+        """What this station can measure: whole objects, wholly in shot."""
+        return self._look_all(look)[0]
+
+    def _look_all(self, look: sweep.Look) -> tuple[list[detect.Target], list[detect.Target]]:
         """tools/pick.py look_once(), taking the frame from the live stream.
 
-        The exposure wait depends on what the move changed: a yaw from one
-        station to the next keeps the same view and needs none (see
-        YAW_SETTLE_S); anything that moved J2..J5 changed the picture."""
+        Returns (measurable, clipped): the objects wholly in shot, and the ones
+        cut off at a frame edge -- unusable as targets, but sweep.hints() reads
+        which edge they went out of. The exposure wait depends on what the move
+        changed: a yaw from one station to the next keeps the same view and
+        needs none (see YAW_SETTLE_S); anything that moved J2..J5 changed the
+        picture."""
         before = self.pose()
         yaw_only = before is not None and all(
             abs(before[j] - look.pose[j]) <= 1 for j in (2, 3, 4, 5))
@@ -842,12 +849,15 @@ class Session:
                               look_name=look.name, note=self.log)
         kept = [t for t in found if not t.clipped
                 and sweep.sees(look, t.x, t.y, self._span(t), self._height(t))]
+        clipped = [t for t in found if t.clipped]
         if self.out_dir is not None:
             tag = f"sweep_{look.dyaw:+05.1f}.jpg".replace("+", "p").replace("-", "m")
+            if look.name != "primary":
+                tag = f"sweep_{look.name}_{tag[6:]}"
             with contextlib.suppress(camera.CameraError):
                 camera.write_image(str(self.out_dir / tag),
                                    detect.annotate(frame, look.matrix, found))
-        return kept
+        return kept, clipped
 
     def _span(self, target: detect.Target) -> float:
         """What has to be wholly in shot for this rung's measurement to be trusted.
@@ -932,14 +942,37 @@ class Session:
                  + (", nearest station first, stopping when something is found" if first else ""))
         seen: list[tuple[sweep.Look, detect.Target]] = []
         stopped_early = False
-        for look in looks:
-            found = self._look_once(look)
-            self.log(f"  J1={look.pose[1]:3d} (dyaw {look.dyaw:+6.1f}): {len(found)} object(s)")
+        # A search follows HINTS: something seen cut off at a frame edge says
+        # where to look next (sweep.hints), and that look goes to the front of
+        # the queue. Each station is visited once, hint or not.
+        queue = list(looks)
+        visited: set[tuple[str, int]] = set()
+        while queue:
+            look = queue.pop(0)
+            key = (look.name, look.pose[1])
+            if key in visited:
+                continue
+            visited.add(key)
+            found, clipped = self._look_all(look)
+            self.log(f"  J1={look.pose[1]:3d} (dyaw {look.dyaw:+6.1f}, {look.name}): "
+                     f"{len(found)} object(s)"
+                     + (f", {len(clipped)} cut off at the edge" if clipped else ""))
             seen.extend((look, t) for t in found)
             if first and any(self._plannable(t) for t in found):
                 self.log("  found something graspable; stopping the scan here")
                 stopped_early = True
                 break
+            if first and clipped:
+                for lost in sweep.beyond_reach(look, clipped, self._all_calibrated()):
+                    bearing = math.degrees(math.atan2(lost.y, lost.x))
+                    self.log(f"  {lost.label} at bearing {bearing:+.0f} deg runs out of the "
+                             f"far edge of the {look.name} look, the furthest there is: "
+                             f"beyond reach")
+                for hint in reversed(sweep.hints(look, clipped, self._all_calibrated())):
+                    if (hint.look.name, hint.look.pose[1]) in visited:
+                        continue
+                    self.log(f"  hint: {hint.why} -> {hint.look.name} J1={hint.look.pose[1]}")
+                    queue.insert(0, hint.look)
         merged = sweep.merge(seen)
         self.sweep_targets = merged
         self.sweep_when = time.time()

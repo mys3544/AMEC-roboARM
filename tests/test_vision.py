@@ -193,6 +193,27 @@ def test_objects_drops_the_whole_picture_without_it_swallowing_the_table(monkeyp
     assert [t.label for t in found] == ["stop sign"]
 
 
+def test_edges_touched_names_the_sides():
+    shape = (240, 320, 3)
+    assert detect.edges_touched(_square(100, 100, 40), shape) == frozenset()
+    assert detect.edges_touched(_square(0, 100, 40), shape) == {"left"}
+    assert detect.edges_touched(_square(100, 0, 40), shape) == {"top"}
+    assert detect.edges_touched(_square(280, 200, 40), shape) == {"right", "bottom"}
+    assert detect.touches_edge(_square(280, 200, 40), shape) is True
+
+
+def test_a_clipped_object_records_which_edge_it_left_by(monkeypatch):
+    monkeypatch.setattr(detect, "_vision_post", lambda *a, **k: _reply([
+        {"label": "cube", "confidence": 0.8, "box": [100, 0, 40, 40],
+         "polygon": _square(100, 0, 40)},
+    ]))
+    found = detect.objects(np.zeros((240, 320, 3), np.uint8), MM_PER_PIXEL)
+    assert len(found) == 1
+    assert found[0].clipped is True
+    assert found[0].edges == {"top"}
+    assert found[0].graspable is False
+
+
 def test_objects_sorts_nearest_first(monkeypatch):
     monkeypatch.setattr(detect, "_vision_post", lambda *a, **k: _reply([
         {"label": "far", "confidence": 0.8, "box": [400, 100, 30, 30]},

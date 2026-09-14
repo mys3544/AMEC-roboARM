@@ -36,7 +36,9 @@ GRIPPER_ID = 6
 SDK_RANGE = {1: (0, 180), 2: (0, 180), 3: (0, 180), 4: (0, 180), 5: (0, 270), 6: (0, 180)}
 
 HARD_LIMITS = {1: (0, 180), 2: (0, 180), 3: (0, 180), 4: (0, 180), 5: (0, 270), 6: (30, 180)}
-SAFE_LIMITS = {1: (10, 170), 2: (15, 108), 3: (10, 170), 4: (10, 170), 5: (10, 260), 6: (30, 180)}
+# J2 floor 15 -> 5 on 2026-09-14: it was only a margin from the servo end (0), and it
+# capped the fingertips at 210 mm when the links stretch to 272. 5 keeps the margin.
+SAFE_LIMITS = {1: (10, 170), 2: (5, 108), 3: (10, 170), 4: (10, 170), 5: (10, 260), 6: (30, 180)}
 
 # J2's upper bound is a COLLISION with the camera mast, not a torque limit.
 # 108 keeps ~30 mm of modelled fingertip clearance and sits 13 deg below the angle

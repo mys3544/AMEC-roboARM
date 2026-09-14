@@ -152,6 +152,10 @@ class Target:
     # size fits in the frame -- which a 60 mm cube cut down to a 24 mm sliver
     # passes. Whether the contour touches the border is the honest test.
     clipped: bool = False
+    # WHICH borders the outline ran into ("top", "bottom", "left", "right" of the
+    # picture), empty when not clipped. A clipped object cannot be measured from
+    # here, but the edge it went out of says where to look next: sweep.hints().
+    edges: frozenset[str] = frozenset()
 
     @property
     def graspable(self) -> bool:
@@ -168,7 +172,8 @@ class Target:
 
 
 def _target_from_quad(quad: np.ndarray, label: str, confidence: float = 1.0,
-                      height_m: float | None = None, clipped: bool = False) -> Target:
+                      height_m: float | None = None, clipped: bool = False,
+                      edges: frozenset[str] = frozenset()) -> Target:
     """Build a Target from four TABLE-frame corners of a rectangle.
 
     Measured on the table, not in pixels: the homography is a projection, so pixel
@@ -191,6 +196,7 @@ def _target_from_quad(quad: np.ndarray, label: str, confidence: float = 1.0,
         confidence=float(confidence),
         height_m=height_m,
         clipped=clipped,
+        edges=frozenset(edges),
     )
 
 
@@ -366,20 +372,21 @@ def outlines(mask: np.ndarray, matrix: np.ndarray, label: str, *,
     found = []
     for index, contour in enumerate(contours):
         name = f"{label} {index + 1}"
-        clipped = touches_edge(contour.reshape(-1, 2), mask.shape)
+        edges = edges_touched(contour.reshape(-1, 2), mask.shape)
+        clipped = bool(edges)
         if lens_m is not None and nadir is not None:
             points = ws.apply(matrix, contour.reshape(-1, 2))
             quad, _width, tall, agreement = range_block(
                 points, nadir, lens_m, chamfer_m=chamfer_for(matrix, contour.reshape(-1, 2)))
             target = _target_from_quad(quad, name, 0.0 if clipped else confidence * agreement,
-                                       height_m=tall, clipped=clipped)
+                                       height_m=tall, clipped=clipped, edges=edges)
         else:
             quad = ws.apply(matrix, cv2.boxPoints(cv2.minAreaRect(contour)))
             if height_m > 0.0:
                 centre = np.asarray(nadir, dtype=float)
                 quad = centre + (quad - centre) / _lift_ratio(height_m)
             target = _target_from_quad(quad, name, 0.0 if clipped else confidence,
-                                       clipped=clipped)
+                                       clipped=clipped, edges=edges)
         if target.width_m * target.length_m < MIN_AREA_M2:
             continue
         found.append(target)
@@ -399,14 +406,32 @@ def chamfer_for(matrix: np.ndarray, pixels: np.ndarray) -> float:
     return float(CHAMFER_PX * np.linalg.norm(step - here))
 
 
+def edges_touched(pixels: np.ndarray, shape: tuple[int, ...],
+                  margin_px: int = CLIPPED_MARGIN_PX) -> frozenset[str]:
+    """Which borders of a picture this shape an outline in PIXELS runs into.
+
+    Named by picture side -- "top" is the top row of the image, whatever part of
+    the table that happens to be from the current look; sweep.hints() turns the
+    side into a direction on the table.
+    """
+    pts = np.asarray(pixels, dtype=float).reshape(-1, 2)
+    height, width = shape[0], shape[1]
+    touched = set()
+    if pts[:, 0].min() <= margin_px:
+        touched.add("left")
+    if pts[:, 1].min() <= margin_px:
+        touched.add("top")
+    if pts[:, 0].max() >= width - 1 - margin_px:
+        touched.add("right")
+    if pts[:, 1].max() >= height - 1 - margin_px:
+        touched.add("bottom")
+    return frozenset(touched)
+
+
 def touches_edge(pixels: np.ndarray, shape: tuple[int, ...],
                  margin_px: int = CLIPPED_MARGIN_PX) -> bool:
     """Whether an outline in PIXELS runs into the border of a picture this shape."""
-    pts = np.asarray(pixels, dtype=float).reshape(-1, 2)
-    height, width = shape[0], shape[1]
-    return bool(pts[:, 0].min() <= margin_px or pts[:, 1].min() <= margin_px
-                or pts[:, 0].max() >= width - 1 - margin_px
-                or pts[:, 1].max() >= height - 1 - margin_px)
+    return bool(edges_touched(pixels, shape, margin_px))
 
 
 # A cube measured from its own outline: how well its two independent size
@@ -896,7 +921,8 @@ def objects(
 
     found: list[Target] = []
     for item, polygon, boxed in whole_objects(outlines, frame.shape):
-        clipped = touches_edge(polygon, frame.shape)
+        edges = edges_touched(polygon, frame.shape)
+        clipped = bool(edges)
         score = 0.0 if clipped else item.get("confidence", 1.0)
         if nadir is not None and lens_m is not None:
             quad, _width, tall, agreement = range_block(
@@ -904,10 +930,11 @@ def objects(
                 chamfer_m=chamfer_for(matrix, polygon))
             score = score * agreement
             target = _target_from_quad(quad, item["label"], score, height_m=tall,
-                                       clipped=clipped)
+                                       clipped=clipped, edges=edges)
         else:
             quad = ws.apply(matrix, cv2.boxPoints(cv2.minAreaRect(polygon.astype(np.float32))))
-            target = _target_from_quad(quad, item["label"], score, clipped=clipped)
+            target = _target_from_quad(quad, item["label"], score, clipped=clipped,
+                                       edges=edges)
         if target.width_m * target.length_m < MIN_AREA_M2:
             continue
         found.append(target)

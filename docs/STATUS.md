@@ -44,6 +44,84 @@ Live on the robot after the change: with the cube half out of frame at the
 right edge, the neural rung lists exactly one target ("shape", 38 mm, refused
 as clipped) and nothing else.
 
+## The outer rim: outer look fitted, search follows hints (afternoon)
+
+The wooden cube put out at ~200 mm was missed by all 7 primary stations: it
+sits beyond the primary look's far edge and only peeks into the far CORNERS
+of the +25 and +50 stations (a pitched camera's far corners reach further
+than the middle of its far edge). Bearing was never the problem; radius was.
+
+Two things done about it, both on the robot and in the tree:
+
+1. **The outer look is calibrated** (`data/table_homography.json`, `also:
+   [outer]`, pose J2=29 J3=51 J4=12 J5=90). From that pose the picture holds
+   ONE whole marker, so `calibrate_table.py` grew `--yaws`: the look is fitted
+   from the board seen at several base yaws, each frame's table points turned
+   back by -yaw into the unyawed look (the same J1 invariance the ring rests
+   on) and pooled. `--outer --yaws=-24,-12,0,12,24` -> 12 points over three
+   yaws (the ±24 frames held no whole marker), worst residual 5.9 mm, board
+   seen 162..229 mm forward. The residual is J1 repeatability (about 1 deg =
+   3.5 mm out there) plus lens distortion at the picture edges; expect a few
+   mm of error in the outer band, against ±9 mm of grasp tolerance. The
+   single-frame fit before it was 4 points / 0.0 mm residual -- exactly
+   determined and untrustworthy at the frame edges. NOT --verify'd by hand.
+   The search now reports **14 stations, 92.0 % of reach** (was 7 / 68.9 %).
+2. **Hints.** A clipped detection used to be thrown away; now `Target.edges`
+   records which picture sides the outline ran into (`detect.edges_touched`),
+   `sweep.frame_sides()` says which side is far/near/left/right on the table
+   for a look, and `sweep.hints()` turns that into the next look: out of the
+   FAR edge -> the further-reaching look (outer) centred on that bearing; out
+   of a SIDE edge -> this look yawed to centre the bearing; near edge ->
+   nothing (too close to grasp). `Session._job_sweep` keeps a queue, puts
+   hint looks at its front, visits each (look, J1) once, and logs
+   "hint: ... -> outer J1=nn". 8 new tests (271 passing, ruff clean).
+
+**Seen working on the robot** (second retry, board face down): at J1=90 the
+primary saw the cube cut off at its far edge, logged the hint, and the very
+next station was the outer look at that bearing (J1=97), 3 s in. The cube
+was cut off there TOO -- from the outer frame its near edge maps to 198 mm,
+so its centre was ~218 mm: beyond the arm (200 mm with the reach offset,
+210 raw). The search then ran the remaining 12 stations and failed honestly
+after 70 s; `sweep.beyond_reach()` now makes it say "beyond reach" when the
+furthest look clips at its far edge.
+
+**How much the outer look actually buys, computed from the fitted matrix:**
+its far edge is 236 mm at the frame middle (primary 218), but its lens is
+LOWER (179 vs 212 mm) so a 40 mm cube's top is lifted 1.29x about a nadir at
+165 mm and leaves the top of the frame once the cube's centre passes ~198
+mm. So for a 40 mm cube the outer look measures ~189..198 mm, the primary
+129..189, and the planner reaches 200. Consistent, but thin: the rim the
+outer look adds is 10 mm wide. A higher outer pose (lens higher, not just
+further out) would widen it; the one chosen on 2026-09-10 optimised nadir
+distance, not lift. Worth revisiting only if objects really need to sit at
+190..210 mm.
+
+**Then both limits were moved (late afternoon), and the outer-rim pick WORKS:**
+
+* `config.SAFE_LIMITS[2]` floor 15 -> 5. It was only a margin from the servo
+  end (0), not a collision, and it capped the model at 210 mm when the links
+  stretch to 272. Model reach is now 238 mm (the reachable grid's max radius;
+  test_sweep pins it), and probed with the arm 50 mm up the servos land at
+  206 / 219 / 223 mm for asks of 215 / 225 / 235 -- the same 9-12 mm short
+  as always. Coverage percentages all dropped because the denominator grew
+  (one look 9.5 %, primary ring 47 %, both rings 92 %); tests re-pinned.
+* The outer look re-chosen with tilt allowed to 20 deg (was 10): fingertip
+  target 190 fwd / 125 up -> pose J2=61 J3=29 J4=11, lens ~233 mm up, nadir
+  145. Fitted `--outer --yaws=-24,-12,0,12,24`: 28 points (the ±24 frames
+  now hold two markers), worst residual 9.8 mm, band 133..266 mm at the
+  frame middle; a 40 mm cube stays whole to ~225 mm (was 198). The residual
+  is J1 repeatability plus lens distortion at the picture edges; the pick
+  below says it is good enough.
+* **The pick**: cube at 214 mm. Primary J1=90 saw it cut off at the far
+  edge -> hint -> outer J1=109 saw it whole (41 mm) -> pick -> "holding
+  something" -> placed at 185 / 0. Search 6.2 s (two stations), whole job
+  26.7 s. Reach pass landed 16.4 mm short of the 234 mm aim, i.e. 4 mm
+  past the cube centre, 0.8 mm up. That is the outer rim, closed.
+
+**First retry gotcha**: with the ChArUco board still FACE UP the neural rung
+reads the board's 38 mm markers as 33 mm objects ("remove", 0.25); the search
+stopped at the first one and closed on nothing. Board face down for picks.
+
 ## Colour rung, still open
 
 On the red cube the colour rung read 175-179 fwd / 19-22 left, 24-28 mm,

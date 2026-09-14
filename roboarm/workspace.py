@@ -109,6 +109,18 @@ def fit(frame) -> tuple[np.ndarray, float, int]:
     """
     pixels, table = (find_corners(frame) if isinstance(frame, np.ndarray)
                      else average_corners(frame))
+    return fit_points(pixels, table)
+
+
+def fit_points(pixels: np.ndarray, table: np.ndarray) -> tuple[np.ndarray, float, int]:
+    """Fit the pixel -> table homography from matched points. See fit().
+
+    Split out so a fit can pool correspondences from SEVERAL frames of the same
+    look -- e.g. the outer look, whose picture holds one whole marker, fitted
+    from that marker seen at several base yaws (tools/calibrate_table.py --yaws).
+    """
+    pixels = np.asarray(pixels, dtype=float).reshape(-1, 2)
+    table = np.asarray(table, dtype=float).reshape(-1, 2)
     if len(pixels) < 4:
         raise ValueError(f"need at least 4 marker corners, found {len(pixels)}")
 

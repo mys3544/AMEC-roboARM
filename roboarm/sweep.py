@@ -410,6 +410,135 @@ def best_refine(calibrated: list[tuple[np.ndarray, Pose, str]], x: float, y: flo
     raise NoLook("; ".join(reasons) if reasons else "no calibrated looks at all")
 
 
+class Hint(NamedTuple):
+    """Where to look next, on the strength of something seen cut off at an edge."""
+
+    look: Look
+    why: str
+
+
+def frame_sides(matrix: np.ndarray) -> dict[str, str]:
+    """Which side of the PICTURE faces which way on the TABLE, for one look.
+
+    Returns {"far": side, "near": side, "left": side, "right": side} where each
+    side is one of "top", "bottom", "left", "right" of the image. Decided from
+    where the middle of each picture edge lands on the table, rather than
+    assumed, because the lens sits off the forearm axis and the picture is a
+    little turned: at the primary look the top row is the far edge, but nothing
+    downstream should have to know that.
+    """
+    width, height = cfg.WRIST_CAM_SIZE
+    middles = {
+        "top": (width / 2, 0.0), "bottom": (width / 2, height - 1.0),
+        "left": (0.0, height / 2), "right": (width - 1.0, height / 2),
+    }
+    on_table = {side: ws.apply(matrix, [pixel])[0] for side, pixel in middles.items()}
+    radius = {side: math.hypot(*point) for side, point in on_table.items()}
+    bearing = {side: math.atan2(point[1], point[0]) for side, point in on_table.items()}
+    far = max(radius, key=radius.get)
+    near = min(radius, key=radius.get)
+    across = [side for side in middles if side not in (far, near)]
+    # +y is left on the table, so the larger bearing is the left-hand side.
+    left = max(across, key=bearing.get)
+    right = next(side for side in across if side != left)
+    return {"far": far, "near": near, "left": left, "right": right}
+
+
+def reach_of(matrix: np.ndarray) -> float:
+    """How far out, in metres from the base, the far edge of this look's picture lies."""
+    width, height = cfg.WRIST_CAM_SIZE
+    sides = frame_sides(matrix)
+    middles = {
+        "top": (width / 2, 0.0), "bottom": (width / 2, height - 1.0),
+        "left": (0.0, height / 2), "right": (width - 1.0, height / 2),
+    }
+    return float(math.hypot(*ws.apply(matrix, [middles[sides["far"]]])[0]))
+
+
+def hints(look: Look, clipped: list, calibrated: list[tuple[np.ndarray, Pose, str]],
+          ) -> list[Hint]:
+    """Looks worth taking next, from what a station saw cut off at its edges.
+
+    A clipped detection cannot be measured -- its size is unknown and its
+    position is biased -- but which edge it went out of is real information
+    that the search used to throw away. Two cases are worth acting on:
+
+      * out of the FAR edge: the object is beyond this look's band of
+        distances, and no yaw will bring it in. If a calibrated look that
+        reaches further exists (the outer look), take it, turned so the
+        object's bearing runs through the middle of its picture. One station
+        instead of a whole second ring.
+      * out of a SIDE edge: the object is in this look's band but off to one
+        side. Turn this same look to centre its bearing -- a yaw, which costs
+        nothing in calibration -- rather than wait for the next station,
+        which may cut it off at the other side.
+
+    Out of the NEAR edge means closer than the arm can grasp; nothing to do.
+    The clipped position's bearing is used and its radius is not: a cut-off
+    outline still points the right way to within a few degrees, which is all
+    a centring yaw needs, whereas its distance is whatever the visible part
+    happened to average to.
+    """
+    sides = frame_sides(look.matrix)
+    by_name = {name: (matrix, survey) for matrix, survey, name in calibrated}
+    found: list[Hint] = []
+    for target in clipped:
+        edges = getattr(target, "edges", frozenset())
+        if not edges:
+            continue
+        bearing = math.degrees(math.atan2(target.y, target.x))
+        if sides["far"] in edges:
+            further = sorted(
+                ((reach_of(matrix), matrix, survey, name)
+                 for matrix, survey, name in calibrated
+                 if name != look.name and reach_of(matrix) > reach_of(look.matrix) + 0.005),
+                key=lambda item: item[0])
+            if not further:
+                continue
+            _reach, matrix, survey, name = further[0]
+            why = (f"{target.label} runs out of the far edge at bearing {bearing:+.0f} deg; "
+                   f"the {name} look reaches further")
+        elif sides["near"] in edges:
+            continue
+        elif sides["left"] in edges or sides["right"] in edges:
+            matrix, survey = by_name[look.name]
+            name = look.name
+            side = "left" if sides["left"] in edges else "right"
+            why = (f"{target.label} runs out of the {side} edge at bearing {bearing:+.0f} deg; "
+                   f"turning to centre it")
+        else:
+            continue
+        dyaw = yaw_to_centre(matrix, target.x, target.y)
+        try:
+            pose = pose_at(survey, dyaw)
+        except NoLook:
+            continue
+        landed = float(survey[1] - pose[1])
+        if name == look.name and abs(landed - look.dyaw) < 1.0:
+            continue   # that is where we already are
+        candidate = Look(landed, pose, rotate(matrix, landed), name)
+        if any(h.look.name == name and h.look.pose[1] == pose[1] for h in found):
+            continue
+        found.append(Hint(candidate, why))
+    return found
+
+
+def beyond_reach(look: Look, clipped: list,
+                 calibrated: list[tuple[np.ndarray, Pose, str]]) -> list:
+    """The clipped detections that ran out of the far edge of the FURTHEST look.
+
+    No calibrated look reaches past this one, so nothing the search can do
+    will bring them in: they are beyond what the camera can measure, which
+    for the outer look is also about as far as the arm can grasp. Worth
+    saying in the log, so a miss reads "out of reach" rather than "not found".
+    """
+    sides = frame_sides(look.matrix)
+    if any(name != look.name and reach_of(matrix) > reach_of(look.matrix) + 0.005
+           for matrix, _survey, name in calibrated):
+        return []
+    return [t for t in clipped if sides["far"] in getattr(t, "edges", frozenset())]
+
+
 def merge(seen: list[tuple[Look, object]], tol_m: float = MERGE_M) -> list[object]:
     """Collapse one object seen from several overlapping looks into one target.
 

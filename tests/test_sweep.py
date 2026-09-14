@@ -30,6 +30,101 @@ REAL_SURVEY = {1: 90, 2: 56, 3: 23, 4: 10, 5: 89, 6: 30}
 GRASPABLE = sweep.reachable_grasp_points()
 
 
+# A second, further-reaching look for the hint tests: the real matrix with its
+# table output scaled 1.25x outward from the base, and a different survey pose.
+OUTER_H = np.diag([1.25, 1.25, 1.0]) @ REAL_H
+OUTER_SURVEY = {1: 90, 2: 30, 3: 51, 4: 12, 5: 90, 6: 30}
+
+
+def _clipped(x, y, edges, label="blob"):
+    return detect.Target(x=x, y=y, width_m=0.02, length_m=0.02, angle_deg=0.0,
+                         label=label, confidence=0.0, clipped=True,
+                         edges=frozenset(edges))
+
+
+def _station(dyaw=0.0):
+    return sweep.Look(dyaw, sweep.pose_at(REAL_SURVEY, dyaw), sweep.rotate(REAL_H, dyaw))
+
+
+# ---------------------------------------------------------------- hints ----
+def test_frame_sides_names_the_far_edge_and_the_left_edge():
+    sides = sweep.frame_sides(REAL_H)
+    assert {sides["far"], sides["near"]} == {"top", "bottom"}
+    assert {sides["left"], sides["right"]} == {"left", "right"}
+    assert sides["far"] == "top"        # the primary look: far is the top row
+    assert sides["left"] == "left"      # and the picture is not mirrored
+    assert sweep.reach_of(OUTER_H) > sweep.reach_of(REAL_H)
+
+
+def test_a_far_edge_clip_hints_at_the_further_look_on_that_bearing():
+    look = _station(0.0)
+    target = _clipped(0.19, 0.06, {"top"})
+    got = sweep.hints(look, [target], [(REAL_H, REAL_SURVEY, "primary"),
+                                       (OUTER_H, OUTER_SURVEY, "outer")])
+    assert len(got) == 1
+    hint = got[0]
+    assert hint.look.name == "outer"
+    assert all(hint.look.pose[j] == OUTER_SURVEY[j] for j in (2, 3, 4, 5, 6))
+    wanted = sweep.yaw_to_centre(OUTER_H, target.x, target.y)
+    assert hint.look.dyaw == pytest.approx(wanted, abs=0.5)
+    assert "far edge" in hint.why and "outer" in hint.why
+
+
+def test_a_far_edge_clip_with_no_further_look_is_no_hint():
+    got = sweep.hints(_station(0.0), [_clipped(0.19, 0.0, {"top"})],
+                      [(REAL_H, REAL_SURVEY, "primary")])
+    assert got == []
+
+
+def test_a_side_clip_turns_the_same_look_to_centre_it():
+    look = _station(0.0)
+    target = _clipped(0.16, 0.07, {"left"})
+    got = sweep.hints(look, [target], [(REAL_H, REAL_SURVEY, "primary")])
+    assert len(got) == 1
+    assert got[0].look.name == "primary"
+    assert got[0].look.dyaw == pytest.approx(
+        sweep.yaw_to_centre(REAL_H, target.x, target.y), abs=0.5)
+    assert got[0].look.dyaw > 0          # left of the picture is +yaw
+    assert "left edge" in got[0].why
+
+
+def test_a_near_edge_clip_or_an_unclipped_target_gives_nothing():
+    look = _station(0.0)
+    whole = detect.Target(x=0.16, y=0.0, width_m=0.04, length_m=0.04,
+                          angle_deg=0.0, label="cube")
+    got = sweep.hints(look, [_clipped(0.13, 0.0, {"bottom"}), whole],
+                      [(REAL_H, REAL_SURVEY, "primary")])
+    assert got == []
+
+
+def test_hints_never_point_back_at_the_station_that_saw_them():
+    look = _station(0.0)
+    # Something cut off at the left edge but whose bearing already runs through
+    # the centre: turning would change nothing, so no hint.
+    bearing = math.radians(sweep.look_bearing(REAL_H))
+    target = _clipped(0.16 * math.cos(bearing), 0.16 * math.sin(bearing), {"left"})
+    assert sweep.hints(look, [target], [(REAL_H, REAL_SURVEY, "primary")]) == []
+
+
+def test_a_far_clip_from_the_furthest_look_is_reported_beyond_reach():
+    both = [(REAL_H, REAL_SURVEY, "primary"), (OUTER_H, OUTER_SURVEY, "outer")]
+    outer = sweep.Look(0.0, dict(OUTER_SURVEY), OUTER_H, "outer")
+    lost = _clipped(0.23, 0.0, {"top"}, "far thing")
+    assert sweep.beyond_reach(outer, [lost, _clipped(0.2, 0.05, {"left"})], both) == [lost]
+    # From the primary the outer look still reaches further, so nothing is lost yet.
+    assert sweep.beyond_reach(_station(0.0), [lost], both) == []
+    # ... unless the primary is the only look there is.
+    assert sweep.beyond_reach(_station(0.0), [lost], both[:1]) == [lost]
+
+
+def test_two_clips_of_one_object_give_one_hint():
+    look = _station(0.0)
+    both = [_clipped(0.19, 0.06, {"top", "left"}, "a"), _clipped(0.19, 0.061, {"top"}, "b")]
+    got = sweep.hints(look, both, [(REAL_H, REAL_SURVEY, "primary"),
+                                   (OUTER_H, OUTER_SURVEY, "outer")])
+    assert len(got) == 1
+
+
 def _rotate2(point, degrees):
     """An independent rotation, written out longhand to check `rotate` against."""
     turn = math.radians(degrees)
@@ -151,14 +246,14 @@ def test_one_look_alone_covers_only_a_corner_of_the_workspace():
     """The problem this module exists to solve, pinned as a number."""
     only = [sweep.Look(0.0, REAL_SURVEY, REAL_H)]
     fraction, _missed = sweep.coverage(only, GRASPABLE)
-    assert 0.11 < fraction < 0.17, f"one pose can measure {fraction:.1%}"
+    assert 0.08 < fraction < 0.17, f"one pose can measure {fraction:.1%}"
 
 
 def test_the_ring_multiplies_what_one_look_can_measure():
     one, _ = sweep.coverage([sweep.Look(0.0, REAL_SURVEY, REAL_H)], GRASPABLE)
     many, _ = sweep.coverage(sweep.ring(REAL_SURVEY, REAL_H), GRASPABLE)
     assert many > 4 * one, f"{one:.1%} -> {many:.1%} is not worth the sweep"
-    assert many > 0.65
+    assert many > 0.45   # 47 % since the J2 floor went to 5 (reach 238 mm)
 
 
 def test_the_ring_fixes_bearing_and_leaves_radius_alone():
@@ -447,6 +542,6 @@ def test_the_graspable_envelope_is_an_annulus_we_can_state():
     radii = np.hypot(GRASPABLE[:, 0], GRASPABLE[:, 1])
     bearings = np.degrees(np.arctan2(GRASPABLE[:, 1], GRASPABLE[:, 0]))
     assert radii.min() == pytest.approx(0.131, abs=0.006)
-    assert radii.max() == pytest.approx(0.210, abs=0.006)
+    assert radii.max() == pytest.approx(0.238, abs=0.006)   # 0.210 with the old J2 floor of 15
     assert bearings.min() == pytest.approx(-80, abs=2)
     assert bearings.max() == pytest.approx(80, abs=2)
