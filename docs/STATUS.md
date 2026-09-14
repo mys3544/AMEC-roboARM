@@ -72,6 +72,13 @@ So the mask from YOLOE-26 sets a correct width (38 vs the real 40), a correct
 roll, and the grasp closes on the cube. The reach shortfall was 6.8 mm this
 time against 13.6 mm in the morning, both inside the 20 mm offset.
 
+Then the PALE cube -- plain wood, no tag, the case the colour rung was
+expected to miss. The neural rung read it at 171 fwd / +6 left, 39 mm, 0.69
+("parchment"); the colour rung, as it happens, also saw the tan wood at 0.70.
+Neural-rung pick: opening 57 mm, roll +74 deg, reach pass 14.2 mm short of
+the 20 mm-beyond aim, "holding something", placed at 185 / 0, 19.9 s. Two
+untagged cubes of different colour picked through the same mask path.
+
 ## Where everything was left
 
 * Arm at the survey pose, torque ON. Bridge and vision containers UP on the
