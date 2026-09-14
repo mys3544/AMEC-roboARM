@@ -9,8 +9,12 @@ Configuration is entirely from the environment, so the container needs no config
 file mounted:
 
     ROBOARM_VISION_MODEL     path to weights, or a name Ultralytics can fetch.
-                             Default /app/models/yolo26n.pt. A name containing
-                             "yoloe" is loaded as an open-vocabulary model.
+                             Default /app/models/yoloe-26s-seg-pf.pt, the
+                             prompt-free YOLOE built on YOLO26 (2026-09-14). A name
+                             containing "yoloe" is loaded as an open-vocabulary
+                             model; a plain "yolo26n-seg.pt" is the fixed
+                             80-class COCO segmenter, which sees the lab's red
+                             cube (as a "stop sign") but not the wooden one.
     ROBOARM_VISION_IMGSZ     inference size, default 640.
     ROBOARM_VISION_CONF      default confidence floor, default 0.25.
     ROBOARM_VISION_CLASSES   comma-separated default prompt for a YOLOE model,
@@ -22,7 +26,7 @@ from __future__ import annotations
 import io
 import os
 
-DEFAULT_MODEL = "/app/models/yolo26n.pt"
+DEFAULT_MODEL = "/app/models/yoloe-26s-seg-pf.pt"
 
 
 class PromptNotSupported(RuntimeError):

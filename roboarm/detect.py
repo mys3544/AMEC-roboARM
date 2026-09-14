@@ -797,6 +797,52 @@ def vision_available(url: str | None = None, timeout: float = 2.0) -> bool:
     return health.get("status") == "ok"
 
 
+# An outline covering this much of the picture IS the picture: a prompt-free
+# segmenter labels the whole frame ("studio shot", "chemistry lab") on nearly
+# every shot. Never an object on the table, and never allowed to swallow one.
+PICTURE_FRACTION = 0.8
+# An outline with this much of its area inside a larger one is a part of that
+# object, not an object of its own.
+NESTED_FRACTION = 0.9
+
+
+def whole_objects(outlines: list[tuple[dict, np.ndarray, bool]],
+                  shape: tuple[int, ...]) -> list[tuple[dict, np.ndarray, bool]]:
+    """Keep the neural outlines that are whole objects: not the picture, not a part.
+
+    An open-vocabulary segmenter labels PARTS as readily as wholes. The lab's
+    tagged cube came back as a 265 px "traffic sign" AND a 178 px "direct" for
+    the tag's inner square, at 0.61 and 0.53 -- and ranged as a cube of its own
+    the inner square is a 27 mm block at the same spot. Whichever of the two
+    scored higher after ranging would then set the gripper opening, and 45 mm
+    of opening jams on a 40 mm cube. Only the outermost outline is the object;
+    what lies within another outline is part of it. The exception is an outline
+    that is the whole frame, which the same models produce on nearly every shot
+    and which would otherwise swallow everything on the table -- that one is
+    dropped, not honoured.
+    """
+    height, width = shape[:2]
+    masks = []
+    for _item, polygon, _boxed in outlines:
+        mask = np.zeros((height, width), np.uint8)
+        cv2.fillPoly(mask, [np.round(polygon).astype(np.int32).reshape(-1, 1, 2)], 1)
+        masks.append(mask)
+    areas = [int(mask.sum()) for mask in masks]
+    picture = [area >= PICTURE_FRACTION * height * width for area in areas]
+    kept = []
+    for i, entry in enumerate(outlines):
+        if areas[i] == 0 or picture[i]:
+            continue
+        inside = any(
+            j != i and not picture[j] and areas[j] > areas[i]
+            and int(np.count_nonzero(masks[i] & masks[j])) >= NESTED_FRACTION * areas[i]
+            for j in range(len(outlines))
+        )
+        if not inside:
+            kept.append(entry)
+    return kept
+
+
 def objects(
     frame,
     matrix: np.ndarray,
@@ -836,7 +882,7 @@ def objects(
         url or cfg.DETECTOR_URL, cfg.DETECTOR_TIMEOUT_S if timeout is None else timeout,
     )
 
-    found: list[Target] = []
+    outlines: list[tuple[dict, np.ndarray, bool]] = []
     for item in reply.get("detections", []):
         x, y, w, h = item["box"]
         corners = np.array([[x, y], [x + w, y], [x + w, y + h], [x, y + h]], dtype=float)
@@ -846,6 +892,10 @@ def objects(
         boxed = len(polygon) < 3
         if boxed:
             polygon = corners
+        outlines.append((item, polygon, boxed))
+
+    found: list[Target] = []
+    for item, polygon, boxed in whole_objects(outlines, frame.shape):
         clipped = touches_edge(polygon, frame.shape)
         score = 0.0 if clipped else item.get("confidence", 1.0)
         if nadir is not None and lens_m is not None:

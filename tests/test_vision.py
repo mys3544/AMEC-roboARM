@@ -153,6 +153,46 @@ def test_objects_drops_specks_below_the_area_floor(monkeypatch):
     assert [t.label for t in found] == ["cup"]
 
 
+def _square(x, y, side):
+    return [[x, y], [x + side, y], [x + side, y + side], [x, y + side]]
+
+
+def test_objects_drops_an_outline_nested_inside_another(monkeypatch):
+    # The tagged cube: a 60 px "traffic sign" and, inside it, the tag's inner
+    # square as a "direct". Only the whole cube is an object.
+    monkeypatch.setattr(detect, "_vision_post", lambda *a, **k: _reply([
+        {"label": "direct", "confidence": 0.9, "box": [120, 120, 30, 30],
+         "polygon": _square(120, 120, 30)},
+        {"label": "traffic sign", "confidence": 0.6, "box": [100, 100, 60, 60],
+         "polygon": _square(100, 100, 60)},
+    ]))
+    found = detect.objects(np.zeros((240, 320, 3), np.uint8), MM_PER_PIXEL)
+    assert [t.label for t in found] == ["traffic sign"]
+
+
+def test_objects_keeps_two_objects_that_merely_overlap(monkeypatch):
+    monkeypatch.setattr(detect, "_vision_post", lambda *a, **k: _reply([
+        {"label": "a", "confidence": 0.9, "box": [100, 100, 40, 40],
+         "polygon": _square(100, 100, 40)},
+        {"label": "b", "confidence": 0.8, "box": [130, 100, 40, 40],
+         "polygon": _square(130, 100, 40)},
+    ]))
+    found = detect.objects(np.zeros((240, 320, 3), np.uint8), MM_PER_PIXEL)
+    assert sorted(t.label for t in found) == ["a", "b"]
+
+
+def test_objects_drops_the_whole_picture_without_it_swallowing_the_table(monkeypatch):
+    # Prompt-free YOLOE labels the frame itself ("studio shot") on most shots.
+    monkeypatch.setattr(detect, "_vision_post", lambda *a, **k: _reply([
+        {"label": "studio shot", "confidence": 0.9, "box": [0, 0, 320, 240],
+         "polygon": _square(0, 0, 320)},
+        {"label": "stop sign", "confidence": 0.7, "box": [100, 100, 40, 40],
+         "polygon": _square(100, 100, 40)},
+    ]))
+    found = detect.objects(np.zeros((240, 320, 3), np.uint8), MM_PER_PIXEL)
+    assert [t.label for t in found] == ["stop sign"]
+
+
 def test_objects_sorts_nearest_first(monkeypatch):
     monkeypatch.setattr(detect, "_vision_post", lambda *a, **k: _reply([
         {"label": "far", "confidence": 0.8, "box": [400, 100, 30, 30]},

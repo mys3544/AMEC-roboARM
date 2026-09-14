@@ -25,7 +25,7 @@ from pathlib import Path
 
 
 def main() -> int:
-    default_model = os.environ.get("ROBOARM_VISION_MODEL", "/app/models/yolo26n.pt")
+    default_model = os.environ.get("ROBOARM_VISION_MODEL", "/app/models/yoloe-26s-seg-pf.pt")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", default=default_model,
                         help=f"source .pt (default {default_model})")

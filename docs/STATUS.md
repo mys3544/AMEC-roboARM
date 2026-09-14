@@ -1,3 +1,92 @@
+# Status, 2026-09-14 (first untagged pick succeeded; neural rung moved to YOLOE-26)
+
+## The gripper fix is confirmed
+
+The first pick of the day was the red 40 mm cube, no tag, through the neural
+rung: found at 162 mm fwd / 0 mm left, 39 mm; opened to 57 mm BEFORE moving;
+descended; "holding something"; placed at 168 / -78; back at survey in 22.3 s.
+The reach pass landed 13.6 mm short of the 20 mm-beyond aim, i.e. 6 mm past
+the cube centre and 6 mm up -- inside the grasp. So Thursday's 14.9 mm was a
+passenger; the fingers were the fault, and `grasp.pick()`'s opening-first
+order is right. The 20 mm reach offset stays.
+
+## The neural rung is now YOLOE-26 (`yoloe-26s-seg-pf.pt`)
+
+ultralytics 8.4.137 in the vision image ships the YOLOE models built on
+YOLO26. All were run on the same four lab frames in the container, conf 0.10:
+
+    yoloe-26s-seg-pf   red cube 0.86   tagged wooden cube 0.61   41 ms   <- served now
+    yoloe-26m-seg-pf   red 0.85        tagged 0.85               55 ms
+    yoloe-11s-seg-pf   red 0.63        tagged 0.82               43 ms   (was served)
+    yolo26n-seg (COCO) red 0.79        tagged NOTHING            35 ms
+    yolo26s-seg (COCO) red 0.45        tagged NOTHING            37 ms
+
+The plain YOLO26 segmenters have 80 fixed COCO classes and only find what
+resembles one (the red cube passes as a "stop sign"); they never see the
+wooden cube and will not see a pale one. They stay one env var away
+(`ROBOARM_VISION_MODEL=/app/models/yolo26n-seg.pt`, weights are in
+`models/`), not the default. The masks from all of them go through the same
+`range_block()`; nothing in the client cares which model answered.
+
+Two things the new model showed, both fixed in `detect.objects()`
+(`whole_objects()`, 3 new tests, 262 passing, ruff clean):
+
+* every prompt-free YOLOE labels the WHOLE FRAME ("studio shot", "chemistry
+  lab") on most shots -- an outline covering >= 80 % of the picture is
+  dropped rather than listed as an 85 mm clipped thing;
+* it labels PARTS too: the tagged cube came back as a 265 px "traffic sign"
+  and a 178 px "direct" for the tag's inner square, 0.61 vs 0.53. Ranged as
+  a cube of its own the inner square is a 27 mm block at the same spot, and
+  would set a 45 mm opening for a 40 mm cube. An outline with >= 90 % of its
+  area inside a larger one is now dropped.
+
+Live on the robot after the change: with the cube half out of frame at the
+right edge, the neural rung lists exactly one target ("shape", 38 mm, refused
+as clipped) and nothing else.
+
+## Colour rung, still open
+
+On the red cube the colour rung read 175-179 fwd / 19-22 left, 24-28 mm,
+against the neural 162 / 0, 39 mm. Its mask swallows the bounce-lit shadow
+(red light off the white paper) and the far-corner edge fit runs through the
+bumps. Thursday it read 40 mm on the same cube at a different spot. Tighten
+the shadow rejection before trusting it again; use the neural rung meanwhile.
+
+## The pick with the new model: done, 21.0 s
+
+After a charge (the board had read 9.6 V; a reboot for charging also took the
+bridge down, and the panel kept showing the stale 9.6 until the bridge was
+back -- a refused connection leaves the last battery number on screen). At
+11.6 V, `POST /api/auto/oneclick {"detector": "yolo", "drop_x": 165,
+"drop_y": 0}`:
+
+    stop sign  181 fwd / -22 left  36 x 36 mm  at J1=90
+    refined from J1=103 to 177 / -29 (7.7 mm from the sweep), 38 mm
+    opening to 57 mm for a 38 mm object, before moving
+    fingers turned to close along +76 deg (J5=94)
+    reach pass: fingertip 7.9 mm off (short by +6.8 fwd, -1.6 left, +3.7 up)
+    fingertip landed 3.0 mm from the aim point, 11.2 mm up
+    holding something -> placed at 185 fwd / 0 -> back at survey
+
+So the mask from YOLOE-26 sets a correct width (38 vs the real 40), a correct
+roll, and the grasp closes on the cube. The reach shortfall was 6.8 mm this
+time against 13.6 mm in the morning, both inside the 20 mm offset.
+
+## Where everything was left
+
+* Arm at the survey pose, torque ON. Bridge and vision containers UP on the
+  robot (`vision` recreated with the new model; it has no CLIP module, which
+  the prompt-free model does not need). Laptop webapp on :8091.
+* Robot tree synced (compose.yaml, detect.py, detector.py, export_engine.py,
+  test_vision.py). Local changes NOT committed.
+* The factory app's autostart is disabled on the robot
+  (`~/.config/autostart/start_app.sh.desktop.disabled-by-roboarm`); after the
+  reboot this morning only the two `docker compose ... up -d` were needed.
+* `models/` on the robot now also holds yolo26n-seg, yolo26s-seg,
+  yoloe-26n/s/m-seg-pf and yoloe-26s-seg (~170 MB).
+
+---
+
 # Status, end of 2026-09-11 (evening: first tag-free pick attempt)
 
 Written after the session that tried to pick an UNTAGGED cube. Read this bit

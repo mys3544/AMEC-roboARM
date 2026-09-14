@@ -94,11 +94,20 @@ services:
       # The detector. A .pt path under /app/models, or a name Ultralytics can
       # fetch on first run while the robot has WiFi. A name containing "yoloe"
       # is loaded open-vocabulary and then honours an X-Vision-Prompt header.
-      # 2026-09-11: the prompt-free YOLOE. Text prompts ("cube", "block", ...) found
-      # NOTHING on the lab's tag-covered cube; the prompt-free model boxes it well
-      # (as a "speed limit sign" -- the label is ignored, the box is what counts,
-      # and detect.cube_range() sizes it). Weights fetched by name on first run.
-      ROBOARM_VISION_MODEL: ${ROBOARM_VISION_MODEL:-/app/models/yoloe-11s-seg-pf.pt}
+      # 2026-09-14: the prompt-free YOLOE-26 segmenter (YOLOE built on YOLO26).
+      # Its label is nonsense ("stop sign", "traffic sign") and ignored; the mask
+      # is what counts, and detect.range_block() sizes it. Measured on the lab's
+      # frames, conf 0.10, Orin GPU:
+      #   yoloe-26s-seg-pf  red cube 0.86, tagged wooden cube 0.61,  41 ms  <- this
+      #   yoloe-26m-seg-pf  red 0.85, tagged 0.85,                   55 ms
+      #   yoloe-11s-seg-pf  red 0.63, tagged 0.82,                   43 ms  (was)
+      #   yolo26n-seg       red 0.79 ("stop sign"), tagged NOTHING,  35 ms
+      #   yolo26s-seg       red 0.45, tagged NOTHING,                37 ms
+      # The plain yolo26*-seg are the fixed 80-class COCO models: they only find
+      # what happens to look like a COCO class, so they are not the default.
+      # Text prompts ("cube", "block", ...) found NOTHING on the tag-covered cube
+      # on 2026-09-11, hence prompt-free. Weights fetched by name on first run.
+      ROBOARM_VISION_MODEL: ${ROBOARM_VISION_MODEL:-/app/models/yoloe-26s-seg-pf.pt}
       ROBOARM_VISION_IMGSZ: ${ROBOARM_VISION_IMGSZ:-640}
       ROBOARM_VISION_CONF: ${ROBOARM_VISION_CONF:-0.25}
       # Default classes for a YOLOE model when a request carries no prompt.

@@ -133,10 +133,15 @@ API value is the one in backticks:
   object.
 * `changes` -- whatever is on the table that was not in the empty-table photo.
   Run `capture background` first, or this one fails outright.
-* `yolo` (the menu says *neural*) -- a prompt-free YOLOE segmentation model in
-  its own container on the robot. Its *label* is nonsense ("speed limit sign");
-  the outline is what counts. If the service is not answering it drops quietly
-  to `markers` and says so in the log.
+* `yolo` (the menu says *neural*) -- a prompt-free YOLOE-26 segmentation model
+  (YOLOE built on YOLO26, `yoloe-26s-seg-pf`) in its own container on the
+  robot. Its *label* is nonsense ("stop sign"); the outline is what counts. An
+  outline that is the whole picture, or that lies inside another outline (the
+  printed face of a cube), is not an object and is dropped. If the service is
+  not answering it drops quietly to `markers` and says so in the log. Any
+  Ultralytics segmentation model can be served instead via
+  `ROBOARM_VISION_MODEL` in `compose.yaml`; the plain COCO `yolo26n-seg` only
+  finds what resembles one of its 80 classes.
 
 Leave **object mm** empty: every rung measures the object for itself. A size
 typed there overrides the measured one on every rung -- the position always
