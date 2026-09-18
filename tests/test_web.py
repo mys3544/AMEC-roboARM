@@ -42,7 +42,7 @@ def sess(world, monkeypatch):
     arm = sim.SimArm(world, time_scale=0)
     s = session.Session(
         arm_factory=lambda: arm,
-        streams={"wrist": lambda: sim.SimStream(arm, fps=40)},
+        stream=lambda: sim.SimStream(arm, fps=40),
         calibration=sim.calibration,
     )
     s.settle_s = 0.05  # the simulated camera has no exposure to settle
@@ -142,7 +142,7 @@ def test_state_describes_the_connected_arm_and_camera(url):
     assert s["arm"]["connected"] and s["arm"]["pose"] == {str(j): a for j, a in cfg.HOME_POSE.items()}
     assert s["mode"] == "manual"
     assert s["calibration"]["ok"] and s["calibration"]["looks"] == ["primary"]
-    assert s["camera"] == "wrist"
+    assert s["camera_fps"] >= 0 and s["camera_error"] is None
     assert s["arm"]["tip_mm"]["z"] > 0
 
 
@@ -444,7 +444,7 @@ def test_jobs_need_a_calibration(monkeypatch, world):
         raise FileNotFoundError("no calibration at /app/data/table_homography.json")
     arm = sim.SimArm(world, time_scale=0)
     s = session.Session(arm_factory=lambda: arm,
-                        streams={"wrist": lambda: sim.SimStream(arm)}, calibration=missing)
+                        stream=lambda: sim.SimStream(arm), calibration=missing)
     s.start()
     try:
         assert s.snapshot()["calibration"]["ok"] is False

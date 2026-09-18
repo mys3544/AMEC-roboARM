@@ -388,15 +388,17 @@ def test_a_bigger_object_is_harder_to_see_than_a_smaller_one():
                     assert sweep.sees(look, x, y, sweep.TAG_SPAN_M)
 
 
-def test_sees_is_stricter_than_in_frame():
-    """in_frame asks about a point; sees asks about an object. Never the reverse."""
+def test_sees_implies_the_point_itself_is_in_the_picture():
+    """sees asks about an object; the point under it must then be in shot too."""
+    width, height = cfg.WRIST_CAM_SIZE
     look = sweep.Look(0.0, REAL_SURVEY, REAL_H)
     for radius in (0.130, 0.150, 0.170, 0.190, 0.205):
         for bearing in (-30, -10, 10, 30):
             x = radius * math.cos(math.radians(bearing))
             y = radius * math.sin(math.radians(bearing))
             if sweep.sees(look, x, y):
-                assert sweep.in_frame(look.matrix, x, y)
+                px, py = sweep.to_pixel(look.matrix, x, y)
+                assert 0 < px < width and 0 < py < height
 
 
 # -------------------------------------------------------------- stations ----
@@ -491,20 +493,6 @@ def test_the_look_bearing_is_not_the_nadir():
     assert math.degrees(math.atan2(nadir[1], nadir[0])) == pytest.approx(-20.0, abs=1.0)
 
 
-# -------------------------------------------------------------- in_frame ----
-def test_in_frame_rejects_what_falls_outside_the_picture():
-    assert sweep.in_frame(REAL_H, 0.164, 0.019), "the middle of the frame"
-    assert not sweep.in_frame(REAL_H, 0.164, -0.300), "well off to the right"
-    assert not sweep.in_frame(REAL_H, 0.400, 0.0), "far past the far edge"
-
-
-def test_a_bigger_margin_never_admits_more():
-    points = [(0.12, 0.08), (0.20, -0.04), (0.16, 0.02), (0.11, -0.05)]
-    for x, y in points:
-        if sweep.in_frame(REAL_H, x, y, margin_px=60):
-            assert sweep.in_frame(REAL_H, x, y, margin_px=10)
-
-
 # ----------------------------------------------------------------- merge ----
 def _target(x, y, label="cube"):
     return detect.Target(x=x, y=y, width_m=0.040, length_m=0.040, angle_deg=0.0,
@@ -552,7 +540,7 @@ def test_merge_returns_nearest_first():
 
 # ------------------------------------------------- the reachable envelope ----
 def test_the_graspable_envelope_is_an_annulus_we_can_state():
-    """Numbers quoted in the module docstring and in pick.py's help."""
+    """Numbers quoted in the module docstring."""
     radii = np.hypot(GRASPABLE[:, 0], GRASPABLE[:, 1])
     bearings = np.degrees(np.arctan2(GRASPABLE[:, 1], GRASPABLE[:, 0]))
     assert radii.min() == pytest.approx(0.131, abs=0.006)

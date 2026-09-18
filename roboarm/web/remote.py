@@ -1,4 +1,4 @@
-"""The real robot's arm and cameras, used from another machine through the bridge.
+"""The real robot's arm and camera, used from another machine through the bridge.
 
 RemoteArm has the same surface as roboarm.arm.Arm, so the session, grasp.pick()
 and everything else are none the wiser: a call becomes one POST to the robot
@@ -28,8 +28,7 @@ import numpy as np
 from roboarm import camera
 from roboarm import workspace as ws
 from roboarm.arm import ArmError
-
-Pose = dict[int, int]
+from roboarm.web.bridge import ALLOWED
 
 # A move can legitimately take a while: 180 degrees at 8 deg/s is over twenty
 # seconds, and engage() sleeps for two and a half. Generous, not infinite.
@@ -64,7 +63,12 @@ def _pose(value):
 
 
 class RemoteArm:
-    """roboarm.arm.Arm's interface, executed on the robot."""
+    """roboarm.arm.Arm's interface, executed on the robot.
+
+    Every method the bridge ALLOWS (read, move_to, home, set_gripper, grasped,
+    hold, release, engage, ...) is one POST, resolved by `__getattr__`; only the
+    lifecycle and the battery need spelling out.
+    """
 
     def __init__(self, url: str):
         self.url = url.rstrip("/")
@@ -82,6 +86,11 @@ class RemoteArm:
     def __exit__(self, *exc) -> None:
         # The robot's own Arm keeps holding; nothing to release here.
         self._connected = False
+
+    def __getattr__(self, name: str):
+        if name not in ALLOWED:
+            raise AttributeError(name)
+        return lambda *args, **kwargs: self._call(name, *args, **kwargs)
 
     # ------------------------------------------------------------- plumbing --
     def _call(self, method: str, *args, **kwargs):
@@ -116,53 +125,13 @@ class RemoteArm:
     def get_battery_voltage(self) -> float:
         return float(self._call("battery"))
 
-    # ---------------------------------------------------------- the surface --
-    def read(self, attempts: int = 4) -> Pose:
-        return self._call("read", attempts=attempts)
-
-    def out_of_range(self, pose: Pose | None = None) -> Pose:
-        return self._call("out_of_range", pose)
-
-    def assert_ready(self) -> None:
-        self._call("assert_ready")
-
-    def move_to(self, targets: Pose, speed_dps: float = 40.0, verify: bool = True,
-                corrections: int = 3) -> Pose:
-        return self._call("move_to", targets, speed_dps=speed_dps, verify=verify,
-                          corrections=corrections)
-
-    def home(self, **kw) -> Pose:
-        return self._call("home", **kw)
-
-    def set_gripper(self, angle: int, **kw) -> Pose:
-        return self._call("set_gripper", int(angle), **kw)
-
-    def open_gripper(self, **kw) -> Pose:
-        return self._call("open_gripper", **kw)
-
-    def close_gripper(self, **kw) -> Pose:
-        return self._call("close_gripper", **kw)
-
-    def grasped(self) -> bool:
-        return bool(self._call("grasped"))
-
-    def hold(self) -> Pose:
-        return self._call("hold")
-
-    def release(self) -> None:
-        self._call("release")
-
-    def engage(self) -> Pose:
-        return self._call("engage")
-
 
 class RemoteStream(camera.Stream):
     """A camera.Stream whose frames arrive as the bridge's MJPEG."""
 
-    def __init__(self, url: str, name: str):
+    def __init__(self, url: str):
         super().__init__(device=-1)
-        self.url = f"{url.rstrip('/')}/camera/{name}/stream.mjpg"
-        self.name = name
+        self.url = f"{url.rstrip('/')}/stream.mjpg"
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -175,7 +144,7 @@ class RemoteStream(camera.Stream):
                     self.error = None
                     self._read_parts(reply)
             except (urllib.error.URLError, OSError, ValueError, TimeoutError) as exc:
-                self.error = f"camera {self.name} via bridge: {exc}"
+                self.error = f"camera via bridge: {exc}"
                 time.sleep(1.0)
 
     def _read_parts(self, reply) -> None:

@@ -126,7 +126,7 @@ def do_look(arm: Arm, calibrated, step_deg: float) -> int:
     print(f"\ndriving {len(looks)} stations. The fingertips stay "
           f"{115:.0f} mm above the table throughout.")
     for look in looks:
-        arm.move_to(look.pose, speed_dps=20, verify=False)
+        arm.move_to(look.pose, speed_dps=20)
         time.sleep(1.2)
         frame = camera.grab(6)[-1]
         found = detect.markers(frame, look.matrix, tag_m=cfg.OBJECT_TAG_M,
@@ -136,7 +136,7 @@ def do_look(arm: Arm, calibrated, step_deg: float) -> int:
         seen = ", ".join(f"{t.label} at {t.x * 1000:.0f},{t.y * 1000:+.0f}"
                          for t in found) or "nothing"
         print(f"  J1={look.pose[1]:3d} (dyaw {look.dyaw:+6.1f}): {seen}")
-    arm.move_to(survey, speed_dps=20, verify=False)
+    arm.move_to(survey, speed_dps=20)
     print("\nwrote /out/sweep_*.jpg, one per station.")
     return 0
 

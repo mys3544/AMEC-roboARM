@@ -1,12 +1,13 @@
 """The robot's hardware over HTTP, so the control panel can run on another machine.
 
 Runs ON THE ROBOT (`tools/hwbridge.py`, the `bridge` compose service) and holds
-the arm and the cameras. It has no page and makes no decisions: every request is
-one method call on roboarm.arm.Arm, one camera's frames, or the calibration file.
-The panel on the laptop (roboarm.web.remote) is what turns those into a session.
+the arm and the wrist camera. It has no page and makes no decisions: every request
+is one method call on roboarm.arm.Arm, the camera's frames, or the calibration
+file. The panel on the laptop (roboarm.web.remote) is what turns those into a
+session.
 
-    GET  /health                       {ok, arm: {connected, error}, cameras}
-    GET  /camera/<name>/stream.mjpg    multipart MJPEG, opened on first use
+    GET  /health                       {ok, arm: {connected, error}, camera}
+    GET  /stream.mjpg                  multipart MJPEG of the wrist camera, opened on first use
     GET  /calibration                  data/table_homography.json, verbatim
     GET  /vision/health                forwarded to the vision container
     POST /vision/detect                raw JPEG in, forwarded to the vision container
@@ -31,20 +32,20 @@ import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse
 
 from roboarm import camera
 from roboarm import config as cfg
 from roboarm.arm import ArmError
-from roboarm.web.server import send_json, send_mjpeg
+from roboarm.web.server import Server, send_json, send_mjpeg
 
 # Everything a caller may invoke on the arm. Anything else is a 400, so a bug on
 # the laptop cannot reach into the SDK object behind it.
 ALLOWED = frozenset({
     "read", "move_to", "home", "set_gripper", "open_gripper", "close_gripper",
-    "grasped", "hold", "release", "engage", "out_of_range", "assert_ready", "battery",
+    "grasped", "hold", "release", "engage", "out_of_range", "battery",
 })
 
 
@@ -57,17 +58,16 @@ def _int_keys(value):
 
 class Bridge:
     def __init__(self, arm_factory: Callable[[], object],
-                 streams: dict[str, Callable[[], camera.Stream]],
-                 calibration_path: Path):
+                 stream: Callable[[], camera.Stream], calibration_path: Path):
         self._arm_factory = arm_factory
-        self._stream_factories = streams
+        self._stream_factory = stream
         self.calibration_path = calibration_path
         self.arm = None
         self.arm_error: str | None = None
         self._lock = threading.RLock()
         self._interrupt = threading.Event()
-        self._streams: dict[str, camera.Stream] = {}
-        self._streams_lock = threading.Lock()
+        self._stream: camera.Stream | None = None
+        self._stream_lock = threading.Lock()
 
     # ---------------------------------------------------------------- arm ---
     def connect(self) -> None:
@@ -104,10 +104,10 @@ class Bridge:
         self._interrupt.set()
 
     def close(self) -> None:
-        with self._streams_lock:
-            for stream in self._streams.values():
-                stream.stop()
-            self._streams.clear()
+        with self._stream_lock:
+            if self._stream is not None:
+                self._stream.stop()
+                self._stream = None
         with self._lock:
             if self.arm is not None:
                 try:
@@ -115,23 +115,21 @@ class Bridge:
                 finally:
                     self.arm = None
 
-    # ------------------------------------------------------------- cameras --
-    def stream(self, name: str) -> camera.Stream:
-        if name not in self._stream_factories:
-            raise KeyError(name)
-        with self._streams_lock:
-            if name not in self._streams:
-                self._streams[name] = self._stream_factories[name]().start()
-            return self._streams[name]
+    # -------------------------------------------------------------- camera --
+    def stream(self) -> camera.Stream:
+        with self._stream_lock:
+            if self._stream is None:
+                self._stream = self._stream_factory().start()
+            return self._stream
 
     def health(self) -> dict:
+        stream = self._stream
         return {
             "ok": True,
             "arm": {"connected": self.arm is not None, "error": self.arm_error},
-            "cameras": {name: {"open": name in self._streams,
-                               "fps": round(self._streams[name].fps, 1) if name in self._streams else 0,
-                               "error": self._streams[name].error if name in self._streams else None}
-                        for name in self._stream_factories},
+            "camera": {"open": stream is not None,
+                       "fps": round(stream.fps, 1) if stream else 0,
+                       "error": stream.error if stream else None},
             "calibration": self.calibration_path.exists(),
         }
 
@@ -149,14 +147,9 @@ class Handler(BaseHTTPRequestHandler):
             send_json(self, self.bridge.health())
         elif path == "/vision/health":
             self._forward_vision("/health")
-        elif path.startswith("/camera/") and path.endswith("/stream.mjpg"):
-            name = path[len("/camera/"):-len("/stream.mjpg")]
-            try:
-                stream = self.bridge.stream(name)
-            except KeyError:
-                send_json(self, {"error": f"no camera called {name!r}"}, 404)
-                return
-            send_mjpeg(self, stream.wait, getattr(self.server, "max_stream_frames", None))
+        elif path == "/stream.mjpg":
+            send_mjpeg(self, self.bridge.stream().wait,
+                       getattr(self.server, "max_stream_frames", None))
         elif path == "/calibration":
             if not self.bridge.calibration_path.exists():
                 send_json(self, {"error": f"no calibration at {self.bridge.calibration_path}"}, 404)
@@ -169,9 +162,8 @@ class Handler(BaseHTTPRequestHandler):
         """Relay one request to the vision container and its reply back.
 
         A panel on a laptop cannot reach the compose-internal `vision` host; the
-        bridge can. Only the headers the service reads are passed on."""
-        headers = {name: self.headers[name] for name in
-                   ("Content-Type", "X-Vision-Prompt", "X-Vision-Conf") if self.headers.get(name)}
+        bridge can."""
+        headers = {"Content-Type": self.headers["Content-Type"]} if body is not None else {}
         status, reply = vision_request(cfg.DETECTOR_URL + tail, body, headers)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -229,12 +221,6 @@ def vision_request(url: str, body: bytes | None, headers: dict[str, str],
         return exc.code, exc.read() or json.dumps({"error": str(exc)}).encode()
     except (urllib.error.URLError, OSError) as exc:
         return 502, json.dumps({"error": f"vision service unreachable: {exc}"}).encode()
-
-
-class Server(ThreadingHTTPServer):
-    daemon_threads = True
-    allow_reuse_address = True
-    max_stream_frames: int | None = None
 
 
 def make_server(bridge: Bridge, host: str = "0.0.0.0", port: int = 8761) -> Server:

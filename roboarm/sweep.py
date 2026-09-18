@@ -50,7 +50,7 @@ MEASURED COVERAGE of a tagged 40 mm cube, computed against the real calibration
 on 2026-09-10 by `tools/sweep_check.py` and checked against the arm the same day:
 
     ring step   looks   reachable grasp area that can be MEASURED
-       none       1        13.8%      (what pick.py did before)
+       none       1        13.8%      (one fixed look, as before the sweep)
        25 deg     7        68.9%
        15 deg    11        70.5%
        10 deg    17        71.3%
@@ -97,8 +97,7 @@ import numpy as np
 from roboarm import config as cfg
 from roboarm import kinematics as kin
 from roboarm import workspace as ws
-
-Pose = dict[int, int]
+from roboarm.config import Pose
 
 # How far apart the ring's looks are. See the coverage table above.
 SURVEY_STEP_DEG = 25
@@ -241,26 +240,6 @@ def to_pixel(matrix: np.ndarray, x: float, y: float) -> np.ndarray:
     return ws.apply(np.linalg.inv(np.asarray(matrix, dtype=float)), [(x, y)])[0]
 
 
-def in_frame(matrix: np.ndarray, x: float, y: float,
-             margin_px: float = EDGE_MARGIN_PX) -> bool:
-    """Whether the table point (x, y) itself lands inside the picture.
-
-    A POINT, not an object: this asks only where the middle of something would be
-    imaged, and knows nothing about how big it is or how far it stands above the
-    table. `sees()` is the question that actually decides whether a detector can
-    measure an object; this one is the primitive underneath it.
-    """
-    width, height = cfg.WRIST_CAM_SIZE
-    try:
-        pixel = to_pixel(matrix, x, y)
-    except np.linalg.LinAlgError:
-        return False
-    if not np.all(np.isfinite(pixel)):
-        return False
-    return bool(margin_px < pixel[0] < width - margin_px
-                and margin_px < pixel[1] < height - margin_px)
-
-
 def magnification(pose: Pose, height_m: float) -> float:
     """How much larger something `height_m` above the table images than the table.
 
@@ -312,8 +291,8 @@ def sees(look: Look, x: float, y: float, span_m: float = TAG_SPAN_M,
     """Whether a feature `span_m` across, standing `height_m` above (x, y), is
     WHOLLY in shot from this look.
 
-    This is the question that decides coverage, and it is not the question
-    in_frame() answers. Two effects push the answer inward: the feature is thrown
+    This is the question that decides coverage, and it is not "does the point land
+    in the picture". Two effects push the answer inward: the feature is thrown
     outward by parallax because it stands above the table plane, and it occupies
     real pixels rather than one. A 40 mm cube images 225 px across, so its centre
     must stay 112 px from the edge -- nearly a quarter of the frame -- before the

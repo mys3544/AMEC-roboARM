@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import contextlib
 import math
-import os
 import time
 from collections.abc import Callable
 
@@ -38,17 +37,9 @@ except ImportError:
     Rosmaster = None
 
 from roboarm import config as cfg
-
-Pose = dict[int, int]
+from roboarm.config import Pose
 
 _PORT_BUSY_HINT = "pkill -f 'rosmaster_mai[n]'"
-
-# Set ROBOARM_DEBUG=1 to trace the droop-correction loop on real hardware.
-_DEBUG = os.environ.get("ROBOARM_DEBUG") == "1"
-
-# Readback is quoted as accurate to 1-2 degrees, so anything inside this is
-# noise rather than droop and must not be "corrected".
-_DEADBAND_DEG = 2
 
 
 def read_pose(bot: Rosmaster, attempts: int = 4) -> dict[int, int | None]:
@@ -170,22 +161,6 @@ class Arm:
             if not (cfg.HARD_LIMITS[j][0] <= v <= cfg.HARD_LIMITS[j][1])
         }
 
-    def assert_ready(self) -> None:
-        """Raise if any joint has drifted outside its range.
-
-        NOT called on connect. An unpowered arm sags past its limits routinely, and
-        refusing to connect would block the one thing that fixes it -- move_to()
-        clamps every joint into the safe envelope, so recovery is an ordinary move.
-        Callers who genuinely need a known-good arm can ask for this explicitly.
-        """
-        bad = self.out_of_range()
-        if bad:
-            raise ArmError(
-                f"joint(s) {bad} are outside their limits. Release torque and move them "
-                f"back by hand first -- a command to an out-of-range joint is silently "
-                f"discarded by the SDK, so the arm would simply not respond."
-            )
-
     # ---------------------------------------------------------------- motion --
     def _validate(self, goal: Pose) -> Pose:
         for joint, angle in goal.items():
@@ -227,22 +202,16 @@ class Arm:
             raise ArmError("the SDK would discard this command: " + ", ".join(bad))
         self.bot.set_uart_servo_angle_array(angles, run_time=run_time)
 
-    def move_to(
-        self,
-        targets: Pose,
-        speed_dps: float = 40.0,
-        verify: bool = True,
-        corrections: int = 3,
-    ) -> Pose:
+    def move_to(self, targets: Pose, speed_dps: float = 40.0) -> Pose:
         """Move to `targets` (partial poses allowed), interpolated so no single step
         exceeds step_deg. Bounding the step bounds the speed, and keeps every
         intermediate pose a legal one.
 
-        A loaded servo settles where its torque balances gravity, not on the angle
-        you asked for -- measured at -6 deg on J2 commanded to 120, stable rather than
-        still moving. So when we intend to verify, we close the loop; on the real arm
-        that converges exactly in three passes (120 -> 126 -> 130 -> 132 commanded,
-        landing on 120 actual).
+        Open loop on purpose. Real droop on this arm is about a degree (the -6 deg
+        once seen at J2=120 was the arm pushing into the mast), which is inside the
+        readback tolerance, and a joint-space correction cannot fix what matters --
+        the fingertip landing millimetres short at a top-down pitch. grasp._reach_to()
+        corrects that where it is measured, in millimetres.
         """
         start = self.read()
         # Only what the caller actually asked for has to be a legal target. Joints
@@ -260,19 +229,13 @@ class Arm:
             return start
 
         time.sleep(0.25)  # let the last segment settle before believing the readback
-        if verify:
-            # Skipped when verify is off, which is deliberate: close_gripper() must
-            # not keep squeezing harder on an object that stopped the fingers.
-            self._close_the_loop(goal, corrections)
-            self._verify(goal)
         return self.read()
 
     def _glide(self, start: Pose, goal: Pose, speed_dps: float) -> bool:
         """Interpolated move, no step larger than step_deg. Returns False if already there.
 
         Bounding the step bounds the speed and keeps every intermediate pose legal.
-        A loaded joint also simply cannot complete a large jump in one command, which
-        is why the correction loop glides too rather than sending one fast setpoint.
+        A loaded joint also simply cannot complete a large jump in one command.
         """
         # A joint that has sagged out of range cannot be glided back: every
         # intermediate angle is out of range too, and the SDK discards the lot.
@@ -301,56 +264,6 @@ class Arm:
             time.sleep(run_time / 1000)
         return True
 
-    def _close_the_loop(self, goal: Pose, passes: int) -> None:
-        """Re-command with the observed droop added on, to pull a sagging joint up.
-
-        The servo settles at (commanded - droop), so to land on the goal we must
-        command goal + droop -- and droop is `commanded - actual`, NOT the remaining
-        error `goal - actual`. Using the remaining error under-compensates on every
-        pass after the first, because it forgets the offset already being applied.
-
-        Converges to within a degree rather than to READBACK_TOLERANCE_DEG, so that
-        the tolerance stays a genuine check on the result and not the thing that
-        stops us improving it.
-        """
-        commanded = dict(goal)  # the interpolated move ended by commanding the goal
-        for step in range(1, passes + 1):
-            actual = self.read()
-            if _DEBUG:
-                moving = {j: (commanded[j], actual[j]) for j in cfg.JOINT_IDS
-                          if commanded[j] != actual[j]}
-                print(f"    [loop {step}] commanded/actual {moving}", flush=True)
-            if all(abs(goal[j] - actual[j]) <= _DEADBAND_DEG for j in cfg.JOINT_IDS):
-                if _DEBUG:
-                    print(f"    [loop {step}] converged", flush=True)
-                return
-            for joint in cfg.JOINT_IDS:
-                # Leave joints that are already there alone. Chasing a 1-2 degree
-                # readback offset walks that joint away from its goal, and moving one
-                # joint changes the load on the others -- which is exactly how the
-                # shoulder was kept from ever converging.
-                if abs(goal[joint] - actual[joint]) <= _DEADBAND_DEG:
-                    continue
-                lo, hi = cfg.SAFE_LIMITS[joint]
-                droop = commanded[joint] - actual[joint]
-                commanded[joint] = int(min(max(goal[joint] + droop, lo), hi))
-            self._glide(actual, commanded, speed_dps=20)
-            # A loaded joint needs about a second to stop moving. Reading sooner
-            # measures a joint still in flight and mis-estimates the droop, which
-            # stalls the loop several degrees short.
-            time.sleep(1.0)
-
-    def _verify(self, goal: Pose) -> None:
-        actual = self.read()
-        off = {
-            j: (goal[j], actual[j])
-            for j in cfg.JOINT_IDS
-            if abs(actual[j] - goal[j]) > cfg.READBACK_TOLERANCE_DEG
-        }
-        if off:
-            detail = ", ".join(f"J{j} wanted {w} got {g}" for j, (w, g) in off.items())
-            raise ArmError(f"arm did not reach the commanded pose: {detail}")
-
     def home(self, **kw) -> Pose:
         return self.move_to(dict(cfg.HOME_POSE), **kw)
 
@@ -362,9 +275,9 @@ class Arm:
         return self.set_gripper(cfg.GRIPPER_OPEN, **kw)
 
     def close_gripper(self, **kw) -> Pose:
-        # Verification off on purpose: an object stops the fingers short of the
-        # target, which is a successful grasp, not a fault. grasped() tells them apart.
-        return self.set_gripper(cfg.GRIPPER_CLOSED, verify=False, **kw)
+        # An object stops the fingers short of the target, which is a successful
+        # grasp, not a fault. grasped() tells the two apart.
+        return self.set_gripper(cfg.GRIPPER_CLOSED, **kw)
 
     def grasped(self) -> bool:
         """True if a close attempt was stopped short by an object between the fingers.

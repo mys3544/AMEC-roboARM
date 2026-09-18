@@ -6,7 +6,6 @@
 
     ... vision_check.py --health                 # is the model up? which classes?
     ... vision_check.py                          # objects on the table: what do we see?
-    ... vision_check.py --prompt "red cube, mug" # open-vocab, YOLOE model only
     ... vision_check.py --reach                  # drive the fingertip over the first one
 
 Same idea as detect_check.py: a neat box only proves the detector can SEE an object,
@@ -58,14 +57,13 @@ def report(targets: list[detect.Target]) -> None:
         )
 
 
-def do_find(arm: Arm, pose: dict[int, int], matrix, prompt: str | None,
-            reach: bool, url: str) -> int:
-    arm.move_to(pose, speed_dps=15, verify=False)
+def do_find(arm: Arm, pose: dict[int, int], matrix, reach: bool, url: str) -> int:
+    arm.move_to(pose, speed_dps=15)
     time.sleep(1.5)
     frame = camera.grab(6)[-1]
 
     try:
-        targets = detect.objects(frame, matrix, prompt=prompt, url=url)
+        targets = detect.objects(frame, matrix, url=url)
     except detect.DetectorOffline as exc:
         print(f"\n{exc}", file=sys.stderr)
         return 1
@@ -97,12 +95,12 @@ def do_find(arm: Arm, pose: dict[int, int], matrix, prompt: str | None,
           f"{target.x * 1000:.0f} mm forward, {target.y * 1000:+.0f} mm left "
           f"(pitch {pitch:.0f})")
     print(f"stopping {HOVER_M * 1000:.0f} mm above the table -- it will NOT touch.")
-    arm.move_to(arm_pose, speed_dps=12, verify=False)
+    arm.move_to(arm_pose, speed_dps=12)
     time.sleep(1.0)
     print(f"\nHolding {HOLD:.0f}s. How far are the fingertips from the object, "
           f"and which way?", flush=True)
     time.sleep(HOLD)
-    arm.move_to(pose, speed_dps=15, verify=False)
+    arm.move_to(pose, speed_dps=15)
     return 0
 
 
@@ -110,8 +108,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--health", action="store_true",
                         help="just query the service and print what it reports")
-    parser.add_argument("--prompt", default=None,
-                        help="comma-separated things to look for (YOLOE model only)")
     parser.add_argument("--reach", action="store_true",
                         help="drive the fingertip over the first object found")
     parser.add_argument("--url", default=cfg.DETECTOR_URL,
@@ -124,7 +120,7 @@ def main() -> int:
     try:
         matrix, pose = ws.load()
         with Arm() as arm:
-            return do_find(arm, pose, matrix, args.prompt, args.reach, args.url)
+            return do_find(arm, pose, matrix, args.reach, args.url)
     except (ArmError, camera.CameraError, ValueError, FileNotFoundError) as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)
         return 1

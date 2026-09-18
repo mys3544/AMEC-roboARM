@@ -1,15 +1,14 @@
 """HTTP wrapper around one Detector. `python3 -m vision_service.serve`.
 
-Two endpoints, both deliberately tiny:
+Standard library only, like roboarm.web.server: two endpoints do not need a
+framework.
 
     GET  /health   is the model loaded, on which device, with which classes.
                    roboarm.detect.vision_available() polls this to decide whether
                    the neural rung is usable.
-    POST /detect   body is a JPEG (Content-Type: image/jpeg). Optional headers:
-                     X-Vision-Prompt  comma-separated things to look for (YOLOE)
-                     X-Vision-Conf    confidence floor for this one request
-                   returns {model, open_vocab, prompt, width, height, detections},
-                   each detection {label, confidence, box:[x,y,w,h]} in PIXELS.
+    POST /detect   body is a JPEG (Content-Type: image/jpeg).
+                   returns {model, width, height, detections}, each detection
+                   {label, confidence, box:[x,y,w,h], polygon?} in PIXELS.
 
 The model is loaded once at startup, not per request, so a bad ROBOARM_VISION_MODEL
 fails the container immediately rather than on the first pick attempt.
@@ -17,26 +16,50 @@ fails the container immediately rather than on the first pick attempt.
 
 from __future__ import annotations
 
+import json
 import os
-from contextlib import asynccontextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from fastapi import FastAPI, HTTPException, Request
-
-from vision_service.detector import Detector, PromptNotSupported
-
-_detector: Detector | None = None
+from vision_service.detector import Detector
 
 
-def _get_detector() -> Detector:
-    global _detector
-    if _detector is None:
-        _detector = Detector.from_env()
-    return _detector
+class Handler(BaseHTTPRequestHandler):
+    detector: Detector
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt, *args):  # one line per frame is noise
+        pass
+
+    def _json(self, payload, status: int = 200) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        if self.path == "/health":
+            self._json(self.detector.health())
+        else:
+            self._json({"error": f"no such endpoint: GET {self.path}"}, 404)
+
+    def do_POST(self) -> None:
+        if self.path != "/detect":
+            self._json({"error": f"no such endpoint: POST {self.path}"}, 404)
+            return
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        if not body:
+            self._json({"error": "empty body -- POST a JPEG frame"}, 400)
+            return
+        try:
+            self._json(self.detector.infer(body))
+        except Exception as exc:  # noqa: BLE001 -- the client must hear about it
+            self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 
 
-@asynccontextmanager
-async def lifespan(_app: FastAPI):
-    detector = _get_detector()  # load + warmup now; a bad model is a boot failure
+def main() -> None:
+    detector = Detector.from_env()  # load + warmup now; a bad model is a boot failure
     # CUDA is injected by CDI at `docker run`, so this is the first point it can
     # be checked. Fail here rather than serve slow CPU inference that surprises
     # someone mid-demo. ROBOARM_VISION_REQUIRE_CUDA=0 opts into CPU on purpose.
@@ -47,47 +70,14 @@ async def lifespan(_app: FastAPI):
             "host has a CDI spec (`nvidia-ctk cdi generate`). Set "
             "ROBOARM_VISION_REQUIRE_CUDA=0 to run on CPU anyway."
         )
-    yield
-
-
-app = FastAPI(title="roboarm vision", lifespan=lifespan)
-
-
-@app.get("/health")
-def health() -> dict:
-    return _get_detector().health()
-
-
-@app.post("/detect")
-async def detect(request: Request) -> dict:
-    body = await request.body()
-    if not body:
-        raise HTTPException(status_code=400, detail="empty body -- POST a JPEG frame")
-
-    prompt = request.headers.get("x-vision-prompt") or None
-    raw_conf = request.headers.get("x-vision-conf")
-    try:
-        conf = float(raw_conf) if raw_conf else None
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"bad X-Vision-Conf: {raw_conf!r}")
-
-    try:
-        return _get_detector().infer(body, prompt=prompt, conf=conf)
-    except PromptNotSupported as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-def main() -> None:
-    import uvicorn
-
+    handler = type("BoundHandler", (Handler,), {"detector": detector})
     # Binds all interfaces INSIDE the container; compose publishes it to
     # 127.0.0.1 only, and on the compose network `core` reaches it as `vision`.
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=int(os.environ.get("ROBOARM_VISION_PORT", "8760")),
-        log_level=os.environ.get("ROBOARM_VISION_LOG", "info"),
-    )
+    port = int(os.environ.get("ROBOARM_VISION_PORT", "8760"))
+    server = ThreadingHTTPServer(("0.0.0.0", port), handler)
+    server.daemon_threads = True
+    print(f"roboarm vision: {detector.name} on port {port}, cuda={detector.cuda}", flush=True)
+    server.serve_forever()
 
 
 if __name__ == "__main__":

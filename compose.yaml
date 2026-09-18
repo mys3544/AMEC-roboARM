@@ -4,11 +4,11 @@ name: roboarm
 # names inside the container, so USB re-enumeration on the host cannot shuffle them.
 #   1a86 CH340        -> Rosmaster expansion board (arm + base + IMU)
 #   Sonix (no serial) -> wrist camera on arm_link4      (eye-in-hand)
-#   Sonix SN0001      -> Orbbec RGB on the mast         (eye-to-hand)
+# (The Orbbec RGB on the mast, Sonix SN0001, is fixed horizontal and cannot see
+# the table, so nothing uses it.)
 x-robot-devices: &robot-devices
   - /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0:/dev/robot_serial
   - /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera-video-index0:/dev/video0
-  - /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0:/dev/video1
 
 services:
   # ---------------------------------------------------------------- core ----
@@ -34,7 +34,6 @@ services:
       PYTHONUNBUFFERED: "1"
       ROBOARM_SERIAL: /dev/robot_serial
       ROBOARM_WRIST_CAM: "0"
-      ROBOARM_TABLE_CAM: "1"
       ROBOARM_DETECTOR_URL: http://vision:8760   # ignored unless vision is up
     user: "1000:1000"             # matches host jetson uid, so ./data stays writable
     group_add: ["20", "44"]       # dialout, video
@@ -93,7 +92,7 @@ services:
       PYTHONUNBUFFERED: "1"
       # The detector. A .pt path under /app/models, or a name Ultralytics can
       # fetch on first run while the robot has WiFi. A name containing "yoloe"
-      # is loaded open-vocabulary and then honours an X-Vision-Prompt header.
+      # is loaded with the YOLOE loader.
       # 2026-09-14: the prompt-free YOLOE-26 segmenter (YOLOE built on YOLO26).
       # Its label is nonsense ("stop sign", "traffic sign") and ignored; the mask
       # is what counts, and detect.range_block() sizes it. Measured on the lab's
@@ -106,11 +105,10 @@ services:
       # The plain yolo26*-seg are the fixed 80-class COCO models: they only find
       # what happens to look like a COCO class, so they are not the default.
       # Text prompts ("cube", "block", ...) found NOTHING on the tag-covered cube
-      # on 2026-09-11, hence prompt-free. Weights fetched by name on first run.
+      # on 2026-09-11, hence prompt-free and no prompting in the service at all.
+      # Weights fetched by name on first run.
       ROBOARM_VISION_MODEL: ${ROBOARM_VISION_MODEL:-/app/models/yoloe-26s-seg-pf.pt}
       ROBOARM_VISION_IMGSZ: ${ROBOARM_VISION_IMGSZ:-640}
       ROBOARM_VISION_CONF: ${ROBOARM_VISION_CONF:-0.25}
-      # Default classes for a YOLOE model when a request carries no prompt.
-      ROBOARM_VISION_CLASSES: ${ROBOARM_VISION_CLASSES:-}
     ports:
       - "127.0.0.1:8760:8760"     # localhost only, for debugging

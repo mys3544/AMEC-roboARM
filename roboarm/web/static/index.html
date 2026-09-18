@@ -112,7 +112,6 @@
   <div class="videos">
   <section class="video">
     <div class="bar">
-      <label>camera <select id="camera"></select></label>
       <label>view
         <select id="view">
           <option value="raw">raw</option>
@@ -130,7 +129,6 @@
           <option value="yolo">neural (vision service)</option>
         </select>
       </label>
-      <label id="promptlbl">prompt <input type="text" id="prompt" placeholder="e.g. red cube, mug" size="18"></label>
       <label>object mm <input type="number" id="objectmm" min="0" max="80" step="1" placeholder="auto"></label>
       <button id="snapbtn" title="open the current frame in a new tab">snapshot</button>
     </div>
@@ -305,7 +303,7 @@
     ap.innerHTML = arm.connected ? `arm: <b class="ok">connected</b>${arm.busy ? " · moving" : ""}${arm.torque ? "" : ' · <span class="warn">torque off</span>'}`
                                  : `arm: <b class="bad">not connected</b>`;
     $("battpill").innerHTML = `battery: <b class="${arm.battery && arm.battery < 10.8 ? "warn" : ""}">${arm.battery ? fmt(arm.battery, 1) + " V" : "…"}</b>`;
-    $("campill").innerHTML = s.camera_error ? `camera: <b class="bad">${s.camera_error}</b>` : `camera: <b>${s.camera}</b> ${fmt(s.camera_fps, 1)} fps`;
+    $("campill").innerHTML = s.camera_error ? `camera: <b class="bad">${s.camera_error}</b>` : `camera: <b>${fmt(s.camera_fps, 1)} fps</b>`;
     $("calpill").innerHTML = s.calibration.ok ? `calibration: <b class="ok">${s.calibration.looks.join(", ")}</b>`
                                               : `calibration: <b class="warn">none</b>`;
     $("calpill").title = s.calibration.error || "";
@@ -341,23 +339,16 @@
     $("armerror").textContent = arm.error || "";
 
     // view controls (only overwrite when not focused, so typing is not clobbered)
-    if (document.activeElement !== $("prompt")) $("prompt").value = s.prompt;
     if (document.activeElement !== $("objectmm")) $("objectmm").value = s.object_mm ?? "";
     if (document.activeElement !== $("speed")) $("speed").value = s.speed_dps;
     if (document.activeElement !== $("sweepstep")) $("sweepstep").value = s.step_deg;
     if (document.activeElement !== $("reachoff")) $("reachoff").value = s.reach_offset_mm;
     $("view").value = s.view; $("detector").value = s.detector;
-    cls($("promptlbl"), "hidden", s.detector !== "yolo");
-    const cam = $("camera");
-    if (cam.options.length !== s.cameras.length) {
-      cam.innerHTML = s.cameras.map(c => `<option value="${c}">${c}</option>`).join("");
-    }
-    cam.value = s.camera;
 
     // detections on the live view
     const d = s.detection;
     const ov = $("overlay");
-    if (s.view === "raw" || s.view === "edges") ov.textContent = `${s.view} · ${s.camera}`;
+    if (s.view === "raw" || s.view === "edges") ov.textContent = `${s.view} · wrist camera`;
     else ov.innerHTML = `${s.detector} · ${d.targets.length} found` +
       (d.at_station ? ' · <span class="ok">at survey station: table coordinates valid</span>'
                     : ' · <span class="warn">off station: positions are not table coordinates</span>') +
@@ -445,11 +436,11 @@
     if (name === "background" && !confirm("Is the table EMPTY? The background is what every later detection is compared against.")) return;
     api("/api/auto/start", params).then(poll).catch(() => {});
   }
-  const viewBody = () => ({view: $("view").value, detector: $("detector").value, prompt: $("prompt").value,
+  const viewBody = () => ({view: $("view").value, detector: $("detector").value,
                            object_mm: $("objectmm").value === "" ? 0 : +$("objectmm").value,
-                           camera: $("camera").value, speed_dps: +$("speed").value, step_deg: +$("sweepstep").value,
+                           speed_dps: +$("speed").value, step_deg: +$("sweepstep").value,
                            reach_offset_mm: +$("reachoff").value});
-  for (const id of ["view", "detector", "camera", "prompt", "objectmm", "speed", "sweepstep", "reachoff"])
+  for (const id of ["view", "detector", "objectmm", "speed", "sweepstep", "reachoff"])
     $(id).addEventListener("change", () => api("/api/view", viewBody()).then(poll).catch(() => {}));
   $("snapbtn").addEventListener("click", () => window.open("/snapshot.jpg?t=" + Date.now(), "_blank"));
 
@@ -468,12 +459,11 @@
     if (jog && !e.repeat) { e.preventDefault(); api("/api/arm/jog", {joint: jog[0], delta: jog[1]}).catch(() => {}); }
   });
 
-  // stream: reload the image if it stalls (server restart, camera swap)
+  // stream: reload the image if it stalls (server restart)
   function startStream() { $("stream").src = "/stream.mjpg?t=" + Date.now(); }
   function startStream2() { $("stream2").src = "/stream.mjpg?view=" + $("view2").value + "&t=" + Date.now(); }
   $("stream").addEventListener("error", () => setTimeout(startStream, 1500));
   $("stream2").addEventListener("error", () => setTimeout(startStream2, 1500));
-  $("camera").addEventListener("change", () => setTimeout(() => { startStream(); startStream2(); }, 300));
   $("view2").addEventListener("change", startStream2);
   $("snapbtn2").addEventListener("click", () => window.open("/snapshot.jpg?view=" + $("view2").value + "&t=" + Date.now(), "_blank"));
 

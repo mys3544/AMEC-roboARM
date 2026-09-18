@@ -300,12 +300,12 @@ def test_light_scale_ignores_the_objects_themselves():
 
 # ------------------------------------------------- reaching a point, not a pose --
 # MEASURED on the robot 2026-09-10 at 176 mm reach, tool 10 degrees off vertical:
-# the joints land within ONE degree of the commanded pose -- which arm.py correctly
-# treats as converged -- and the fingertip is still 9.9 mm short of the point that
-# was asked for. arm.move_to(verify=True) recovered only 3.2 mm of that, because a
-# 1 degree error is inside its deadband; correcting in millimetres recovered 6.8 mm
-# and put the height right as well (3.0 mm above the table when 8 mm was asked,
-# corrected to 8.8 mm).
+# the joints land within ONE degree of the commanded pose -- converged by any
+# joint-space test -- and the fingertip is still 9.9 mm short of the point that
+# was asked for. A joint-space droop loop recovered only 3.2 mm of that, because a
+# 1 degree error is inside any honest deadband; correcting in millimetres recovered
+# 6.8 mm and put the height right as well (3.0 mm above the table when 8 mm was
+# asked, corrected to 8.8 mm).
 #
 # These tests use a stub arm that sags by a fixed amount, which is what the real one
 # does, so they check the CORRECTION rather than the servo.
@@ -318,7 +318,7 @@ class SaggingArm:
         self.pose = dict(start or cfg.HOME_POSE)
         self.commanded = []
 
-    def move_to(self, targets, speed_dps=40.0, verify=True):
+    def move_to(self, targets, speed_dps=40.0):
         self.commanded.append(dict(targets))
         for joint, angle in targets.items():
             self.pose[joint] = angle + self.sag.get(joint, 0)
@@ -495,10 +495,17 @@ def test_nothing_on_the_table_needs_no_nadir():
 # the point under the lens, joined by the side faces the lens can see. Its height
 # is its width, so the outline alone says how big and where it is -- no tag, no
 # background, no declared size. These render exactly that outline and ask
-# detect.cube_range() to undo it.
+# detect.range_block() to undo it.
 
 NADIR = (0.050, 0.050)     # pixel (50, 50) under MM_PER_PIXEL
 LENS_M = 0.212             # the calibrated survey pose's lens height
+
+
+def cube_range(outline, nadir, lens_m):
+    """(footprint quad, edge length, agreement) -- range_block without the height,
+    which for a cube is the edge length again."""
+    quad, width, _height, agreement = detect.range_block(outline, nadir, lens_m)
+    return quad, width, agreement
 
 
 def cube_outline(x, y, size, yaw_deg=0.0, nadir=NADIR, lens_m=LENS_M):
@@ -528,7 +535,7 @@ def hull_scene(cubes, bgr=(190, 60, 40), nadir=NADIR, lens_m=LENS_M):
 @pytest.mark.parametrize("size", [0.022, 0.040, 0.055])
 @pytest.mark.parametrize("x, y", [(0.300, 0.250), (0.150, 0.300), (0.400, 0.120)])
 def test_cube_range_recovers_size_and_position(size, x, y):
-    quad, found, agreement = detect.cube_range(cube_outline(x, y, size), NADIR, LENS_M)
+    quad, found, agreement = cube_range(cube_outline(x, y, size), NADIR, LENS_M)
     centre = quad.mean(axis=0)
     assert found == pytest.approx(size, abs=0.0015)
     assert centre[0] == pytest.approx(x, abs=0.002)
@@ -538,7 +545,7 @@ def test_cube_range_recovers_size_and_position(size, x, y):
 
 @pytest.mark.parametrize("yaw", [0, 12, 30, 45, 77])
 def test_cube_range_copes_with_a_turned_cube(yaw):
-    quad, found, agreement = detect.cube_range(
+    quad, found, agreement = cube_range(
         cube_outline(0.300, 0.250, 0.040, yaw_deg=yaw), NADIR, LENS_M)
     centre = quad.mean(axis=0)
     assert found == pytest.approx(0.040, abs=0.0015)
@@ -566,8 +573,8 @@ def test_a_shadow_off_the_far_side_does_not_change_the_size():
     away /= np.linalg.norm(away)
     shadow = outline + away * 0.030
     smeared = cv2.convexHull(np.vstack([outline, shadow]).astype(np.float32)).reshape(-1, 2)
-    _quad, found, agreement = detect.cube_range(smeared, NADIR, LENS_M)
-    _q, _f, clean = detect.cube_range(outline, NADIR, LENS_M)
+    _quad, found, agreement = cube_range(smeared, NADIR, LENS_M)
+    _q, _f, clean = cube_range(outline, NADIR, LENS_M)
     assert found == pytest.approx(0.040, abs=0.003)
     assert agreement < clean - 0.1
 
@@ -577,15 +584,15 @@ def test_a_nadir_error_barely_moves_the_answer():
     nadir error is about 2 mm of position and nothing in size. (The near-face
     closed form this replaced lost the whole height to such an error.)"""
     outline = cube_outline(0.300, 0.250, 0.040)
-    _q, size, _a = detect.cube_range(outline, NADIR, LENS_M)
-    quad, size_off, _a = detect.cube_range(outline, (NADIR[0] + 0.010, NADIR[1]), LENS_M)
+    _q, size, _a = cube_range(outline, NADIR, LENS_M)
+    quad, size_off, _a = cube_range(outline, (NADIR[0] + 0.010, NADIR[1]), LENS_M)
     assert size_off == pytest.approx(size, abs=0.0005)
     assert math.dist(quad.mean(axis=0), (0.300, 0.250)) < 0.003
 
 
 def test_cube_range_refuses_a_degenerate_outline():
     with pytest.raises(ValueError):
-        detect.cube_range(np.array([[0.1, 0.1], [0.2, 0.2]]), NADIR, LENS_M)
+        cube_range(np.array([[0.1, 0.1], [0.2, 0.2]]), NADIR, LENS_M)
 
 
 def test_coloured_with_the_lens_height_sizes_and_places_the_cube():

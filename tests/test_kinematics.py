@@ -33,7 +33,7 @@ def test_straight_up_is_very_nearly_vertical():
     assert abs(y) < 1e-9, "no sideways component at J1=90"
     # Slightly less than the full stacked length, because the joint offsets leave
     # the arm a few degrees off vertical rather than perfectly straight.
-    stacked = cfg.BASE_PLATE_TO_J2 + kin.L1 + kin.L2 + kin.L3
+    stacked = cfg.BASE_PLATE_TO_J2 + kin.L1 + kin.L2 + cfg.tool_length(cfg.GRIPPER_CLOSED)
     assert z == pytest.approx(stacked, abs=0.003)
     # Checked against the real arm: parked upright with the gripper CLOSED, the
     # table-to-fingertip distance measured 575 mm. The model puts it at
@@ -149,12 +149,6 @@ def test_both_elbow_solutions_reach_the_same_point():
         assert math.dist(kin.forward(pose), target) < ROUNDING_LIMIT
 
 
-def test_reachable_agrees_with_inverse():
-    reference = {**STRAIGHT_UP, 2: 45}
-    assert kin.reachable(*kin.forward(reference), pitch_deg=kin.tool_pitch(reference))
-    assert not kin.reachable(0.60, 0.0, 0.20)
-
-
 # ------------------------------------------------------------------ solve --
 def test_solve_finds_a_pitch_across_the_working_strip():
     z = -cfg.TABLE_BELOW_PLATE + 0.030
@@ -264,7 +258,7 @@ def test_gripper_for_gap_picks_the_narrowest_opening_that_fits():
 
 def test_gripper_gap_answers_at_angles_nobody_measured():
     """GRIPPER_CLOSED is 170 and the table jumps 150 -> 177, so a direct lookup
-    raises KeyError. tools/camera_offset.py crashed on exactly that."""
+    raises KeyError -- which a measurement tool once crashed on."""
     assert cfg.GRIPPER_CLOSED not in cfg.GRIPPER_GAP_MM
     gap = cfg.gripper_gap(cfg.GRIPPER_CLOSED)
     assert 0.013 < gap < 0.025, "between the 177 and 150 entries"

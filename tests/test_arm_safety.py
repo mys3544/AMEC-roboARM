@@ -156,14 +156,13 @@ def test_untouched_joints_keep_their_angle(monkeypatch):
         }
 
 
-def test_raises_when_the_arm_does_not_arrive(monkeypatch):
-    # J2 jams well short of a legal target. Derived from SAFE_LIMITS rather than
-    # hard-coded, so tightening a limit does not silently turn this into a
-    # different test (it would start failing validation instead of arrival).
+def test_a_jammed_joint_is_reported_honestly_not_raised(monkeypatch):
+    # J2 jams well short of a legal target. Moves are open loop: the pose that
+    # comes back is the one the arm is actually in, and the caller decides.
     goal = cfg.SAFE_LIMITS[2][1]
     a, _ = build(monkeypatch, sticky={2: (-999, goal - 20)})
-    with a, pytest.raises(ArmError, match="did not reach"):
-        a.move_to({2: goal})
+    with a:
+        assert a.move_to({2: goal})[2] == goal - 20
 
 
 def test_move_to_current_pose_sends_nothing(monkeypatch):
@@ -259,28 +258,20 @@ def test_a_genuinely_dead_joint_still_raises(monkeypatch):
 
 
 # ------------------------------------------------------------------- droop --
-def test_a_drooping_joint_is_corrected_by_closing_the_loop(monkeypatch):
-    # J2 settles 5 deg short of whatever it is told, exactly as the real shoulder
-    # does at 120. One correction pass should land it on target.
-    goal = cfg.SAFE_LIMITS[2][1] - 8   # leave headroom for the compensation
-    a, board = build(monkeypatch, sag={2: 5})
+def test_a_drooping_joint_is_not_chased(monkeypatch):
+    # J2 settles a degree short of whatever it is told. Chasing that walks the
+    # joint about and changes the load on its neighbours; the fingertip is
+    # corrected in millimetres by grasp._reach_to() instead. So: one command
+    # sequence to the goal, and the honest readback.
+    goal = cfg.SAFE_LIMITS[2][1] - 8
+    a, board = build(monkeypatch, sag={2: 1})
     with a:
-        a.move_to({2: goal})
-        assert board.pose[2] == goal
+        board.sent.clear()
+        assert a.move_to({2: goal})[2] == goal - 1
+        assert max(cmd[1] for cmd, _ in board.sent) == goal, "never commanded past the goal"
 
 
-def test_droop_that_cannot_be_compensated_still_raises(monkeypatch):
-    # Near the top of the safe range there is no headroom left to add the error
-    # onto, so the correction gets clamped and the joint never arrives. That must
-    # be reported, not silently accepted.
-    a, _ = build(monkeypatch, sag={2: 20})
-    goal = cfg.SAFE_LIMITS[2][1] - 5      # 165: compensating to 185 clamps at 170
-    with a, pytest.raises(ArmError, match="did not reach"):
-        a.move_to({2: goal})
-
-
-def test_closing_the_loop_is_skipped_when_not_verifying(monkeypatch):
-    # The gripper must not keep squeezing harder on an object that stopped it.
+def test_the_gripper_never_squeezes_harder_on_an_object(monkeypatch):
     # A rising angle closes, so "harder" means commanding ABOVE the closed target.
     a, board = build(monkeypatch, pose={**RESTING, 6: cfg.GRIPPER_OPEN}, sticky={6: (-999, 120)})
     with a:

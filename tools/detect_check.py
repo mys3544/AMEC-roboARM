@@ -37,7 +37,7 @@ HOLD = 40.0
 
 def at_survey_pose(arm: Arm, matrix_pose: dict[int, int]) -> list:
     """Drive to the pose the homography was fitted at, and grab settled frames."""
-    arm.move_to(matrix_pose, speed_dps=15, verify=False)
+    arm.move_to(matrix_pose, speed_dps=15)
     time.sleep(1.5)
     return camera.grab(6)
 
@@ -54,12 +54,12 @@ def do_background(arm: Arm, pose: dict[int, int], matrix, step_deg: float) -> in
     looks = sweep.ring(pose, matrix, step_deg)
     print(f"photographing the empty table from {len(looks)} stations.")
     for look in looks:
-        arm.move_to(look.pose, speed_dps=20, verify=False)
+        arm.move_to(look.pose, speed_dps=20)
         time.sleep(1.5)
         detect.save_background(camera.grab(6)[-1], look.dyaw)
         print(f"  dyaw {look.dyaw:+6.1f} (J1={look.pose[1]:3d}) -> "
               f"{detect.background_path(look.dyaw).name}")
-    arm.move_to(pose, speed_dps=20, verify=False)
+    arm.move_to(pose, speed_dps=20)
     print()
     print("Do not move the board, the lamp or the robot before detecting --")
     print("these frames are the reference everything is compared against.")
@@ -174,11 +174,11 @@ def do_find(arm: Arm, pose: dict[int, int], matrix, reach: bool,
     print(f"\nreaching for {target.label} at {target.x * 1000:.0f} mm forward, "
           f"{target.y * 1000:+.0f} mm left (pitch {pitch:.0f})")
     print(f"stopping {hover_m * 1000:.0f} mm above the table -- it will NOT touch.")
-    arm.move_to(arm_pose, speed_dps=12, verify=False)
+    arm.move_to(arm_pose, speed_dps=12)
     time.sleep(1.0)
 
-    # Did the arm actually GO there? This move runs with verify=False, so nothing
-    # corrects droop and nothing checks the result. Without this readback a miss
+    # Did the arm actually GO there? Moves are open loop, so nothing checks the
+    # result on the way. Without this readback a miss
     # cannot be blamed: "the camera said the wrong place" and "the arm did not go
     # where it was told" look identical from the far side of the ruler.
     actual = arm.read()
@@ -198,7 +198,7 @@ def do_find(arm: Arm, pose: dict[int, int], matrix, reach: bool,
     print(f"\nHolding {HOLD:.0f}s. How far are the fingertips from the object, "
           f"and which way?", flush=True)
     time.sleep(HOLD)
-    arm.move_to(pose, speed_dps=15, verify=False)
+    arm.move_to(pose, speed_dps=15)
     return 0
 
 

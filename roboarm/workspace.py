@@ -102,22 +102,13 @@ def average_corners(frames: list[np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
     )
 
 
-def fit(frame) -> tuple[np.ndarray, float, int]:
-    """Fit the pixel -> table homography. Accepts one frame or a list of them.
-
-    Returns (H, worst residual m, n points).
-    """
-    pixels, table = (find_corners(frame) if isinstance(frame, np.ndarray)
-                     else average_corners(frame))
-    return fit_points(pixels, table)
-
-
 def fit_points(pixels: np.ndarray, table: np.ndarray) -> tuple[np.ndarray, float, int]:
-    """Fit the pixel -> table homography from matched points. See fit().
+    """Fit the pixel -> table homography from matched points.
 
-    Split out so a fit can pool correspondences from SEVERAL frames of the same
-    look -- e.g. the outer look, whose picture holds one whole marker, fitted
-    from that marker seen at several base yaws (tools/calibrate_table.py --yaws).
+    Returns (H, worst residual m, n points). Takes points rather than frames so a
+    fit can pool correspondences from SEVERAL frames of the same look -- e.g. the
+    outer look, whose picture holds one whole marker, fitted from that marker
+    seen at several base yaws (tools/calibrate_table.py --yaws).
     """
     pixels = np.asarray(pixels, dtype=float).reshape(-1, 2)
     table = np.asarray(table, dtype=float).reshape(-1, 2)

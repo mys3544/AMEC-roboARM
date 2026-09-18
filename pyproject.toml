@@ -10,7 +10,6 @@ dependencies = [
     "numpy>=1.26",
     "opencv-contrib-python-headless>=4.10,<5",  # contrib = ArUco. Headless = no GUI libs.
     "pyserial>=3.5",                            # required by the vendored Rosmaster SDK
-    "scipy>=1.11",                              # Rotation utils for hand-eye calibration
 ]
 
 [dependency-groups]

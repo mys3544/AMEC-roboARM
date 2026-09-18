@@ -92,7 +92,7 @@ def main() -> int:
         try:
             with Arm() as arm:
                 arm.move_to(PARKED, speed_dps=25)
-                actual = arm.move_to(wanted, speed_dps=15, verify=False)
+                actual = arm.move_to(wanted, speed_dps=15)
                 x, _y, z = kin.forward(actual)
                 print(f"reached J2={actual[2]} J3={actual[3]} J4={actual[4]} J6={actual[6]}")
                 print(f"model: {x * 1000:.0f} mm forward, "

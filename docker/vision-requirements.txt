@@ -5,9 +5,9 @@
 # can never swap the l4t-pytorch base's CUDA torch / torchvision / opencv for a
 # PyPI wheel) and its two small helpers.
 #
-# Everything ultralytics actually needs on top of the base -- pyyaml, tqdm, scipy,
-# matplotlib, ... -- plus the whole HTTP layer is in vision-extra-requirements.txt
-# and IS resolved by uv (stage 2). None of that depends on torch, so it is safe.
+# Everything ultralytics actually needs on top of the base -- pyyaml, scipy,
+# matplotlib, polars -- is in vision-extra-requirements.txt and IS resolved by uv
+# (stage 2). None of that depends on torch, so it is safe.
 #
 # Base image (dustynv/l4t-pytorch:r36.4.0) already provides, verified 2026-09-09:
 #   torch 2.4.0, torchvision 0.19, torchaudio, torch2trt, numpy 1.26.4,

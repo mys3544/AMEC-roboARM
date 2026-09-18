@@ -47,7 +47,7 @@ def main() -> int:
     try:
         matrix, survey = ws.load()
         with Arm() as arm:
-            arm.move_to(survey, speed_dps=20, verify=False)
+            arm.move_to(survey, speed_dps=20)
             time.sleep(1.5)
             home = sweep.Look(0.0, survey, matrix)
             seed = detect.markers(camera.grab(6)[-1], matrix,
@@ -77,7 +77,7 @@ def main() -> int:
             print("dyaw   nadir (mm)        raw tag (mm)       corrected (mm)     mag")
             raws, fixed = [], []
             for look in usable:
-                arm.move_to(look.pose, speed_dps=20, verify=False)
+                arm.move_to(look.pose, speed_dps=20)
                 time.sleep(1.3)
                 frame = camera.grab(6)[-1]
                 flat = detect.markers(frame, look.matrix, tag_m=None)
@@ -93,7 +93,7 @@ def main() -> int:
                       f"({lifted[0].x * 1000:6.1f},{lifted[0].y * 1000:+6.1f})  {grown:.3f}")
                 raws.append((flat[0].x, flat[0].y))
                 fixed.append((lifted[0].x, lifted[0].y))
-            arm.move_to(survey, speed_dps=20, verify=False)
+            arm.move_to(survey, speed_dps=20)
 
         for name, points in (("uncorrected", raws), ("corrected", fixed)):
             if len(points) < 2:

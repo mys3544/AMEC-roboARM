@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Expose this robot's arm and cameras over HTTP, for a control panel elsewhere.
+"""Expose this robot's arm and wrist camera over HTTP, for a control panel elsewhere.
 
 On the robot (the `bridge` compose service does exactly this):
 
@@ -49,17 +49,14 @@ def main() -> int:
         path.write_text(json.dumps({"homography": matrix.tolist(), "name": name,
                                     "survey_pose": {str(j): a for j, a in pose.items()}}))
         hw = bridge.Bridge(arm_factory=lambda: arm,
-                           streams={"wrist": lambda: sim.SimStream(arm)},
+                           stream=lambda: sim.SimStream(arm),
                            calibration_path=path)
     else:
         from roboarm.arm import Arm
 
         hw = bridge.Bridge(
             arm_factory=Arm,
-            streams={
-                "wrist": lambda: camera.Stream(cfg.WRIST_CAM),
-                "mast": lambda: camera.Stream(cfg.TABLE_CAM, cfg.TABLE_CAM_SIZE),
-            },
+            stream=lambda: camera.Stream(cfg.WRIST_CAM),
             calibration_path=ws.CALIBRATION_PATH,
         )
     bridge.serve(hw, args.host, args.port)

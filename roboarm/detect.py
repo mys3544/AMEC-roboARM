@@ -289,7 +289,7 @@ def changes(frame, background, matrix: np.ndarray,
     the whole image reads as one enormous object.
 
     With `nadir` and `lens_m` each silhouette is read as a CUBE and ranged --
-    see cube_range(); without them the outline is reported as the table plane
+    see range_block(); without them the outline is reported as the table plane
     saw it, which for anything standing up is a little big and a little far.
     """
     return outlines(foreground(frame, background), matrix, "object",
@@ -321,27 +321,26 @@ def changes(frame, background, matrix: np.ndarray,
 MIN_SATURATION = 70
 
 
-def colour_mask(frame, min_saturation: int = MIN_SATURATION) -> np.ndarray:
+def colour_mask(frame) -> np.ndarray:
     """Pixels that bring their own colour to a colourless table, cleaned up.
 
     Public so the panel's mask view shows exactly what the detector measured.
     """
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask = (hsv[:, :, 1] > min_saturation).astype(np.uint8) * 255
+    mask = (hsv[:, :, 1] > MIN_SATURATION).astype(np.uint8) * 255
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
 
-def coloured(frame, matrix: np.ndarray, min_saturation: int = MIN_SATURATION,
-             nadir: tuple[float, float] | None = None,
+def coloured(frame, matrix: np.ndarray, nadir: tuple[float, float] | None = None,
              height_m: float = 0.0, lens_m: float | None = None) -> list[Target]:
     """Strongly coloured objects on a colourless table, in table coordinates.
 
     Two ways to undo the parallax of an object standing above the table plane:
 
       * `lens_m` (with `nadir`): the object is taken to be a CUBE, and its own
-        outline says how tall it is -- cube_range(). Size and position both come
+        outline says how tall it is -- range_block(). Size and position both come
         out right, for any size of cube, and nothing has to be declared.
       * `height_m` (with `nadir`): the old way, for something whose height is
         known and whose width is not its height. The outline is unlifted about
@@ -350,7 +349,7 @@ def coloured(frame, matrix: np.ndarray, min_saturation: int = MIN_SATURATION,
     Without either the outline is reported as the table plane saw it.
 
     The outline of a solid object includes whichever SIDE faces the lens can see,
-    not just its top; cube_range() uses that, the fixed-height path is made a
+    not just its top; range_block() uses that, the fixed-height path is made a
     little generous by it -- the safe direction for choosing a gripper opening.
     """
     if height_m > 0.0 and nadir is None:
@@ -358,7 +357,7 @@ def coloured(frame, matrix: np.ndarray, min_saturation: int = MIN_SATURATION,
             "coloured() needs nadir= to correct for an object standing "
             "above the table; pass kin.camera_nadir(pose)"
         )
-    return outlines(colour_mask(frame, min_saturation), matrix, "colour",
+    return outlines(colour_mask(frame), matrix, "colour",
                     nadir=nadir, height_m=height_m, lens_m=lens_m)
 
 
@@ -436,34 +435,12 @@ def edges_touched(pixels: np.ndarray, shape: tuple[int, ...],
     return frozenset(touched)
 
 
-def touches_edge(pixels: np.ndarray, shape: tuple[int, ...],
-                 margin_px: int = CLIPPED_MARGIN_PX) -> bool:
-    """Whether an outline in PIXELS runs into the border of a picture this shape."""
-    return bool(edges_touched(pixels, shape, margin_px))
-
-
-# A cube measured from its own outline: how well its two independent size
-# estimates agreed. Below this the blob is not a clean cube -- a shadow is
-# attached, two objects touch, or it is clipped -- and the target is reported
-# with that as its confidence so the caller can prefer a surer one.
-CUBE_AGREEMENT_OK = 0.7
-
-
 # An outline edge shorter than this is a chamfer -- the pixel grid and the
 # mask's opening rounding a corner -- not a side of anything. A pixel-scale
 # thing, so callers that know the picture's scale pass CHAMFER_PX of it;
 # this default is that at the wrist camera's 4.4 px/mm.
 CHAMFER_M = 0.002
 CHAMFER_PX = 8
-
-
-def cube_range(outline: np.ndarray, nadir, lens_m: float) -> tuple[np.ndarray, float, float]:
-    """A cube's footprint and edge length from its apparent outline. See range_block().
-
-    Returns (footprint quad on the table, edge length in metres, agreement 0..1).
-    """
-    quad, width, _height, agreement = range_block(outline, nadir, lens_m)
-    return quad, width, agreement
 
 
 def range_block(outline: np.ndarray, nadir, lens_m: float,
@@ -697,17 +674,15 @@ def _unlift(quad: np.ndarray, nadir: np.ndarray, tag_m: float) -> np.ndarray:
 def markers(
     frame,
     matrix: np.ndarray,
-    ignore: set[int] | None = None,
-    dictionary_name: str | None = None,
     tag_m: float | None = None,
     nadir: tuple[float, float] | None = None,
     lens_m: float | None = None,
 ) -> list[Target]:
     """Tags on the table, one Target each.
 
-    Defaults to the OBJECT tag family (AprilTag 36h11), not the calibration board's
+    Reads the OBJECT tag family (AprilTag 36h11), not the calibration board's
     ArUco -- they are deliberately different, so a board left on the table cannot be
-    read as an object. `ignore` is kept for the case where they ever coincide.
+    read as an object.
 
     `tag_m` is the tag's true printed size. Given it, positions are corrected for the
     tag being raised above the table (see `_unlift`); without it they are reported
@@ -730,18 +705,14 @@ def markers(
             "nadir=kin.camera_nadir(survey_pose)"
         )
 
-    name = dictionary_name or cfg.OBJECT_TAG_DICT
-    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, name))
+    dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, cfg.OBJECT_TAG_DICT))
     detector = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
     corners, ids, _ = detector.detectMarkers(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
     if ids is None or not len(ids):
         return []
 
-    ignore = ignore or set()
     found = []
     for marker, corner in zip(ids.ravel().astype(int), corners):
-        if marker in ignore:
-            continue
         quad = ws.apply(matrix, corner.reshape(4, 2))
         height = None
         if tag_m:
@@ -800,9 +771,9 @@ def _vision_post(path: str, body: bytes | None, headers: dict[str, str],
                  url: str, timeout: float) -> dict:
     """One request to the vision service. Raises DetectorOffline if nothing answers.
 
-    An HTTP error (e.g. 400 for a prompt a fixed-class model cannot honour) means
-    the service DID reply and the request was wrong -- that is a ValueError, not an
-    outage, and must not trigger a silent fall back to a worse detector.
+    An HTTP error (e.g. 400 for a body it could not decode) means the service DID
+    reply and the request was wrong -- that is a ValueError, not an outage, and
+    must not trigger a silent fall back to a worse detector.
     """
     request = urllib.request.Request(
         url.rstrip("/") + path, data=body, headers=headers,
@@ -866,7 +837,8 @@ def whole_objects(outlines: list[tuple[dict, np.ndarray, bool]],
     # cannot vouch for what lies inside it. Seen on the robot: the cube AND its
     # shadow as one mask running out of the bottom of the frame (0.72), with the
     # clean cube mask (0.71) inside it -- the clean one must survive.
-    whole = [not picture[i] and not touches_edge(outlines[i][1], shape) for i in range(len(outlines))]
+    whole = [not picture[i] and not edges_touched(outlines[i][1], shape)
+             for i in range(len(outlines))]
     kept = []
     for i, entry in enumerate(outlines):
         if areas[i] == 0 or picture[i]:
@@ -885,40 +857,24 @@ def objects(
     frame,
     matrix: np.ndarray,
     *,
-    prompt: str | None = None,
     url: str | None = None,
-    conf: float | None = None,
-    timeout: float | None = None,
     nadir: tuple[float, float] | None = None,
     lens_m: float | None = None,
 ) -> list[Target]:
     """Objects found by the neural detector, in table coordinates.
 
-    `prompt` is a comma-separated list of things to look for and only works against
-    an open-vocabulary (YOLOE) model; against a fixed-class model it raises
-    ValueError rather than quietly ignoring it. Omit it to get the model's own
-    classes.
-
     Boxes come back in pixels and are mapped through the SAME homography the other
     detectors use -- so the parallax note in this module's header applies here too.
     Given `nadir` and `lens_m` each box is read as a cube's outline and ranged
-    (cube_range), which puts the base where it is and sizes the cube; without
+    (range_block), which puts the base where it is and sizes the cube; without
     them a tall object's box is its TOP, a few millimetres too far out.
     """
     ok, buffer = cv2.imencode(".jpg", frame)
     if not ok:
         raise ValueError("could not JPEG-encode the frame to send to the vision service")
 
-    headers = {"Content-Type": "image/jpeg"}
-    if prompt:
-        headers["X-Vision-Prompt"] = prompt
-    if conf is not None:
-        headers["X-Vision-Conf"] = str(conf)
-
-    reply = _vision_post(
-        "/detect", buffer.tobytes(), headers,
-        url or cfg.DETECTOR_URL, cfg.DETECTOR_TIMEOUT_S if timeout is None else timeout,
-    )
+    reply = _vision_post("/detect", buffer.tobytes(), {"Content-Type": "image/jpeg"},
+                         url or cfg.DETECTOR_URL, cfg.DETECTOR_TIMEOUT_S)
 
     outlines: list[tuple[dict, np.ndarray, bool]] = []
     for item in reply.get("detections", []):
@@ -1033,12 +989,6 @@ def load_background(dyaw: float = 0.0, name: str = "primary"):
 # ---------------------------------------------------------------- ladder ----
 MODES = ("auto", "changes", "colour", "markers", "yolo")
 
-# What the neural rung is asked for in "auto" mode. The vision container serves
-# a YOLOE model whose classes were fixed to these words when it was saved
-# (models/yoloe-cubes.pt, see docs), so no prompt goes over the wire -- it is
-# recorded here for the day someone re-prompts it.
-CUBE_PROMPT = "cube, block, box, dice"
-
 # Two silhouettes of the same object from different rungs land within this of
 # each other; two objects the gripper could tell apart never do (18 mm minimum).
 SAME_OBJECT_M = 0.020
@@ -1103,7 +1053,7 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
     return sorted(fused + untagged, key=lambda t: math.hypot(t.x, t.y))
 
 
-def ladder(frame, mode: str, matrix: np.ndarray, *, prompt: str | None = None,
+def ladder(frame, mode: str, matrix: np.ndarray, *,
            nadir: tuple[float, float] | None = None, dyaw: float = 0.0,
            object_mm: float | None = None, url: str | None = None,
            lens_m: float | None = None, look_name: str = "primary",
@@ -1132,7 +1082,7 @@ def ladder(frame, mode: str, matrix: np.ndarray, *, prompt: str | None = None,
                            url=url, look_name=look_name, note=note)
     elif mode == "yolo":
         try:
-            found = objects(frame, matrix, prompt=prompt, url=url, nadir=nadir, lens_m=lens_m)
+            found = objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
         except DetectorOffline as exc:
             note(f"  vision service down ({exc}); falling back to tags.")
             mode = "markers"

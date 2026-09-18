@@ -19,9 +19,9 @@ degrees off vertical, and there the forearm contributes reach as l3*sin(pitch), 
     d(reach)/d(pitch) = l3 * cos(pitch) = 185 mm * cos(170 deg) = -3.2 mm/degree
 
 Two joints a degree low is most of a centimetre at the fingertip. Correcting in
-JOINT space cannot help -- arm.move_to(verify=True) recovered 3.2 mm of the 9.9
-and then stopped, because 1 degree is inside its deadband, and the deadband is
-right: chasing a degree walks a joint about and changes the load on its neighbours.
+JOINT space cannot help -- arm.py's droop loop (since deleted) recovered 3.2 mm of
+the 9.9 and then stopped, because 1 degree is inside any honest deadband, and
+chasing a degree walks a joint about and changes the load on its neighbours.
 The fix has to be applied where the error is measured in millimetres, which is
 grasp._reach_to(), and this tool is how that claim was established and how it
 should be re-established after any change to the arm or its calibration.
@@ -29,7 +29,7 @@ should be re-established after any change to the arm or its calibration.
 MEASURED 2026-09-10 at 176 mm, bearing -40, tool pitch 170, gripper open to 42 mm:
 
     open loop      9.9 mm short,  fingertip 3.0 mm up when 8 mm was asked
-    joint-space    6.7 mm short,  fingertip 3.5 mm up
+    joint-space    6.7 mm short,  fingertip 3.5 mm up   (the old droop loop)
     cartesian      3.1 mm short,  fingertip 8.8 mm up
 
 The 3.1 mm that remains is the arm's resolution, not slack in the method: the IK
@@ -98,22 +98,16 @@ def main() -> int:
             arm.move_to({j: a for j, a in hover.items() if j != cfg.GRIPPER_ID},
                         speed_dps=15, verify=False)
 
-            arm.move_to(arm_only, speed_dps=grasp.DESCEND_DPS, verify=False)
+            arm.move_to(arm_only, speed_dps=grasp.DESCEND_DPS)
             time.sleep(0.8)
             loose = landed(arm, (x, y, z), pose, opening, "OPEN LOOP")
-
-            arm.move_to(arm_only, speed_dps=grasp.DESCEND_DPS, verify=True)
-            time.sleep(0.8)
-            joints = landed(arm, (x, y, z), pose, opening,
-                            "JOINT-SPACE LOOP (arm.move_to verify=True)")
 
             grasp._reach_to(arm, x, y, z, pitch, opening, grasp.DESCEND_DPS)
             time.sleep(0.5)
             cartesian = landed(arm, (x, y, z), pose, opening,
-                               "CARTESIAN LOOP (what grasp.pick now does)")
+                               "CARTESIAN LOOP (what grasp.pick does)")
 
-            print(f"\njoint-space correction recovered {(loose - joints) * 1000:+5.1f} mm")
-            print(f"cartesian   correction recovered {(loose - cartesian) * 1000:+5.1f} mm")
+            print(f"\ncartesian correction recovered {(loose - cartesian) * 1000:+5.1f} mm")
             arm.move_to(survey, speed_dps=20, verify=False)
     except (ArmError, ValueError, FileNotFoundError) as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)

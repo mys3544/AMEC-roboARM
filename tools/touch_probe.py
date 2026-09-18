@@ -48,7 +48,7 @@ STOPPED_MARGIN_MM = 8.0    # above the commanded height counts as blocked
 
 
 def find(arm: Arm, look: sweep.Look, height_m: float) -> tuple[float, float]:
-    arm.move_to(look.pose, speed_dps=20, verify=False)
+    arm.move_to(look.pose, speed_dps=20)
     time.sleep(2.0)
     frame = camera.grab(8)[-1]
     found = detect.coloured(frame, look.matrix, nadir=look.nadir, height_m=height_m)
@@ -71,13 +71,13 @@ def probe(arm: Arm, x: float, y: float, closed: int) -> float | None:
         print(f"    unreachable: {exc}")
         return None
     arm.move_to({j: a for j, a in above.items() if j != cfg.GRIPPER_ID},
-                speed_dps=18, verify=False)
+                speed_dps=18)
     arm.move_to({j: a for j, a in down.items() if j != cfg.GRIPPER_ID},
-                speed_dps=6, verify=False)
+                speed_dps=6)
     time.sleep(1.0)
     reached = kin.forward({**arm.read(), cfg.GRIPPER_ID: closed})[2] - table
     arm.move_to({j: a for j, a in above.items() if j != cfg.GRIPPER_ID},
-                speed_dps=18, verify=False)
+                speed_dps=18)
     return reached
 
 
@@ -103,7 +103,7 @@ def main() -> int:
                 x, y = find(arm, look, args.height_mm / 1000)
 
             radius, bearing = math.hypot(x, y), math.degrees(math.atan2(y, x))
-            arm.set_gripper(cfg.GRIPPER_CLOSED, speed_dps=60, verify=False)
+            arm.set_gripper(cfg.GRIPPER_CLOSED, speed_dps=60)
             time.sleep(1.0)
             closed = arm.read()[cfg.GRIPPER_ID]
             print(f"gripper shut to J6={closed}, tool "
@@ -125,7 +125,7 @@ def main() -> int:
                 if blocked:
                     hits.append((offset, reached * 1000))
 
-            arm.move_to(survey, speed_dps=20, verify=False)
+            arm.move_to(survey, speed_dps=20)
             print()
             if not hits:
                 print("Nothing stopped the fingertip anywhere along that radius.")

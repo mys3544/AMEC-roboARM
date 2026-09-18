@@ -69,8 +69,7 @@ from roboarm import config as cfg
 from roboarm import detect
 from roboarm import kinematics as kin
 from roboarm.arm import Arm, ArmError
-
-Pose = dict[int, int]
+from roboarm.config import Pose
 
 HOVER_M = 0.060
 # 2026-09-18: 8 -> 4 mm. The touch probe reads the fingertips ~10 mm HIGHER than the
@@ -219,17 +218,16 @@ def _solve_near(x: float, y: float, z: float, pitch: float,
 # of the point that was asked for, because at that pitch a degree at the wrist is
 # 3.2 mm of reach and two joints were a degree low.
 #
-# So joint-space correction cannot fix this, and arm.move_to(verify=True) provably
-# does not: driven open loop and closed loop, the same pose measured 6.7 mm short
-# BOTH TIMES, because the 1 degree error is inside its deadband. The deadband is
-# right -- chasing a degree walks a joint about and changes the load on its
-# neighbours -- so the correction has to happen where the error actually matters,
-# in millimetres at the fingertip.
+# So joint-space correction cannot fix this, and a droop loop in arm.py provably
+# did not: driven open loop and closed loop, the same pose measured 6.7 mm short
+# BOTH TIMES, because the 1 degree error is inside any honest deadband. Chasing a
+# degree walks a joint about and changes the load on its neighbours, so the
+# correction has to happen where the error actually matters, in millimetres at
+# the fingertip.
 #
-# The scheme is arm.py's own, one level up: the arm settles at (aimed - shortfall),
-# so to LAND on the goal, aim at (goal + shortfall). Aiming at the remaining error
-# instead would forget the offset already applied and under-correct on every pass
-# after the first -- the same trap _close_the_loop() documents.
+# The arm settles at (aimed - shortfall), so to LAND on the goal, aim at
+# (goal + shortfall). Aiming at the remaining error instead would forget the
+# offset already applied and under-correct on every pass after the first.
 #
 # Two passes: the first removes almost all of it, the second catches what changing
 # the pose changed about the load.
@@ -253,7 +251,7 @@ def _reach_to(arm: Arm, x: float, y: float, z: float, pitch: float, gripper: int
     pose, _used = kin.solve(x, y, z, pitches=(pitch,), gripper=gripper)
     roll = arm.read()[5] if roll is None else roll
     for _ in range(passes + 1):
-        arm.move_to(_arm_only(_rolled(pose, roll)), speed_dps=speed_dps, verify=False)
+        arm.move_to(_arm_only(_rolled(pose, roll)), speed_dps=speed_dps)
         time.sleep(0.4)
         landed = kin.forward({**arm.read(), cfg.GRIPPER_ID: gripper})
         short = [goal - got for goal, got in zip((x, y, z), landed)]
@@ -367,8 +365,7 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
             f"(the model lands the tips that much short): "
             f"{target.x * 1000:.0f} mm fwd, {target.y * 1000:+.0f} mm left")
 
-    # Set the opening BEFORE the arm sets off, and let it ARRIVE (verify on --
-    # nothing is held, so there is nothing for the fingers to stop against).
+    # Set the opening BEFORE the arm sets off, and let it ARRIVE.
     #
     # Travelling with the arm saved no time worth having and cost two things that
     # both bite at the worst moment. The fingers were still moving during the
@@ -388,7 +385,7 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
         f"{target.width_m * 1000:.0f} mm object, before moving")
     arm.set_gripper(step.opening, speed_dps=GRIPPER_DPS)
     say("moving above it")
-    arm.move_to(_arm_only(step.hover), speed_dps=APPROACH_DPS, verify=False)
+    arm.move_to(_arm_only(step.hover), speed_dps=APPROACH_DPS)
     say(f"fingers turned to close along {kin.finger_heading(step.grasp):+.0f} deg "
         f"(object's narrow way is at {target.angle_deg:+.0f}; J5={step.roll})")
 
@@ -425,7 +422,7 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
         # Ask grasped() BEFORE this, never after: relaxing the squeeze changes the
         # gripper target, and grasped() only answers about a close it asked for.
         settled = arm.read()[cfg.GRIPPER_ID]
-        arm.set_gripper(min(settled + SQUEEZE_DEG, cfg.GRIPPER_CLOSED), verify=False)
+        arm.set_gripper(min(settled + SQUEEZE_DEG, cfg.GRIPPER_CLOSED))
 
     lift(arm, target.x, target.y, step.pitch)
     return holding
@@ -463,7 +460,7 @@ def lift(arm: Arm, x: float, y: float, pitch: float) -> None:
         except kin.Unreachable:
             continue
         # The wrist keeps its roll too: un-turning it here would twist what is held.
-        arm.move_to(_arm_only(_rolled(up_pose, now[5])), speed_dps=APPROACH_DPS, verify=False)
+        arm.move_to(_arm_only(_rolled(up_pose, now[5])), speed_dps=APPROACH_DPS)
         return
     # Nothing above it is reachable while holding this. Stay put rather than raise:
     # the caller still has the object, and can place it from where it stands.
@@ -502,8 +499,8 @@ def place(arm: Arm, x: float, y: float, verbose: bool = True,
     # The roll the object was picked with stays for the put-down, so it is set
     # down the way it was lifted.
     over_pose, down_pose = _rolled(over_pose, now[5]), _rolled(down_pose, now[5])
-    arm.move_to(_arm_only(over_pose), speed_dps=APPROACH_DPS, verify=False)
-    arm.move_to(_arm_only(down_pose), speed_dps=PLACE_DESCEND_DPS, verify=False)
+    arm.move_to(_arm_only(over_pose), speed_dps=APPROACH_DPS)
+    arm.move_to(_arm_only(down_pose), speed_dps=PLACE_DESCEND_DPS)
     time.sleep(0.2)
     # Open only as far as the fingers need to clear what they hold, not all the
     # way: releasing a 40 mm cube needs 12 mm of clearance, not 30, and the
@@ -512,8 +509,8 @@ def place(arm: Arm, x: float, y: float, verbose: bool = True,
         release = cfg.gripper_for_gap(cfg.gripper_gap(held) + 2 * FINGER_CLEARANCE_M)
     except ValueError:
         release = cfg.GRIPPER_OPEN
-    arm.set_gripper(min(release, held), speed_dps=GRIPPER_DPS, verify=False)
+    arm.set_gripper(min(release, held), speed_dps=GRIPPER_DPS)
     time.sleep(0.3)
     # Straight back up, fingers left open, before anything else moves -- so they
     # clear the object instead of dragging it along.
-    arm.move_to(_arm_only(over_pose), speed_dps=APPROACH_DPS, verify=False)
+    arm.move_to(_arm_only(over_pose), speed_dps=APPROACH_DPS)

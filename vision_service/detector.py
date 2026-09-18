@@ -11,14 +11,12 @@ file mounted:
     ROBOARM_VISION_MODEL     path to weights, or a name Ultralytics can fetch.
                              Default /app/models/yoloe-26s-seg-pf.pt, the
                              prompt-free YOLOE built on YOLO26 (2026-09-14). A name
-                             containing "yoloe" is loaded as an open-vocabulary
-                             model; a plain "yolo26n-seg.pt" is the fixed
-                             80-class COCO segmenter, which sees the lab's red
-                             cube (as a "stop sign") but not the wooden one.
+                             containing "yoloe" is loaded with the YOLOE loader; a
+                             plain "yolo26n-seg.pt" is the fixed 80-class COCO
+                             segmenter, which sees the lab's red cube (as a "stop
+                             sign") but not the wooden one.
     ROBOARM_VISION_IMGSZ     inference size, default 640.
-    ROBOARM_VISION_CONF      default confidence floor, default 0.25.
-    ROBOARM_VISION_CLASSES   comma-separated default prompt for a YOLOE model,
-                             used when a request carries no X-Vision-Prompt.
+    ROBOARM_VISION_CONF      confidence floor, default 0.25.
 """
 
 from __future__ import annotations
@@ -27,10 +25,6 @@ import io
 import os
 
 DEFAULT_MODEL = "/app/models/yoloe-26s-seg-pf.pt"
-
-
-class PromptNotSupported(RuntimeError):
-    """A text prompt was given to a fixed-class model that cannot honour it."""
 
 
 def extract_detections(boxes, names, masks=None) -> list[dict]:
@@ -42,16 +36,15 @@ def extract_detections(boxes, names, masks=None) -> list[dict]:
     carries `polygon`, its outline in pixels -- what the client's block ranging
     wants, since a box only circumscribes the object.
 
-    Written against the per-box tensors Ultralytics yields (`.cls`, `.conf` shape
-    (1,); `.xyxy` shape (1, 4)) but tolerant of plain scalars/lists so a test can
-    fake it without torch.
+    Written against the per-box tensors Ultralytics yields: `.cls` and `.conf`
+    of shape (1,), `.xyxy` of shape (1, 4).
     """
     polygons = list(getattr(masks, "xy", None) or []) if masks is not None else []
     out: list[dict] = []
     for index, box in enumerate(boxes):
-        cls = int(_first(box.cls))
-        score = float(_first(box.conf))
-        x1, y1, x2, y2 = (float(v) for v in _row(box.xyxy))
+        cls = int(box.cls[0])
+        score = float(box.conf[0])
+        x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
         label = names[cls] if not isinstance(names, dict) else names.get(cls, str(cls))
         item = {
             "label": str(label),
@@ -65,36 +58,14 @@ def extract_detections(boxes, names, masks=None) -> list[dict]:
     return out
 
 
-def _first(value):
-    """`value[0]` if it is a sequence/tensor, else `value`."""
-    try:
-        return value[0]
-    except (TypeError, IndexError, KeyError):
-        return value
-
-
-def _row(value):
-    """The first row of an (N, 4) tensor/list, or `value` if it is already 4 long."""
-    row = _first(value)
-    # A bare (4,) tensor indexes to a scalar on [0]; detect that and use it whole.
-    try:
-        if len(row) == 4:
-            return row
-    except TypeError:
-        pass
-    return value
-
-
 class Detector:
-    """A loaded model plus the small amount of state prompting needs."""
+    """A loaded model and its settings."""
 
-    def __init__(self, model, name: str, open_vocab: bool, imgsz: int, conf: float):
+    def __init__(self, model, name: str, imgsz: int, conf: float):
         self._model = model
         self.name = name
-        self.open_vocab = open_vocab
         self.imgsz = imgsz
         self.conf = conf
-        self._applied: tuple[str, ...] | None = None
         self.cuda = _cuda_available()
         self.classes = self._model_classes()
 
@@ -104,14 +75,7 @@ class Detector:
         path = _resolve_model(os.environ.get("ROBOARM_VISION_MODEL", DEFAULT_MODEL))
         imgsz = int(os.environ.get("ROBOARM_VISION_IMGSZ", "640"))
         conf = float(os.environ.get("ROBOARM_VISION_CONF", "0.25"))
-        open_vocab = "yoloe" in os.path.basename(path).lower()
-
-        model = _load_model(path, open_vocab)
-        detector = cls(model, os.path.basename(path), open_vocab, imgsz, conf)
-
-        default_prompt = os.environ.get("ROBOARM_VISION_CLASSES", "").strip()
-        if open_vocab and default_prompt:
-            detector._set_classes(_split(default_prompt))
+        detector = cls(_load_model(path), os.path.basename(path), imgsz, conf)
         detector._warmup()
         return detector
 
@@ -124,32 +88,16 @@ class Detector:
         return []
 
     # ----------------------------------------------------------- inference --
-    def infer(self, jpeg: bytes, prompt: str | None = None,
-              conf: float | None = None) -> dict:
-        # Reject a bad request before doing any decoding or inference.
-        if prompt and not self.open_vocab:
-            raise PromptNotSupported(
-                f"{self.name} has a fixed class list; a text prompt needs a "
-                f"YOLOE model (set ROBOARM_VISION_MODEL to one)."
-            )
-
+    def infer(self, jpeg: bytes) -> dict:
         from PIL import Image
 
         image = Image.open(io.BytesIO(jpeg)).convert("RGB")
-        if prompt:
-            self._set_classes(_split(prompt))
-
-        results = self._model.predict(
-            image, imgsz=self.imgsz, conf=self.conf if conf is None else conf,
-            verbose=False,
-        )
+        results = self._model.predict(image, imgsz=self.imgsz, conf=self.conf, verbose=False)
         first = results[0]
         detections = extract_detections(first.boxes, first.names,
                                         getattr(first, "masks", None))
         return {
             "model": self.name,
-            "open_vocab": self.open_vocab,
-            "prompt": prompt,
             "width": image.width,
             "height": image.height,
             "detections": detections,
@@ -159,22 +107,11 @@ class Detector:
         return {
             "status": "ok",
             "model": self.name,
-            "open_vocab": self.open_vocab,
             "classes": self.classes,
             "cuda": self.cuda,
             "imgsz": self.imgsz,
             "conf": self.conf,
         }
-
-    # ------------------------------------------------------------ prompting --
-    def _set_classes(self, classes: list[str]) -> None:
-        key = tuple(classes)
-        if key == self._applied:
-            return
-        # get_text_pe() runs the (slow) text encoder; skip it when unchanged.
-        self._model.set_classes(classes, self._model.get_text_pe(classes))
-        self._applied = key
-        self.classes = list(classes)
 
     def _warmup(self) -> None:
         from PIL import Image
@@ -184,10 +121,6 @@ class Detector:
             self._model.predict(blank, imgsz=self.imgsz, conf=0.99, verbose=False)
         except (RuntimeError, OSError, ValueError) as exc:  # best-effort: a cold
             print(f"vision: warmup inference failed ({exc}); first /detect will be slow")
-
-
-def _split(prompt: str) -> list[str]:
-    return [part.strip() for part in prompt.split(",") if part.strip()]
 
 
 def _resolve_model(path: str) -> str:
@@ -211,8 +144,9 @@ def _resolve_model(path: str) -> str:
     return path
 
 
-def _load_model(path: str, open_vocab: bool):
-    if open_vocab:
+def _load_model(path: str):
+    # YOLOE weights need the YOLOE loader; anything else is a plain YOLO.
+    if "yoloe" in os.path.basename(path).lower():
         try:
             from ultralytics import YOLOE as Loader
         except ImportError:

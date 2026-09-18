@@ -107,13 +107,11 @@ def check_arm() -> None:
     del bot
 
 
-def check_camera(index: int, name: str, size: tuple[int, int], mjpg: bool) -> None:
+def check_camera(index: int, name: str, size: tuple[int, int]) -> None:
     cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
     if not cap.isOpened():
         record(name, FAIL, f"/dev/video{index} will not open (held by another process?)")
         return
-    if mjpg:
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
 
@@ -149,8 +147,7 @@ def check_aruco() -> None:
 
 def main() -> int:
     check_arm()
-    check_camera(cfg.WRIST_CAM, "wrist camera", cfg.WRIST_CAM_SIZE, mjpg=False)
-    check_camera(cfg.TABLE_CAM, "table camera", cfg.TABLE_CAM_SIZE, mjpg=True)
+    check_camera(cfg.WRIST_CAM, "wrist camera", cfg.WRIST_CAM_SIZE)
     check_aruco()
 
     width = max(len(n) for n, _, _ in results)

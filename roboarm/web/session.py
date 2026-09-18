@@ -18,8 +18,7 @@ keep the arm safe with several browser tabs and threads all talking at once:
 
   3. THE CAMERA IS OWNED, NOT BORROWED. camera.Stream keeps the device open for the
      live view, so the automatic pipeline takes frames from the stream rather than
-     re-opening the camera (which V4L2 would refuse). `_look_once()` is
-     tools/pick.py's look_once() with that one substitution.
+     re-opening the camera (which V4L2 would refuse). See `_look_all()`.
 
 Nothing here is hardware-specific: the arm and the camera are handed in, so
 sim.py can stand in for both and the whole thing runs on a laptop.
@@ -45,18 +44,20 @@ from roboarm import camera, detect, grasp, sweep
 from roboarm import config as cfg
 from roboarm import kinematics as kin
 from roboarm.arm import ArmError
-
-Pose = dict[int, int]
+from roboarm.config import Pose
 
 MODES = ("manual", "auto")
 VIEWS = ("raw", "detect", "mask", "edges")
 
-# Where a picked object is put down, as in tools/pick.py.
+# Where a picked object is put down. The sweep CAN see this spot, so a second
+# run finds the cube where the first one left it: a free end-to-end check.
 DROP_X = 0.150
 DROP_Y = -0.070
 
 # How far from the sweep's estimate the refine look may find the object and still
-# be believed to be the same one (tools/pick.py).
+# be believed to be the same one. Generous next to the few mm the two views should
+# disagree by, tight enough that it cannot lock on to a different object: two
+# graspable objects cannot physically sit closer than 30 mm.
 REFIND_M = 0.030
 
 # Detection on the live view runs at most this often. The wrist camera is ~7 fps
@@ -160,13 +161,13 @@ class Session:
         self,
         *,
         arm_factory: Callable[[], object],
-        streams: dict[str, Callable[[], camera.Stream]],
+        stream: Callable[[], camera.Stream],
         calibration: Callable[[], list[tuple[np.ndarray, Pose, str]]],
         out_dir: Path | None = None,
         detector_url: str = cfg.DETECTOR_URL,
     ):
         self._arm_factory = arm_factory
-        self._stream_factories = streams
+        self._stream_factory = stream
         self._calibration_loader = calibration
         self.out_dir = out_dir
         self.detector_url = detector_url
@@ -174,7 +175,6 @@ class Session:
         self.mode = "manual"
         self.view = "detect"
         self.detector = "auto"
-        self.prompt: str | None = None
         self.object_mm: float | None = None
         self.step_deg = float(sweep.SURVEY_STEP_DEG)
         self.speed_dps = 30.0
@@ -190,7 +190,6 @@ class Session:
         self._torque = True
         self._holding = False
 
-        self.camera_name = next(iter(streams))
         self.stream: camera.Stream | None = None
 
         self._stop = threading.Event()
@@ -212,8 +211,6 @@ class Session:
         self._frame_seq = 0
         self.sweep_targets: list[detect.Target] = []
         self.sweep_when = 0.0
-        self._coverage: dict[tuple, float] = {}
-        self._coverage_lock = threading.Lock()
         self._lap_started = 0.0
 
         self._threads: list[threading.Thread] = []
@@ -222,7 +219,7 @@ class Session:
     # ------------------------------------------------------------- lifecycle --
     def start(self) -> Session:
         self.reload_calibration()
-        self.set_camera(self.camera_name)
+        self.stream = self._stream_factory().start()
         self.connect()
         for name, target in (("detect", self._detect_loop), ("poll", self._poll_loop)):
             thread = threading.Thread(target=target, name=name, daemon=True)
@@ -284,17 +281,6 @@ class Session:
             self.arm = None
             self.log("arm disconnected")
 
-    def set_camera(self, name: str) -> None:
-        if name not in self._stream_factories:
-            raise ValueError(f"no camera called {name!r}")
-        if self.stream is not None and name == self.camera_name:
-            return
-        if self.stream is not None:
-            self.stream.stop()
-        self.camera_name = name
-        self.stream = self._stream_factories[name]().start()
-        self.log(f"camera: {name}")
-
     # ----------------------------------------------------------------- arm ---
     def _with_arm(self, fn, wait: float = MANUAL_WAIT_S):
         if not self._lock.acquire(timeout=wait):
@@ -346,7 +332,7 @@ class Session:
         goal = {int(j): round(float(a)) for j, a in targets.items()}
         speed = float(speed_dps or self.speed_dps)
         what = "move " + " ".join(f"J{j}={a}" for j, a in sorted(goal.items()))
-        return self._manual(lambda arm: arm.move_to(goal, speed_dps=speed, verify=False), what)
+        return self._manual(lambda arm: arm.move_to(goal, speed_dps=speed), what)
 
     def jog(self, joint: int, delta: float, speed_dps: float | None = None) -> Pose:
         pose = self.pose()
@@ -358,14 +344,14 @@ class Session:
 
     def gripper(self, angle: int | None = None, action: str | None = None) -> Pose:
         if action == "open":
-            return self._manual(lambda arm: arm.open_gripper(speed_dps=60, verify=False),
+            return self._manual(lambda arm: arm.open_gripper(speed_dps=60),
                                 "open gripper")
         if action == "close":
             return self._manual(lambda arm: arm.close_gripper(speed_dps=40), "close gripper")
         if angle is None:
             raise ValueError("give an angle or an action")
         return self._manual(
-            lambda arm: arm.set_gripper(int(angle), speed_dps=60, verify=False),
+            lambda arm: arm.set_gripper(int(angle), speed_dps=60),
             f"gripper to {int(angle)}")
 
     def cartesian(self, dx: float = 0.0, dy: float = 0.0, dz: float = 0.0,
@@ -408,13 +394,13 @@ class Session:
 
     def preset(self, name: str) -> Pose:
         if name == "home":
-            return self._manual(lambda arm: arm.home(speed_dps=self.speed_dps, verify=False),
+            return self._manual(lambda arm: arm.home(speed_dps=self.speed_dps),
                                 "home")
         if name == "survey":
             look = self._primary_look()
             return self._manual(
-                lambda arm: arm.move_to(look, speed_dps=min(self.speed_dps, 20.0),
-                                        verify=False), "survey pose")
+                lambda arm: arm.move_to(look, speed_dps=min(self.speed_dps, 20.0)),
+                "survey pose")
         raise ValueError(f"no preset called {name!r}")
 
     def hold(self) -> Pose | None:
@@ -481,8 +467,7 @@ class Session:
         self.log(f"mode: {mode}")
 
     def set_view(self, view: str | None = None, detector: str | None = None,
-                 prompt: str | None = None, object_mm: float | None = None,
-                 camera_name: str | None = None, step_deg: float | None = None,
+                 object_mm: float | None = None, step_deg: float | None = None,
                  speed_dps: float | None = None,
                  reach_offset_mm: float | None = None) -> None:
         if view is not None:
@@ -493,12 +478,8 @@ class Session:
             if detector not in detect.MODES:
                 raise ValueError(f"detector must be one of {detect.MODES}")
             self.detector = detector
-        if prompt is not None:
-            self.prompt = prompt.strip() or None
         if object_mm is not None:
             self.object_mm = float(object_mm) if float(object_mm) > 0 else None
-        if camera_name is not None:
-            self.set_camera(camera_name)
         if step_deg is not None:
             if not (5 <= float(step_deg) <= 90):
                 raise ValueError("sweep step must be 5..90 degrees")
@@ -529,13 +510,10 @@ class Session:
             "view": self.view,
             "detector": self.detector,
             "detectors": list(detect.MODES),
-            "prompt": self.prompt or "",
             "object_mm": self.object_mm,
             "step_deg": self.step_deg,
             "speed_dps": self.speed_dps,
             "reach_offset_mm": self.reach_offset_mm,
-            "camera": self.camera_name,
-            "cameras": list(self._stream_factories),
             "camera_fps": round(stream.fps, 1) if stream else 0.0,
             "camera_error": stream.error if stream else "no camera",
             "arm": {
@@ -677,7 +655,7 @@ class Session:
         error = None
         notes: list[str] = []
         try:
-            targets = detect.ladder(frame, self.detector, matrix, prompt=self.prompt,
+            targets = detect.ladder(frame, self.detector, matrix,
                                     nadir=nadir, dyaw=dyaw, object_mm=self.object_mm,
                                     url=self._vision_url(), lens_m=lens_m,
                                     look_name=look.name if look else "primary",
@@ -841,12 +819,8 @@ class Session:
             raise FileNotFoundError(self.calibration_error or "no table calibration loaded")
         return dict(self.calibrated[0][1])
 
-    def _look_once(self, look: sweep.Look) -> list[detect.Target]:
-        """What this station can measure: whole objects, wholly in shot."""
-        return self._look_all(look)[0]
-
     def _look_all(self, look: sweep.Look) -> tuple[list[detect.Target], list[detect.Target]]:
-        """tools/pick.py look_once(), taking the frame from the live stream.
+        """Drive to one station and report what it can see, in table coordinates.
 
         Returns (measurable, clipped): the objects wholly in shot, and the ones
         cut off at a frame edge -- unusable as targets, but sweep.hints() reads
@@ -857,11 +831,11 @@ class Session:
         before = self.pose()
         yaw_only = before is not None and all(
             abs(before[j] - look.pose[j]) <= 1 for j in (2, 3, 4, 5))
-        self.arm.move_to(look.pose, speed_dps=STATION_DPS, verify=False)
+        self.arm.move_to(look.pose, speed_dps=STATION_DPS)
         self._refresh()
         settle = min(self.settle_s, YAW_SETTLE_S) if yaw_only else self.settle_s
         frame = self.stream.settled(settle, count=1)[-1]
-        found = detect.ladder(frame, self.detector, look.matrix, prompt=self.prompt,
+        found = detect.ladder(frame, self.detector, look.matrix,
                               nadir=look.nadir, dyaw=look.dyaw, object_mm=self.object_mm,
                               url=self._vision_url(), lens_m=kin.camera_height(look.pose),
                               look_name=look.name, note=self.log)
@@ -906,7 +880,7 @@ class Session:
         return self.detector_url
 
     def _job_survey(self) -> None:
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, verify=False)
+        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
 
     def _lap(self, what: str | None = None) -> None:
         """Log how long the stage since the last call took, and start the next.
@@ -917,21 +891,6 @@ class Session:
         if what and self._lap_started:
             self.log(f"  [{what} took {now - self._lap_started:.1f} s]")
         self._lap_started = now
-
-    def _coverage_of(self, looks: list[sweep.Look]) -> float:
-        """sweep.coverage(), remembered: it cost two seconds at the start of every
-        search. (A warm-up thread at session start was tried and dropped: it
-        starved the frame and detection loops for those two seconds, which is
-        exactly when a freshly started session is asked what it sees. The IK
-        grid under it is now memoised per process anyway.)"""
-        key = (self.step_deg, tuple((round(look.dyaw, 3), tuple(look.pose.items()))
-                               for look in looks))
-        # One computation at a time: a job that arrives while the warm-up is
-        # still running waits for its answer rather than starting a second.
-        with self._coverage_lock:
-            if key not in self._coverage:
-                self._coverage[key], _missed = sweep.coverage(looks)
-            return self._coverage[key]
 
     def _job_sweep(self, first: bool = False, **_ignored) -> list[detect.Target]:
         """Scan the ring of stations and list what is on the table.
@@ -953,10 +912,8 @@ class Session:
             # needs the camera's exposure to settle again.
             order = [name for _m, _p, name in self._all_calibrated()]
             looks.sort(key=lambda look: (order.index(look.name), abs(look.pose[1] - pose[1])))
-        covered = self._coverage_of(looks)
         self.log(f"{'searching' if first else 'sweeping'} {len(looks)} stations "
-                 f"{self.step_deg:.0f} deg apart, covering {covered:.1%} of reach, "
-                 f"detector = {self.detector}"
+                 f"{self.step_deg:.0f} deg apart, detector = {self.detector}"
                  + (", nearest station first, stopping when something is found" if first else ""))
         seen: list[tuple[sweep.Look, detect.Target]] = []
         stopped_early = False
@@ -1001,7 +958,7 @@ class Session:
             self.log(f"  {target.label:<12} {info['x_mm']:6.0f} mm fwd, {info['y_mm']:+6.0f} mm "
                      f"left  {info['width_mm']} x {info['length_mm']} mm   {verdict}")
         if not stopped_early:
-            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, verify=False)
+            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
         self._lap("search" if first else "sweep")
         return merged
 
@@ -1056,14 +1013,14 @@ class Session:
         self._lap("pick")
         if not held:
             self.log("the gripper closed on nothing")
-            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, verify=False)
+            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
             raise ValueError("closed on nothing -- see the log for the usual causes")
         self.log("holding it")
         grasp.place(self.arm, DROP_X if drop_x is None else drop_x / 1000,
                     DROP_Y if drop_y is None else drop_y / 1000,
                     reach_offset_m=self.reach_offset_mm / 1000)
         self._lap("place")
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, verify=False)
+        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
         self.sweep_targets = []
         self._lap("return to survey")
         self.log("done")
@@ -1082,7 +1039,7 @@ class Session:
             self.log(f"  already looking at it head-on from J1={pose[1]}; no second look needed")
             return target
         self.log(f"  looking again with J1={look.pose[1]} (dyaw {look.dyaw:+.1f})")
-        found = self._look_once(look)
+        found, _clipped = self._look_all(look)
         near = [t for t in found if math.hypot(t.x - target.x, t.y - target.y) <= REFIND_M]
         if not near:
             self.log(f"  WARNING: nothing within {REFIND_M * 1000:.0f} mm of the sweep's "
@@ -1097,19 +1054,19 @@ class Session:
     def _job_place(self, x: float, y: float, **_ignored) -> None:
         grasp.place(self.arm, float(x) / 1000, float(y) / 1000,
                     reach_offset_m=self.reach_offset_mm / 1000)
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, verify=False)
+        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
 
     def _job_background(self, **_ignored) -> None:
         looks = sweep.stations(self._all_calibrated(), self.step_deg)
         self.log(f"photographing the empty table from {len(looks)} stations")
         for look in looks:
-            self.arm.move_to(look.pose, speed_dps=STATION_DPS, verify=False)
+            self.arm.move_to(look.pose, speed_dps=STATION_DPS)
             self._refresh()
             detect.save_background(self.stream.settled(self.settle_s)[-1],
                                    look.dyaw, look.name)
             self.log(f"  {look.name} dyaw {look.dyaw:+6.1f} -> "
                      f"{detect.background_path(look.dyaw, look.name).name}")
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, verify=False)
+        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
         self.log("do not move the board, the lamp or the robot before detecting")
 
 

@@ -13,8 +13,7 @@ stream open does not block the JSON calls the same page is making.
     GET  /api/log?since=N       log lines newer than N
 
     POST /api/mode              {"mode": "manual" | "auto"}
-    POST /api/view              {view, detector, prompt, object_mm, camera, step_deg, speed_dps,
-                                 reach_offset_mm}
+    POST /api/view              {view, detector, object_mm, step_deg, speed_dps, reach_offset_mm}
     POST /api/arm/move          {"joints": {"1": 90, ...}, "speed_dps": 30}
     POST /api/arm/jog           {"joint": 2, "delta": -5}
     POST /api/arm/cartesian     {"dx": 5, "dy": 0, "dz": 0}  or  {"x": 160, "y": 0, "z": 40}
@@ -112,8 +111,7 @@ def _routes(session: Session) -> dict:
         ("GET", "/api/log"): lambda p: {"lines": session.log_since(int(p.get("since", 0)))},
         ("POST", "/api/mode"): lambda p: (session.set_mode(p["mode"]), {"ok": True})[1],
         ("POST", "/api/view"): lambda p: (session.set_view(
-            view=p.get("view"), detector=p.get("detector"), prompt=p.get("prompt"),
-            object_mm=p.get("object_mm"), camera_name=p.get("camera"),
+            view=p.get("view"), detector=p.get("detector"), object_mm=p.get("object_mm"),
             step_deg=p.get("step_deg"), speed_dps=p.get("speed_dps"),
             reach_offset_mm=p.get("reach_offset_mm")), {"ok": True})[1],
         ("POST", "/api/arm/move"): lambda p: pose_reply(
@@ -151,12 +149,9 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     # ------------------------------------------------------------- replies --
-    def _json(self, payload, status: int = 200) -> None:
-        send_json(self, payload, status)
-
     def _file(self, path: Path, content_type: str) -> None:
         if not path.is_file():
-            self._json({"error": "not found"}, 404)
+            send_json(self, {"error": "not found"}, 404)
             return
         body = path.read_bytes()
         self.send_response(200)
@@ -182,20 +177,20 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         route = self.routes.get((method, path))
         if route is None:
-            self._json({"error": f"no such endpoint: {method} {path}"}, 404)
+            send_json(self, {"error": f"no such endpoint: {method} {path}"}, 404)
             return
         try:
-            self._json(route(params))
+            send_json(self, route(params))
         except (Busy, Refused) as exc:
-            self._json({"error": str(exc)}, HTTPStatus.CONFLICT)
+            send_json(self, {"error": str(exc)}, HTTPStatus.CONFLICT)
         except (ArmError, camera.CameraError, kin.Unreachable, sweep.NoLook,
                 ValueError, KeyError, TypeError, FileNotFoundError) as exc:
             detail = f"missing field {exc}" if isinstance(exc, KeyError) else str(exc)
-            self._json({"error": detail}, HTTPStatus.BAD_REQUEST)
+            send_json(self, {"error": detail}, HTTPStatus.BAD_REQUEST)
         except Exception as exc:  # noqa: BLE001 -- the page must hear about it
             self.session.log(f"server error on {method} {path}: {type(exc).__name__}: {exc}")
-            self._json({"error": f"{type(exc).__name__}: {exc}"},
-                       HTTPStatus.INTERNAL_SERVER_ERROR)
+            send_json(self, {"error": f"{type(exc).__name__}: {exc}"},
+                      HTTPStatus.INTERNAL_SERVER_ERROR)
 
     # ------------------------------------------------------------ methods --
     def do_GET(self) -> None:
@@ -220,7 +215,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             params = self._params()
         except (ValueError, TypeError) as exc:
-            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            send_json(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
         self._dispatch("POST", params)
 
@@ -228,11 +223,11 @@ class Handler(BaseHTTPRequestHandler):
     def _snapshot(self, view: str | None = None) -> None:
         frame, _seq = self.session.frame(view)
         if frame is None:
-            self._json({"error": "no frame yet"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            send_json(self, {"error": "no frame yet"}, HTTPStatus.SERVICE_UNAVAILABLE)
             return
         ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         if not ok:
-            self._json({"error": "could not encode the frame"}, 500)
+            send_json(self, {"error": "could not encode the frame"}, 500)
             return
         body = jpeg.tobytes()
         self.send_response(200)

@@ -22,7 +22,7 @@ def show(label: str, pose: dict[int, int]) -> None:
 
 
 def gripper_stage(arm: Arm) -> None:
-    print("\n[gripper] open / close, verified by readback")
+    print("\n[gripper] open / close, then grasped() on empty fingers")
     show("start", arm.read())
     show("opened", arm.open_gripper())
     time.sleep(0.3)

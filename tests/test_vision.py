@@ -9,12 +9,7 @@ import numpy as np
 import pytest
 
 from roboarm import detect
-from vision_service.detector import (
-    Detector,
-    PromptNotSupported,
-    _resolve_model,
-    extract_detections,
-)
+from vision_service.detector import Detector, _resolve_model, extract_detections
 
 # Same trivial 1 px == 1 mm mapping as test_grasp: lets expected table coords be
 # read straight off the pixel boxes.
@@ -23,6 +18,8 @@ MM_PER_PIXEL = np.diag([0.001, 0.001, 1.0])
 
 # ------------------------------------------------------ service: extract --
 class FakeBox:
+    """The shapes Ultralytics yields per box: cls/conf (1,), xyxy (1, 4)."""
+
     def __init__(self, cls, conf, xyxy):
         self.cls = [cls]
         self.conf = [conf]
@@ -58,54 +55,29 @@ def test_extract_carries_a_segmentation_models_outline():
     assert "polygon" not in out[1], "an empty mask sends no outline"
 
 
-# --------------------------------------------------- service: prompting --
+# ------------------------------------------------------ service: health --
 class FakeModel:
     """Just enough of an Ultralytics model for Detector's non-inference paths."""
 
     def __init__(self):
         self.names = {0: "person", 1: "cup"}
-        self.set_calls = []
-
-    def set_classes(self, names, _pe):
-        self.set_calls.append(list(names))
-        self.names = {i: n for i, n in enumerate(names)}
-
-    def get_text_pe(self, names):
-        return f"pe:{list(names)}"
 
     def predict(self, *a, **k):
         raise AssertionError("predict should not run in these tests")
 
 
-def test_a_prompt_against_a_fixed_class_model_is_refused_not_ignored():
-    det = Detector(FakeModel(), "yolo26n.pt", open_vocab=False, imgsz=640, conf=0.25)
-    with pytest.raises(PromptNotSupported, match="fixed class list"):
-        det.infer(b"not-a-real-jpeg", prompt="mug")
-
-
-def test_setting_the_same_classes_twice_skips_the_text_encoder():
-    model = FakeModel()
-    det = Detector(model, "yoloe.pt", open_vocab=True, imgsz=640, conf=0.25)
-    det._set_classes(["red cube", "mug"])
-    det._set_classes(["red cube", "mug"])
-    assert model.set_calls == [["red cube", "mug"]], "second identical prompt re-encoded"
-    det._set_classes(["spoon"])
-    assert model.set_calls == [["red cube", "mug"], ["spoon"]]
-
-
 def test_health_reports_the_model_and_its_classes():
-    det = Detector(FakeModel(), "yolo26n.pt", open_vocab=False, imgsz=640, conf=0.3)
+    det = Detector(FakeModel(), "yolo26n.pt", imgsz=640, conf=0.3)
     health = det.health()
     assert health["status"] == "ok"
     assert health["model"] == "yolo26n.pt"
-    assert health["open_vocab"] is False
     assert set(health["classes"]) == {"person", "cup"}
+    assert health["conf"] == 0.3
 
 
 # --------------------------------------------------------- client: objects --
 def _reply(detections):
-    return {"model": "yolo26n.pt", "open_vocab": False, "prompt": None,
-            "width": 640, "height": 480, "detections": detections}
+    return {"model": "yolo26n.pt", "width": 640, "height": 480, "detections": detections}
 
 
 def test_objects_maps_pixel_boxes_to_table_targets(monkeypatch):
@@ -132,16 +104,16 @@ def test_objects_maps_pixel_boxes_to_table_targets(monkeypatch):
     assert target.y == pytest.approx(0.170, abs=1e-6)
 
 
-def test_objects_passes_the_prompt_as_a_header(monkeypatch):
+def test_objects_posts_a_jpeg(monkeypatch):
     seen = {}
 
     def fake_post(path, body, headers, url, timeout):
-        seen.update(headers)
+        seen.update(headers, body=body)
         return _reply([])
 
     monkeypatch.setattr(detect, "_vision_post", fake_post)
-    detect.objects(np.zeros((10, 10, 3), np.uint8), MM_PER_PIXEL, prompt="red cube")
-    assert seen["X-Vision-Prompt"] == "red cube"
+    detect.objects(np.zeros((10, 10, 3), np.uint8), MM_PER_PIXEL)
+    assert seen["Content-Type"] == "image/jpeg" and seen["body"][:2] == b"\xff\xd8"
 
 
 def test_objects_drops_specks_below_the_area_floor(monkeypatch):
@@ -213,7 +185,6 @@ def test_edges_touched_names_the_sides():
     assert detect.edges_touched(_square(0, 100, 40), shape) == {"left"}
     assert detect.edges_touched(_square(100, 0, 40), shape) == {"top"}
     assert detect.edges_touched(_square(280, 200, 40), shape) == {"right", "bottom"}
-    assert detect.touches_edge(_square(280, 200, 40), shape) is True
 
 
 def test_a_clipped_object_records_which_edge_it_left_by(monkeypatch):
@@ -249,11 +220,11 @@ def test_objects_raises_DetectorOffline_when_nothing_answers(monkeypatch):
 
 def test_objects_propagates_a_rejected_request_as_valueerror(monkeypatch):
     def rejected(*a, **k):
-        raise ValueError("vision service rejected the request (400): fixed class list")
+        raise ValueError("vision service rejected the request (400): empty body")
 
     monkeypatch.setattr(detect, "_vision_post", rejected)
     with pytest.raises(ValueError, match="rejected"):
-        detect.objects(np.zeros((10, 10, 3), np.uint8), MM_PER_PIXEL, prompt="mug")
+        detect.objects(np.zeros((10, 10, 3), np.uint8), MM_PER_PIXEL)
 
 
 def test_vision_available_is_true_only_on_a_healthy_reply(monkeypatch):

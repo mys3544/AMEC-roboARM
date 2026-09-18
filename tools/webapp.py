@@ -49,10 +49,7 @@ def real_session(out_dir: Path | None) -> session.Session:
 
     return session.Session(
         arm_factory=Arm,
-        streams={
-            "wrist": lambda: camera.Stream(cfg.WRIST_CAM),
-            "mast": lambda: camera.Stream(cfg.TABLE_CAM, cfg.TABLE_CAM_SIZE),
-        },
+        stream=lambda: camera.Stream(cfg.WRIST_CAM),
         calibration=ws.load_all,
         out_dir=out_dir,
     )
@@ -69,10 +66,7 @@ def remote_session(url: str) -> session.Session:
     out_dir.mkdir(exist_ok=True)
     return session.Session(
         arm_factory=lambda: remote.RemoteArm(url),
-        streams={
-            "wrist": lambda: remote.RemoteStream(url, "wrist"),
-            "mast": lambda: remote.RemoteStream(url, "mast"),
-        },
+        stream=lambda: remote.RemoteStream(url),
         calibration=lambda: remote.calibration(url),
         out_dir=out_dir,
         # The neural rung lives in the robot's compose network; the bridge
@@ -90,7 +84,7 @@ def sim_session(time_scale: float) -> session.Session:
     arm = sim.SimArm(time_scale=time_scale)
     return session.Session(
         arm_factory=lambda: arm,
-        streams={"wrist": lambda: sim.SimStream(arm)},
+        stream=lambda: sim.SimStream(arm),
         calibration=sim.calibration,
         out_dir=scratch,
     )

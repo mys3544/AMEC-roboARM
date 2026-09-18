@@ -124,7 +124,7 @@ def do_fit(arm: Arm, outer: bool = False, yaws: tuple[float, ...] = (0.0,)) -> i
     pooled_px, pooled_tb = [], []
     for index, yaw in enumerate(yaws):
         at = sweep.pose_at(pose, yaw)
-        here = arm.move_to(at, speed_dps=15, verify=False)
+        here = arm.move_to(at, speed_dps=15)
         if yaw == 0.0:
             reached = here
         time.sleep(1.5 if index == 0 else 0.5)
@@ -135,7 +135,7 @@ def do_fit(arm: Arm, outer: bool = False, yaws: tuple[float, ...] = (0.0,)) -> i
             pooled_px.append(pixels)
             pooled_tb.append(_spun(table, -yaw))
     if reached is None:
-        reached = arm.move_to(pose, speed_dps=15, verify=False)
+        reached = arm.move_to(pose, speed_dps=15)
     pixels = np.concatenate(pooled_px) if pooled_px else np.empty((0, 2))
     table = np.concatenate(pooled_tb) if pooled_tb else np.empty((0, 2))
     print(f"{len(pixels)} marker corners in all")
@@ -179,7 +179,7 @@ def do_verify(arm: Arm, outer: bool = False) -> int:
         matrix, saved_pose, _name = chosen[0]
     else:
         matrix, saved_pose, _name = looks[0]
-    arm.move_to({int(k): v for k, v in saved_pose.items()}, speed_dps=15, verify=False)
+    arm.move_to({int(k): v for k, v in saved_pose.items()}, speed_dps=15)
     time.sleep(1.5)
     frames = camera.grab(6)
     frame = frames[-1]
@@ -205,14 +205,14 @@ def do_verify(arm: Arm, outer: bool = False) -> int:
     pose[6] = cfg.GRIPPER_CLOSED  # closed: fingertips on the axis, easy to eyeball
 
     print(f"\nmoving there (pitch {pitch:.0f})... watch where the fingertips land.")
-    arm.move_to(pose, speed_dps=12, verify=False)
+    arm.move_to(pose, speed_dps=12)
     time.sleep(1.0)
     tip = kin.forward(arm.read())
     print(f"fingertip now at {tip[0] * 1000:.0f} mm forward, {tip[1] * 1000:+.0f} mm left, "
           f"{(tip[2] + cfg.TABLE_BELOW_PLATE) * 1000:.0f} mm above the table")
     print("\nHolding 45s. How far is the fingertip from that corner, and which way?")
     time.sleep(45)
-    arm.move_to({int(k): v for k, v in saved_pose.items()}, speed_dps=15, verify=False)
+    arm.move_to({int(k): v for k, v in saved_pose.items()}, speed_dps=15)
     return 0
 
 

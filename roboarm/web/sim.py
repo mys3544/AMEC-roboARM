@@ -25,8 +25,7 @@ from roboarm import camera, sweep
 from roboarm import config as cfg
 from roboarm import kinematics as kin
 from roboarm.arm import ArmError
-
-Pose = dict[int, int]
+from roboarm.config import Pose
 
 # data/table_homography.json, fitted 2026-09-08, worst residual 0.48 mm over 8 points.
 REAL_H = np.array([
@@ -125,12 +124,8 @@ class SimArm:
         return {j: v for j, v in pose.items()
                 if not (cfg.HARD_LIMITS[j][0] <= v <= cfg.HARD_LIMITS[j][1])}
 
-    def assert_ready(self) -> None:
-        pass
-
     # ---------------------------------------------------------------- motion --
-    def move_to(self, targets: Pose, speed_dps: float = 40.0, verify: bool = True,
-                corrections: int = 3) -> Pose:
+    def move_to(self, targets: Pose, speed_dps: float = 40.0) -> Pose:
         start = self.read()
         for joint, angle in targets.items():
             if joint not in cfg.JOINT_IDS:
@@ -193,8 +188,7 @@ class SimArm:
         return self.set_gripper(cfg.GRIPPER_OPEN, **kw)
 
     def close_gripper(self, **kw) -> Pose:
-        kw.pop("verify", None)
-        return self.set_gripper(cfg.GRIPPER_CLOSED, verify=False, **kw)
+        return self.set_gripper(cfg.GRIPPER_CLOSED, **kw)
 
     def _real_tip(self) -> tuple[float, float, float]:
         """Where the fingertips really are: the model's answer, pulled back along

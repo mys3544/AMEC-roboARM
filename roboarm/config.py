@@ -5,22 +5,24 @@ URDF at /home/jetson/breznicky-hetes/yahboomcar_description/urdf/yahboomcar_X3pl
 Nothing else in the project is allowed to hard-code a limit or a link length.
 """
 
-import itertools
 import math
 import os
+
+import numpy as np
+
+# Servo angles by joint id, the shape every module passes around.
+Pose = dict[int, int]
 
 # ---------------------------------------------------------------- devices ---
 # Names inside the container. compose.yaml maps the stable host /dev/*/by-id/
 # paths onto these, so USB re-enumeration cannot shuffle them.
 SERIAL_PORT = os.environ.get("ROBOARM_SERIAL", "/dev/robot_serial")
-BAUD_RATE = 115200
 
-WRIST_CAM = int(os.environ.get("ROBOARM_WRIST_CAM", "0"))  # mono, on arm_link4
-TABLE_CAM = int(os.environ.get("ROBOARM_TABLE_CAM", "1"))  # Orbbec RGB, on the mast
-
-# The wrist camera is USB 2 YUYV-only and measures ~7 fps at 640x480.
+# The wrist camera, on arm_link4: the only camera that can see the workspace (the
+# mast camera is fixed horizontal and the table sits 72 degrees below its axis).
+# USB 2 YUYV-only, ~7 fps at 640x480.
+WRIST_CAM = int(os.environ.get("ROBOARM_WRIST_CAM", "0"))
 WRIST_CAM_SIZE = (640, 480)
-TABLE_CAM_SIZE = (1280, 720)  # Orbbec RGB does MJPG up to 2048x1536
 
 # ------------------------------------------------------------------- arm ----
 # Six bus servos, addressed 1..6. The SDK speaks degrees in these ranges;
@@ -220,12 +222,11 @@ MAST_OFFSET_X = 0.140
 BASE_PLATE_TO_J2 = 0.030
 # J5 to the fingertips, measured at J6=150 (a 25 mm gap).
 L_J5_FINGERTIP = 0.110
-GRIPPER_ANGLE_FOR_TOOL_LENGTH = 150
 
 # TOOL LENGTH VARIES WITH GRIPPER OPENING. The fingers pivot, so opening them pulls
 # the tips back along the tool axis and the arm gets effectively shorter.
 #
-# MEASURED 2026-09-09 (tools/tool_length.py): the arm held ONE pose with the tool
+# MEASURED 2026-09-09 (tools/tool_length.py, since deleted: the arm held ONE pose with the tool
 # pointing straight down, so fingertip height moves one-for-one with tool length,
 # and only J6 changed between readings.
 #
@@ -253,21 +254,13 @@ GRIPPER_TOOL_MM = {30: 162.0, 90: 180.0, 150: 190.0}
 def _between(table: dict[int, float], angle: int) -> float:
     """Read a measured-at-a-few-angles table, straight-line between the points.
 
-    Flat outside the measured range: extrapolating a curve from a handful of points
-    would be inventing data. Both gripper tables want exactly this, and both are
-    consulted at angles nobody measured -- GRIPPER_CLOSED is 170, which is in
-    neither table.
+    np.interp is flat outside the measured range, which is what we want:
+    extrapolating a curve from a handful of points would be inventing data. Both
+    gripper tables are consulted at angles nobody measured -- GRIPPER_CLOSED is
+    170, which is in neither.
     """
     angles = sorted(table)
-    if angle <= angles[0]:
-        return table[angles[0]]
-    if angle >= angles[-1]:
-        return table[angles[-1]]
-    for lo, hi in itertools.pairwise(angles):
-        if lo <= angle <= hi:
-            span = (angle - lo) / (hi - lo)
-            return table[lo] + span * (table[hi] - table[lo])
-    raise AssertionError("unreachable: angle is inside the table")
+    return float(np.interp(angle, angles, [table[a] for a in angles]))
 
 
 def tool_length(gripper_angle: int) -> float:
@@ -283,10 +276,9 @@ def gripper_gap(gripper_angle: int) -> float:
     """Finger gap in metres at a given servo angle. The inverse of gripper_for_gap.
 
     Needed because the interesting angles are not the measured ones: GRIPPER_CLOSED
-    is 170 and the table jumps 150 -> 177, so asking it directly raises KeyError --
-    which is exactly how tools/camera_offset.py first fell over.
+    is 170 and the table jumps 150 -> 177, so a direct lookup raises KeyError.
     """
-    return _between({a: float(g) for a, g in GRIPPER_GAP_MM.items()}, gripper_angle) / 1000
+    return _between(GRIPPER_GAP_MM, gripper_angle) / 1000
 
 
 def gripper_for_gap(gap_m: float) -> int:
@@ -340,23 +332,14 @@ TABLE_BELOW_PLATE = 0.190
 # that points AWAY from the mast, where J2 is limited by the table and by torque
 # rather than by the tower. The real limit is a J1/J2 pair, not a J2 number.
 
-# NOT yet measured, still taken from the (unreliable) URDF -- measure before the
-# IK is trusted: the height of J1 above base_link, the J1->J2 offset, and the
-# distance from J5 to the fingertip.
-BASE_TO_J1 = (0.09825, 0.0, 0.102)
-L_J1_J2 = 0.0405
-
-# Fixed sensor mounts, relative to base_link (URDF, unverified).
-TABLE_CAM_MOUNT = (-0.043645, 0.0, 0.41955)
-
 # --------------------------------------------------------- wrist camera ----
 # This is the EYE-IN-HAND camera and, as it turns out, the only one that can see the
 # workspace: the mast camera is fixed horizontal, and the table sits about 72 degrees
 # below its axis -- far outside any lens. In a top-down grasp pose this one looks
 # straight down at the table.
 #
-# MEASURED 2026-09-10 with the arm parked upright (tools/camera_offset.py), ruler
-# from the lens to the fingertips at both gripper ends:
+# MEASURED 2026-09-10 with the arm parked upright (tools/camera_offset.py, since
+# deleted), ruler from the lens to the fingertips at both gripper ends:
 #
 #              J4 -> fingertip   lens -> fingertip   =>  J4 -> lens
 #     closed        190 mm            125 mm              65 mm

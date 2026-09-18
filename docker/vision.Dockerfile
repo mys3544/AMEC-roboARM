@@ -25,6 +25,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Fail the build, not the demo, if an import the service needs is unresolvable or
 # if torch is no longer a CUDA build. (torch.cuda.is_available() would be False
 # here regardless -- no GPU is attached during build -- so it is not asserted.)
-RUN python3 -c "import torch, torchvision, ultralytics, yaml, cv2, fastapi, uvicorn; from PIL import Image; assert torch.version.cuda, 'torch lost its CUDA build'; print('vision build ok: torch', torch.__version__, 'cuda', torch.version.cuda, '| ultralytics', ultralytics.__version__)"
+RUN python3 -c "import torch, torchvision, ultralytics, yaml, cv2; from PIL import Image; assert torch.version.cuda, 'torch lost its CUDA build'; print('vision build ok: torch', torch.__version__, 'cuda', torch.version.cuda, '| ultralytics', ultralytics.__version__)"
 
 CMD ["python3", "-m", "vision_service.serve"]

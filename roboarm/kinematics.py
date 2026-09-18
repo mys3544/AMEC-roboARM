@@ -32,16 +32,13 @@ from __future__ import annotations
 import math
 
 from roboarm import config as cfg
-
-Pose = dict[int, int]
+from roboarm.config import Pose
 
 # The planar chain. J4 -> fingertip is one rigid segment because J5 only rolls,
-# but its LENGTH depends on how far the gripper is open, so it is a function.
+# but its LENGTH depends on how far the gripper is open, so it is a function
+# (cfg.tool_length).
 L1 = cfg.L_J2_J3
 L2 = cfg.L_J3_J4
-# The length with the gripper closed, which is the pose every calibration so far was
-# measured in. Kept as a name because it is the reference the fit was done against.
-L3 = cfg.tool_length(cfg.GRIPPER_CLOSED)
 
 
 # Guards the reach comparison against float error: an exactly-extended arm gives
@@ -286,17 +283,3 @@ def solve(
         f"({x * 1000:.0f}, {y * 1000:.0f}, {z * 1000:.0f}) mm is not reachable at any "
         f"pitch from {pitches[0]:.0f} to {pitches[-1]:.0f} degrees"
     )
-
-
-def reachable(
-    x: float, y: float, z: float, pitch_deg: float = 90.0,
-    gripper: int = cfg.GRIPPER_CLOSED,
-) -> bool:
-    """Whether inverse() can produce a legal pose for this point."""
-    for elbow_up in (True, False):
-        try:
-            inverse(x, y, z, pitch_deg, elbow_up=elbow_up, gripper=gripper)
-        except Unreachable:
-            continue
-        return True
-    return False

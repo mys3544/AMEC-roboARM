@@ -29,7 +29,7 @@ def robot():
     path.write_text(json.dumps({"homography": matrix.tolist(), "name": name,
                                 "survey_pose": {str(j): a for j, a in pose.items()}}))
     hw = bridge.Bridge(arm_factory=lambda: arm,
-                       streams={"wrist": lambda: sim.SimStream(arm, fps=40)},
+                       stream=lambda: sim.SimStream(arm, fps=40),
                        calibration_path=path)
     srv = bridge.make_server(hw, "127.0.0.1", 0)
     srv.max_stream_frames = 5
@@ -61,7 +61,7 @@ def test_remote_arm_reads_and_moves_with_int_joint_keys(robot):
     with remote.RemoteArm(url) as arm:
         pose = arm.read()
         assert pose == cfg.HOME_POSE and all(isinstance(j, int) for j in pose)
-        landed = arm.move_to({1: 100, 2: 80}, speed_dps=30, verify=False)
+        landed = arm.move_to({1: 100, 2: 80}, speed_dps=30)
         assert landed[1] == 100 and landed[2] == 80
         assert hw.arm.pose[1] == 100, "the robot's own arm moved"
         assert arm.get_battery_voltage() == pytest.approx(12.3)
@@ -93,7 +93,7 @@ def test_the_stop_button_reaches_a_move_on_the_robot(robot):
 
         def long_move():
             try:
-                arm.move_to({1: 20}, speed_dps=30, verify=False)
+                arm.move_to({1: 20}, speed_dps=30)
             except ArmError as exc:
                 result["error"] = str(exc)
         thread = threading.Thread(target=long_move)
@@ -107,7 +107,7 @@ def test_the_stop_button_reaches_a_move_on_the_robot(robot):
         stop.clear()
         assert arm.hold()[1] == hw.arm.pose[1]
         hw.arm.time_scale = 0
-        assert arm.move_to({1: 60}, verify=False)[1] == 60
+        assert arm.move_to({1: 60})[1] == 60
 
 
 def test_unreachable_bridge_is_an_arm_error():
@@ -117,19 +117,19 @@ def test_unreachable_bridge_is_an_arm_error():
 
 def test_remote_stream_delivers_decoded_frames(robot):
     _hw, url = robot
-    stream = remote.RemoteStream(url, "wrist").start()
+    stream = remote.RemoteStream(url).start()
     try:
         _wait(lambda: stream.latest()[0] is not None)
         frame, seq = stream.latest()
         assert frame.shape == (cfg.WRIST_CAM_SIZE[1], cfg.WRIST_CAM_SIZE[0], 3)
         assert seq >= 1
+        assert remote.health(url)["camera"]["open"] is True
     finally:
         stream.stop()
 
 
-def test_unknown_camera_reports_an_error(robot):
-    _hw, url = robot
-    stream = remote.RemoteStream(url, "nose").start()
+def test_a_dead_bridge_is_reported_by_the_stream():
+    stream = remote.RemoteStream("http://127.0.0.1:1").start()
     try:
         _wait(lambda: stream.error is not None)
         assert stream.latest()[0] is None
@@ -154,7 +154,7 @@ def test_a_whole_session_runs_over_the_bridge(robot, monkeypatch):
                         Path(tempfile.mkdtemp()) / "table_background.png")
     sess = session.Session(
         arm_factory=lambda: remote.RemoteArm(url),
-        streams={"wrist": lambda: remote.RemoteStream(url, "wrist")},
+        stream=lambda: remote.RemoteStream(url),
         calibration=lambda: remote.calibration(url),
     )
     sess.settle_s = 0.05
