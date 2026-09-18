@@ -140,6 +140,15 @@ distance, not lift. Worth revisiting only if objects really need to sit at
   at 0 for the session; `cfg.REACH_OFFSET_M` still defaults to 20. Flip the
   default after a few more picks at 0 -- the passes adapt, the offset guesses.
 
+**2026-09-18, first pick with offset 5 mm + passes (commit bee5f2b):** the
+touch probe on the 14th put the real tips ~5 mm short of the model (cube under
+the model's 0 and +10, table at -10 and +20), so `REACH_OFFSET_M` went 20 -> 5
+and the correction passes now run alongside it. Pick: primary J1=90 saw the
+cube cut off at the LEFT edge -> centring yaw to J1=80 -> whole (160 / +71,
+37 mm) -> passes 10.8 -> 4.3 -> 3.3 mm -> landed 0.2 mm from the aim, 9.7 mm
+up -> held -> placed. 27.4 s. Watched by eye: the fingers took it BY THE MIDDLE (with offset 0 it had
+been "barely on its end"). 5 mm + passes is the setting.
+
 **First retry gotcha**: with the ChArUco board still FACE UP the neural rung
 reads the board's 38 mm markers as 33 mm objects ("remove", 0.25); the search
 stopped at the first one and closed on nothing. Board face down for picks.
