@@ -156,6 +156,10 @@ class Target:
     # picture), empty when not clipped. A clipped object cannot be measured from
     # here, but the edge it went out of says where to look next: sweep.hints().
     edges: frozenset[str] = frozenset()
+    # The outline in PIXELS the detector drew, when it drew one (a mask polygon, a
+    # blob contour). For showing how the object was seen; the geometry above is
+    # what to act on.
+    pixels: tuple[tuple[float, float], ...] = ()
 
     @property
     def graspable(self) -> bool:
@@ -173,7 +177,7 @@ class Target:
 
 def _target_from_quad(quad: np.ndarray, label: str, confidence: float = 1.0,
                       height_m: float | None = None, clipped: bool = False,
-                      edges: frozenset[str] = frozenset()) -> Target:
+                      edges: frozenset[str] = frozenset(), pixels=()) -> Target:
     """Build a Target from four TABLE-frame corners of a rectangle.
 
     Measured on the table, not in pixels: the homography is a projection, so pixel
@@ -197,6 +201,7 @@ def _target_from_quad(quad: np.ndarray, label: str, confidence: float = 1.0,
         height_m=height_m,
         clipped=clipped,
         edges=frozenset(edges),
+        pixels=tuple((float(px), float(py)) for px, py in np.asarray(pixels, dtype=float).reshape(-1, 2)),
     )
 
 
@@ -379,14 +384,15 @@ def outlines(mask: np.ndarray, matrix: np.ndarray, label: str, *,
             quad, _width, tall, agreement = range_block(
                 points, nadir, lens_m, chamfer_m=chamfer_for(matrix, contour.reshape(-1, 2)))
             target = _target_from_quad(quad, name, 0.0 if clipped else confidence * agreement,
-                                       height_m=tall, clipped=clipped, edges=edges)
+                                       height_m=tall, clipped=clipped, edges=edges,
+                                       pixels=contour.reshape(-1, 2))
         else:
             quad = ws.apply(matrix, cv2.boxPoints(cv2.minAreaRect(contour)))
             if height_m > 0.0:
                 centre = np.asarray(nadir, dtype=float)
                 quad = centre + (quad - centre) / _lift_ratio(height_m)
             target = _target_from_quad(quad, name, 0.0 if clipped else confidence,
-                                       clipped=clipped, edges=edges)
+                                       clipped=clipped, edges=edges, pixels=contour.reshape(-1, 2))
         if target.width_m * target.length_m < MIN_AREA_M2:
             continue
         found.append(target)
@@ -935,11 +941,11 @@ def objects(
                 chamfer_m=chamfer_for(matrix, polygon))
             score = score * agreement
             target = _target_from_quad(quad, item["label"], score, height_m=tall,
-                                       clipped=clipped, edges=edges)
+                                       clipped=clipped, edges=edges, pixels=polygon)
         else:
             quad = ws.apply(matrix, cv2.boxPoints(cv2.minAreaRect(polygon.astype(np.float32))))
             target = _target_from_quad(quad, item["label"], score, clipped=clipped,
-                                       edges=edges)
+                                       edges=edges, pixels=polygon)
         if target.width_m * target.length_m < MIN_AREA_M2:
             continue
         found.append(target)

@@ -225,6 +225,7 @@ def test_a_clipped_object_records_which_edge_it_left_by(monkeypatch):
     assert len(found) == 1
     assert found[0].clipped is True
     assert found[0].edges == {"top"}
+    assert len(found[0].pixels) == 4          # the mask polygon, kept for the page
     assert found[0].graspable is False
 
 

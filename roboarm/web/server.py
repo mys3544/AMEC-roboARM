@@ -48,7 +48,7 @@ import cv2
 from roboarm import camera, sweep
 from roboarm import kinematics as kin
 from roboarm.arm import ArmError
-from roboarm.web.session import Busy, Refused, Session
+from roboarm.web.session import VIEWS, Busy, Refused, Session
 
 STATIC = Path(__file__).parent / "static"
 BOUNDARY = "roboarmframe"
@@ -202,10 +202,16 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         if url.path in ("/", "/index.html"):
             self._file(STATIC / "index.html", "text/html; charset=utf-8")
-        elif url.path == "/stream.mjpg":
-            self._stream()
-        elif url.path == "/snapshot.jpg":
-            self._snapshot()
+        elif url.path in ("/stream.mjpg", "/snapshot.jpg"):
+            # ?view=mask|detect|raw|edges renders that view for THIS client only,
+            # so a second pane on the page can show the detector's mask while
+            # the main one shows the detections.
+            view = parse_qs(url.query).get("view", [None])[-1]
+            view = view if view in VIEWS else None
+            if url.path == "/stream.mjpg":
+                self._stream(view)
+            else:
+                self._snapshot(view)
         else:
             params = {k: v[-1] for k, v in parse_qs(url.query).items()}
             self._dispatch("GET", params)
@@ -219,8 +225,8 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("POST", params)
 
     # ------------------------------------------------------------- frames --
-    def _snapshot(self) -> None:
-        frame, _seq = self.session.frame()
+    def _snapshot(self, view: str | None = None) -> None:
+        frame, _seq = self.session.frame(view)
         if frame is None:
             self._json({"error": "no frame yet"}, HTTPStatus.SERVICE_UNAVAILABLE)
             return
@@ -236,8 +242,9 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _stream(self) -> None:
-        send_mjpeg(self, self.session.wait_frame, getattr(self.server, "max_stream_frames", None))
+    def _stream(self, view: str | None = None) -> None:
+        send_mjpeg(self, lambda seen, timeout=1.0: self.session.wait_frame(seen, timeout, view),
+                   getattr(self.server, "max_stream_frames", None))
 
 
 class Server(ThreadingHTTPServer):

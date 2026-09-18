@@ -602,26 +602,27 @@ class Session:
         }
 
     # ------------------------------------------------------------- frames ----
-    def frame(self):
-        """The newest frame in the current view, for the stream. (frame, seq)."""
+    def frame(self, view: str | None = None):
+        """The newest frame in `view` (default: the page's current view). (frame, seq)."""
+        view = view or self.view
         stream = self.stream
         if stream is None:
             return None, 0
         raw, seq = stream.latest()
         if raw is None:
             return None, seq
-        if self.view == "raw":
+        if view == "raw":
             return raw, seq
-        if self.view == "edges":
+        if view == "edges":
             edges = cv2.Canny(cv2.cvtColor(raw, cv2.COLOR_BGR2GRAY), 60, 160)
             return cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR), seq
-        if self.view == "mask" and self._mask is not None:
+        if view == "mask" and self._mask is not None:
             return self._mask, seq
         if self._annotated is not None:
             return self._annotated, seq
         return raw, seq
 
-    def wait_frame(self, seen: int, timeout: float = 1.0):
+    def wait_frame(self, seen: int, timeout: float = 1.0, view: str | None = None):
         stream = self.stream
         if stream is None:
             time.sleep(timeout)
@@ -629,13 +630,13 @@ class Session:
         _frame, seq = stream.wait(seen, timeout)
         if seq <= seen:
             return None, seen
-        return self.frame()
+        return self.frame(view)
 
     def _detect_loop(self) -> None:
         seen = 0
         while not self._closing.is_set():
             stream = self.stream
-            if stream is None or self.view in ("raw", "edges"):
+            if stream is None:
                 time.sleep(0.2)
                 continue
             frame, seq = stream.wait(seen, timeout=1.0)
@@ -689,7 +690,7 @@ class Session:
             error = " ".join(n.strip() for n in notes)
 
         self._annotated = detect.annotate(frame, matrix, targets)
-        self._mask = self._mask_for(frame, dyaw)
+        self._mask = self._mask_for(frame, dyaw, targets)
         listed = []
         for target in targets:
             info = self._target_dict(target)
@@ -708,19 +709,23 @@ class Session:
             "when": time.time(),
         }
 
-    def _mask_for(self, frame, dyaw: float):
-        """The detector's intermediate picture -- the thing to look at when it misbehaves."""
+    def _mask_for(self, frame, dyaw: float, targets: list[detect.Target] = ()):
+        """How the detector saw the frame: its intermediate picture (the colour
+        mask, the change mask, the tags it read) with every outline it drew on
+        top -- filled green when the object is graspable, red when it is cut
+        off or refused. The thing to look at when a pick misbehaves."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if self.detector in ("colour", "auto"):
-            return cv2.cvtColor(detect.colour_mask(frame), cv2.COLOR_GRAY2BGR)
-        if self.detector == "changes":
+            out = cv2.cvtColor(detect.colour_mask(frame), cv2.COLOR_GRAY2BGR) // 2
+        elif self.detector == "changes":
             try:
                 background = detect.load_background(dyaw)
             except FileNotFoundError:
                 return None
-            return cv2.cvtColor(detect.foreground(frame, background), cv2.COLOR_GRAY2BGR)
-        if self.detector == "markers":
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            out = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+            out = cv2.cvtColor(detect.foreground(frame, background), cv2.COLOR_GRAY2BGR) // 2
+        else:
+            out = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR) // 2
+        if self.detector in ("markers", "auto"):
             for name, colour in ((cfg.OBJECT_TAG_DICT, (0, 200, 0)),
                                  (cfg.ARUCO_DICT, (200, 120, 0))):
                 dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, name))
@@ -728,8 +733,21 @@ class Session:
                 corners, ids, _ = detector.detectMarkers(gray)
                 if ids is not None and len(ids):
                     cv2.aruco.drawDetectedMarkers(out, corners, ids, colour)
-            return out
-        return None
+        for target in targets:
+            if not target.pixels:
+                continue
+            pts = np.round(np.asarray(target.pixels)).astype(np.int32).reshape(-1, 1, 2)
+            colour = (0, 200, 0) if target.graspable else (0, 0, 220)
+            fill = out.copy()
+            cv2.fillPoly(fill, [pts], colour)
+            out = cv2.addWeighted(fill, 0.35, out, 0.65, 0)
+            cv2.polylines(out, [pts], True, colour, 2)
+            top = pts.reshape(-1, 2)[pts.reshape(-1, 2)[:, 1].argmin()]
+            cv2.putText(out, f"{target.label} {target.width_m * 1000:.0f}mm"
+                        + (" clipped" if target.clipped else ""),
+                        (int(top[0]), max(12, int(top[1]) - 6)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1)
+        return out
 
     def _poll_loop(self) -> None:
         """Keep the pose fresh while nothing else is using the arm, and check the

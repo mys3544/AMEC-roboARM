@@ -204,7 +204,7 @@ def test_the_plan_aims_past_the_object_by_the_reach_offset():
     tip_off = kin.forward(offset.grasp)
     further = math.hypot(*tip_off[:2]) - math.hypot(*tip_raw[:2])
     assert further == pytest.approx(0.020, abs=0.004), "IK rounds to whole degrees"
-    assert cfg.REACH_OFFSET_M == pytest.approx(0.020)
+    assert cfg.REACH_OFFSET_M == pytest.approx(0.005)   # touch-probed 2026-09-14
 
 
 def test_the_lift_keeps_the_pitch_the_grasp_used():

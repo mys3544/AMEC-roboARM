@@ -53,6 +53,11 @@
                     background: rgba(0,0,0,.55); padding: 4px 8px; border-radius: 6px; }
   .video .targets { padding: 8px 10px; border-top: 1px solid var(--line); max-height: 180px; overflow: auto; }
 
+  .videos { display: grid; grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; min-height: 0; }
+  .video.second .frame { min-height: 160px; }
+  .video.second .bar b { font-weight: 600; }
+  .video.second .bar .hint { font-size: 12px; color: #8c96a3; }
+
   aside { display: flex; flex-direction: column; gap: 12px; min-height: 0; overflow: auto; }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
   .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); margin: 0 0 8px; }
@@ -104,6 +109,7 @@
 </header>
 
 <main>
+  <div class="videos">
   <section class="video">
     <div class="bar">
       <label>camera <select id="camera"></select></label>
@@ -134,6 +140,25 @@
     </div>
     <div class="targets" id="livetargets"></div>
   </section>
+  <section class="video second">
+    <div class="bar">
+      <b>how it sees</b>
+      <label>show
+        <select id="view2">
+          <option value="mask">detector mask + outlines</option>
+          <option value="detect">detections</option>
+          <option value="edges">edges</option>
+          <option value="raw">raw</option>
+        </select>
+      </label>
+      <span class="hint">green = graspable, red = cut off or refused; grey = the detector's own mask</span>
+      <button id="snapbtn2" title="open this view in a new tab">snapshot</button>
+    </div>
+    <div class="frame">
+      <img id="stream2" alt="how the detector sees the frame">
+    </div>
+  </section>
+  </div>
 
   <aside>
     <div class="card" id="statuscard">
@@ -445,14 +470,19 @@
 
   // stream: reload the image if it stalls (server restart, camera swap)
   function startStream() { $("stream").src = "/stream.mjpg?t=" + Date.now(); }
+  function startStream2() { $("stream2").src = "/stream.mjpg?view=" + $("view2").value + "&t=" + Date.now(); }
   $("stream").addEventListener("error", () => setTimeout(startStream, 1500));
-  $("camera").addEventListener("change", () => setTimeout(startStream, 300));
+  $("stream2").addEventListener("error", () => setTimeout(startStream2, 1500));
+  $("camera").addEventListener("change", () => setTimeout(() => { startStream(); startStream2(); }, 300));
+  $("view2").addEventListener("change", startStream2);
+  $("snapbtn2").addEventListener("click", () => window.open("/snapshot.jpg?view=" + $("view2").value + "&t=" + Date.now(), "_blank"));
 
   (async () => {
     const s = await api("/api/state");
     buildJoints(s.arm.limits);
     render(s);
     startStream();
+    startStream2();
     setInterval(poll, 400);
     setInterval(pollLog, 700);
     pollLog();

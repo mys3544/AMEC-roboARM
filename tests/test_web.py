@@ -234,6 +234,17 @@ def test_release_and_engage_track_torque(url):
 
 
 # ------------------------------------------------------------- frames ----
+def test_a_second_pane_can_ask_for_its_own_view(url):
+    """?view=mask renders the detector's picture for that client only; the
+    page's own view stays what it was."""
+    before = get(url, "/api/state")["view"]
+    for view in ("mask", "raw", "detect", "nonsense"):
+        with urllib.request.urlopen(url + f"/snapshot.jpg?view={view}", timeout=5) as reply:
+            assert reply.headers["Content-Type"] == "image/jpeg"
+            assert reply.read()[:2] == b"\xff\xd8"
+    assert get(url, "/api/state")["view"] == before
+
+
 def test_snapshot_and_stream_are_jpeg(url):
     with urllib.request.urlopen(url + "/snapshot.jpg", timeout=5) as reply:
         assert reply.headers["Content-Type"] == "image/jpeg"
@@ -285,8 +296,10 @@ def test_the_mask_view_shows_the_colour_mask(sess):
     _wait(lambda: sess._mask is not None)
     mask = sess._mask
     assert mask.shape[:2] == tuple(reversed(cfg.WRIST_CAM_SIZE))
-    assert set(np.unique(mask)) <= {0, 255}
-    assert (mask == 255).any()
+    # the detector's own mask at half brightness, with every outline it found
+    # drawn on top: green fill for a graspable object
+    assert mask.max() > 0, "the colour mask itself, at half brightness"
+    assert (mask[:, :, 1] > 150).any(), "the block's outline, in green"
 
 
 # --------------------------------------------------------------- auto ----
