@@ -73,7 +73,11 @@ from roboarm.arm import Arm, ArmError
 Pose = dict[int, int]
 
 HOVER_M = 0.060
-GRASP_HEIGHT_M = 0.008
+# 2026-09-18: 8 -> 4 mm. The touch probe reads the fingertips ~10 mm HIGHER than the
+# model at 176 mm reach (readback 29 mm with the tips on a 40 mm cube), and a 20 mm
+# cube was taken by its top corners. Aiming 4 mm puts the real tips near 10-14 mm:
+# mid-height of a 20 mm cube, lower third of a 40 mm one.
+GRASP_HEIGHT_M = 0.004
 LIFT_M = 0.080
 
 # How much wider than the held object the fingers open to RELEASE it (place()).
@@ -223,9 +227,10 @@ def _solve_near(x: float, y: float, z: float, pitch: float,
 REACH_PASSES = 2
 
 # Stop correcting inside this. The kinematics' own worst residual is 6.8 mm and the
-# camera is good to about 2 mm, so pushing below 2 mm is chasing noise the rest of
-# the chain cannot honour.
-REACH_TOLERANCE_M = 0.002
+# camera is good to about 2 mm and the IK rounds to whole degrees (3.2 mm at the
+# wrist), so pushing below 4 mm is chasing noise the rest of the chain cannot honour.
+REACH_TOLERANCE_M = 0.004   # 2026-09-18: was tighter, and a third pass chasing 3.3 mm of
+# rounding landed 7.6 mm off -- the IK rounds to whole degrees, 3.2 mm at the wrist
 
 
 def _reach_to(arm: Arm, x: float, y: float, z: float, pitch: float, gripper: int,
