@@ -92,11 +92,16 @@ def test_annotation_puts_the_marker_back_where_the_object_was():
 
 
 # ----------------------------------------------------------------- planning --
-def test_the_gripper_opens_only_a_little_wider_than_the_object():
-    gap = cfg.GRIPPER_GAP_MM[grasp.plan(target(width_m=0.030)).opening]
-    assert gap >= 30 + grasp.FINGER_CLEARANCE_M * 1000
-    assert gap < 70, "must not simply fling the fingers fully open"
-
+def test_the_gripper_opens_fully_and_the_descent_allows_for_the_close():
+    """Fully open for the approach (alignment error is a few mm; a tight opening
+    left a finger landing ON the cube), and the grasp pose sits higher by the
+    distance the tips travel down while shutting, so they finish at GRASP_HEIGHT_M."""
+    step = grasp.plan(target(), reach_offset_m=0.0)
+    assert step.opening == cfg.GRIPPER_OPEN
+    travel = grasp.closing_travel(step.opening, target().width_m)
+    assert travel > 0.010, "closing from fully open moves the tips down by centimetres"
+    z = kin.forward(step.grasp)[2]
+    assert z == pytest.approx(-cfg.TABLE_BELOW_PLATE + grasp.GRASP_HEIGHT_M + travel, abs=0.013)
 
 def test_hover_and_grasp_share_one_pitch():
     """Otherwise the tool swings through an arc instead of descending."""
@@ -121,7 +126,8 @@ def test_the_grasp_lands_on_the_object():
     x, y, z = kin.forward(grasp.plan(target(), reach_offset_m=0.0).grasp)
     assert x == pytest.approx(GOOD_X, abs=0.013)
     assert y == pytest.approx(GOOD_Y, abs=0.013)
-    assert z == pytest.approx(-cfg.TABLE_BELOW_PLATE + grasp.GRASP_HEIGHT_M, abs=0.013)
+    travel = grasp.closing_travel(cfg.GRIPPER_OPEN, target().width_m)
+    assert z == pytest.approx(-cfg.TABLE_BELOW_PLATE + grasp.GRASP_HEIGHT_M + travel, abs=0.013)
 
 
 @pytest.mark.parametrize("width, why", [(0.010, "too thin"), (0.080, "wider than")])

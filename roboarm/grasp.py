@@ -22,9 +22,11 @@ See _reach_to() below, and tools/reach_check.py, which measures it.
 
 Three numbers are the whole design:
 
-  * OPENING. Only just wider than the object, never flung fully open. A wide gripper
-    is a SHORT gripper (cfg.tool_length) and costs 50 mm of reach, and splayed
-    fingers are likelier to knock a neighbour over on the way down.
+  * OPENING. Fully open for the approach (since 2026-09-18). It used to be "just
+    wider than the object" to keep the tool long and the fingers tidy, but 6 mm
+    a side is less than the alignment error on a bad day, and a finger that lands
+    ON the cube sticks there. The price -- 23 mm of closing travel -- is paid by
+    descending that much higher; see closing_travel().
 
   * GRASP_HEIGHT_M. Where the fingertips stop. The arm's height error is up to 4 mm
     and grows with reach (see config.py), so this has to be high enough that 4 mm low
@@ -74,8 +76,8 @@ HOVER_M = 0.060
 GRASP_HEIGHT_M = 0.008
 LIFT_M = 0.080
 
-# Fingers this much wider than the object before descending: enough to swallow the
-# arm's own 4 mm of positioning error twice over without fouling the object.
+# How much wider than the held object the fingers open to RELEASE it (place()).
+# The approach itself opens fully -- see plan().
 FINGER_CLEARANCE_M = 0.012
 
 # Once an object has stopped the fingers, back the command off to just past where
@@ -286,12 +288,14 @@ def plan(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> P
     if not target.graspable:
         raise GraspError(f"{target.label}: {target.why_not()}")
 
-    try:
-        opening = cfg.gripper_for_gap(target.width_m + FINGER_CLEARANCE_M)
-    except ValueError as exc:
-        # detect.MAX_WIDTH_M should already have excluded this. Belt and braces:
-        # the two limits live in different modules and could drift apart.
-        raise GraspError(f"{target.label}: {exc}") from exc
+    # FULLY open for the approach, whatever the object's width (2026-09-18, on
+    # the user's observation): the fingers only close once the arm is at the
+    # grasp position, and an opening of width + 12 mm left 6 mm a side, which
+    # a few mm of alignment error turned into a finger landing ON the cube and
+    # sticking. 70 mm leaves 15 mm a side for a 40 mm cube. The longer close
+    # costs about a second and 23 mm of closing travel, which the descent
+    # height below already allows for.
+    opening = cfg.GRIPPER_OPEN
     table = -cfg.TABLE_BELOW_PLATE
     # Aim HIGH by however far the tips are about to travel on their own, so they
     # finish the close at GRASP_HEIGHT_M instead of starting there and burrowing.
