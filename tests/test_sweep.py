@@ -125,6 +125,20 @@ def test_two_clips_of_one_object_give_one_hint():
     assert len(got) == 1
 
 
+def test_a_pooled_fit_ignores_one_bad_corner():
+    """12+ points: a corner 15 mm off is left out of the fit, not averaged in."""
+    from roboarm import workspace as ws
+    rng = np.random.default_rng(1)
+    pixels = rng.uniform([20, 20], [620, 460], size=(16, 2))
+    table = ws.apply(REAL_H, pixels)
+    table[3] += (0.015, 0.0)
+    matrix, _worst, n = ws.fit_points(pixels, table)
+    assert n == 16
+    good = np.delete(np.arange(16), 3)
+    err = np.linalg.norm(ws.apply(matrix, pixels[good]) - table[good], axis=1)
+    assert err.max() < 0.001, "the 15 good corners still fit to under a millimetre"
+
+
 def _rotate2(point, degrees):
     """An independent rotation, written out longhand to check `rotate` against."""
     turn = math.radians(degrees)

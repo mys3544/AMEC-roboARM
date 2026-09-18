@@ -1024,7 +1024,12 @@ class Session:
                   **_ignored) -> None:
         if index is None or not self.sweep_targets:
             targets = self._job_sweep(first=first)
-            target = next((t for t in targets if self._plannable(t)), None)
+            # The SUREST plannable target, not the nearest. 2026-09-18: the outer
+            # look returned the red cube at 0.45 and its shadow, ranged as a 45 mm
+            # cube, at 0.20; the shadow was 4 mm nearer and got picked -- "closed
+            # on nothing". Confidence is the one number that told them apart.
+            target = max((t for t in targets if self._plannable(t)),
+                         key=lambda t: t.confidence, default=None)
             if target is None:
                 raise ValueError("nothing here can be picked up")
         else:

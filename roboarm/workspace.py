@@ -124,12 +124,24 @@ def fit_points(pixels: np.ndarray, table: np.ndarray) -> tuple[np.ndarray, float
     if len(pixels) < 4:
         raise ValueError(f"need at least 4 marker corners, found {len(pixels)}")
 
-    matrix, _mask = cv2.findHomography(pixels, table, method=0)
+    # A plain least-squares fit lets one bad corner -- a marker at the very edge of
+    # the picture, where the lens distorts most -- pull the whole mapping. With
+    # 8 points it hardly matters; a pooled fit over several yaws has 20-30 and
+    # some of them ARE at the edge, so fit the consensus and let the stragglers
+    # show up in the residual instead. Threshold is in table metres. (2026-09-18:
+    # the outer look's 28-point fit had a 9.8 mm worst residual and placed a
+    # cube 10 mm nearer than the primary look did.)
+    method, threshold = (cv2.RANSAC, 0.004) if len(pixels) >= 12 else (0, 0.0)
+    matrix, mask = cv2.findHomography(pixels, table, method=method,
+                                      ransacReprojThreshold=threshold)
     if matrix is None:
         raise ValueError("homography fit failed")
 
     predicted = apply(matrix, pixels)
     worst = float(np.max(np.linalg.norm(predicted - table, axis=1)))
+    if mask is not None and int(mask.sum()) < len(pixels):
+        print(f"fit: {len(pixels) - int(mask.sum())} of {len(pixels)} corners left out as"
+              f" outliers (worst of ALL corners {worst * 1000:.1f} mm)")
     return matrix, worst, len(pixels)
 
 

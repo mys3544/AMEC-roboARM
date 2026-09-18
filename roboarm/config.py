@@ -169,6 +169,14 @@ JOINT_OFFSET_DEG = {2: 7.5, 3: -10.5, 4: -1.3}
 # readback shortfall, which varies 2..16 mm per pick and which grasp.pick()'s
 # correction passes now remove on every descent.
 REACH_OFFSET_M = 0.005
+# ... and it GROWS WITH REACH, like the height error above. By eye on 2026-09-18:
+# 5 mm centred every grip at 150-165 mm; at 174 mm the same 5 mm took the cube by
+# its near third (tips ~8 mm short). So the offset used is
+#     REACH_OFFSET_M + REACH_OFFSET_SLOPE * (reach - REACH_OFFSET_AT_M), never less
+# -> 5 mm at 160, 11 at 180, 17 at 200. Two observations, one slope: PROVISIONAL,
+# refine with tools/touch_probe.py --at at a far point when there is time.
+REACH_OFFSET_AT_M = 0.160
+REACH_OFFSET_SLOPE = 0.30
 
 # Readback tolerance. The SDK documents 1-2 degrees of deviation between the
 # commanded and reported angle, so anything inside this is not a fault.

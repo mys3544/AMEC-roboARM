@@ -167,6 +167,15 @@ def outward(x: float, y: float, offset_m: float) -> tuple[float, float]:
     return x + offset_m * x / radius, y + offset_m * y / radius
 
 
+def reach_offset(x: float, y: float, base_m: float = cfg.REACH_OFFSET_M) -> float:
+    """The reach offset for a point this far out: `base_m` plus the slope beyond
+    cfg.REACH_OFFSET_AT_M (see config.py). Zero base means zero, the raw model."""
+    if base_m == 0.0:
+        return 0.0
+    beyond = max(0.0, math.hypot(x, y) - cfg.REACH_OFFSET_AT_M)
+    return base_m + cfg.REACH_OFFSET_SLOPE * beyond
+
+
 def aim_for(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> detect.Target:
     """Where to SEND the fingertip so that it actually arrives on the target.
 
@@ -174,7 +183,7 @@ def aim_for(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -
     they are, along the reach. Aiming beyond the object by that much is what puts
     the fingers either side of it instead of on its near face.
     """
-    x, y = outward(target.x, target.y, reach_offset_m)
+    x, y = outward(target.x, target.y, reach_offset(target.x, target.y, reach_offset_m))
     return replace(target, x=x, y=y)
 
 
@@ -354,7 +363,7 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
             print(f"  {message}", flush=True)
 
     if reach_offset_m:
-        say(f"aiming {reach_offset_m * 1000:.0f} mm beyond the object along the reach "
+        say(f"aiming {reach_offset(seen.x, seen.y, reach_offset_m) * 1000:.0f} mm beyond the object along the reach "
             f"(the model lands the tips that much short): "
             f"{target.x * 1000:.0f} mm fwd, {target.y * 1000:+.0f} mm left")
 
@@ -474,7 +483,7 @@ def place(arm: Arm, x: float, y: float, verbose: bool = True,
     few millimetres is kinder than pressing it into the table. Aims beyond (x, y)
     by the same reach offset the pick used, so the object lands where asked.
     """
-    x, y = outward(x, y, reach_offset_m)
+    x, y = outward(x, y, reach_offset(x, y, reach_offset_m))
     table = -cfg.TABLE_BELOW_PLATE
     now = arm.read()
     held = now[cfg.GRIPPER_ID]
