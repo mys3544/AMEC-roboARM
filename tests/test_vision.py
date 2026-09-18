@@ -170,6 +170,20 @@ def test_objects_drops_an_outline_nested_inside_another(monkeypatch):
     assert [t.label for t in found] == ["traffic sign"]
 
 
+def test_a_clipped_outline_does_not_swallow_the_whole_object_inside_it(monkeypatch):
+    # The cube plus its shadow, running out of the bottom of the frame, with the
+    # clean cube mask inside it: the clean one is the object.
+    monkeypatch.setattr(detect, "_vision_post", lambda *a, **k: _reply([
+        {"label": "cube+shadow", "confidence": 0.72, "box": [100, 100, 60, 140],
+         "polygon": [[100, 100], [160, 100], [160, 239], [100, 239]]},
+        {"label": "cube", "confidence": 0.71, "box": [100, 100, 60, 60],
+         "polygon": _square(100, 100, 60)},
+    ]))
+    found = detect.objects(np.zeros((240, 320, 3), np.uint8), MM_PER_PIXEL)
+    assert sorted(t.label for t in found) == ["cube", "cube+shadow"]
+    assert [t.label for t in found if not t.clipped] == ["cube"]
+
+
 def test_objects_keeps_two_objects_that_merely_overlap(monkeypatch):
     monkeypatch.setattr(detect, "_vision_post", lambda *a, **k: _reply([
         {"label": "a", "confidence": 0.9, "box": [100, 100, 40, 40],

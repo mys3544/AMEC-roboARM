@@ -186,6 +186,43 @@ them drive). Run them before you ask why something is broken. Style:
 
 ---
 
+## How it fits together
+
+Three machines, three jobs. The laptop decides, the robot's bridge moves the
+arm and streams the wrist camera, and the vision service only answers "what
+shapes are in this picture". Nothing on the robot knows where the table is;
+the laptop maps pixels to millimetres itself, from one calibrated pose.
+
+```mermaid
+flowchart LR
+    subgraph Laptop
+        P[Browser panel] <-->|http :8091| C["Control logic (webapp.py)<br/>detect · sweep · grasp"]
+    end
+    subgraph Robot["Robot (Jetson)"]
+        B["Bridge (hwbridge.py)<br/>arm calls · MJPEG · calibration"]
+        V["Vision service<br/>YOLOE-26 on the GPU"]
+        S[Rosmaster board → servos]
+        B -->|serial| S
+    end
+    subgraph Table
+        A[Arm + wrist camera]
+        K((cube))
+        A -.->|looks at| K
+        A -->|picks up| K
+    end
+    C -->|joint commands| B
+    B -->|camera frames| C
+    C <-->|one JPEG → outlines| V
+    S --> A
+    A -->|USB| B
+```
+
+One pick, in order: **look** from a calibrated pose (good to 2 mm) → **find**
+it by tag, colour or neural outline (41 ms) → **search** the stations, following
+hints from anything cut off at a frame edge → **plan** the opening, the wrist
+roll and the aim point → **grasp**, correcting the landing from the servos'
+readback, then lift and place. About 22–29 s a pick.
+
 ## What is in here
 
     roboarm/          the library: arm control, kinematics, detection, grasping

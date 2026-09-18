@@ -854,12 +854,17 @@ def whole_objects(outlines: list[tuple[dict, np.ndarray, bool]],
         masks.append(mask)
     areas = [int(mask.sum()) for mask in masks]
     picture = [area >= PICTURE_FRACTION * height * width for area in areas]
+    # An outline cut off at the frame edge is not a whole object either, so it
+    # cannot vouch for what lies inside it. Seen on the robot: the cube AND its
+    # shadow as one mask running out of the bottom of the frame (0.72), with the
+    # clean cube mask (0.71) inside it -- the clean one must survive.
+    whole = [not picture[i] and not touches_edge(outlines[i][1], shape) for i in range(len(outlines))]
     kept = []
     for i, entry in enumerate(outlines):
         if areas[i] == 0 or picture[i]:
             continue
         inside = any(
-            j != i and not picture[j] and areas[j] > areas[i]
+            j != i and whole[j] and areas[j] > areas[i]
             and int(np.count_nonzero(masks[i] & masks[j])) >= NESTED_FRACTION * areas[i]
             for j in range(len(outlines))
         )

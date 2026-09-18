@@ -118,6 +118,28 @@ distance, not lift. Worth revisiting only if objects really need to sit at
   26.7 s. Reach pass landed 16.4 mm short of the 234 mm aim, i.e. 4 mm
   past the cube centre, 0.8 mm up. That is the outer rim, closed.
 
+**Evening, two more picks at the rim, one bug and one finding:**
+
+* Bug: the cube was found whole by the outer look but refused as clipped. The
+  detector returned TWO masks for it: cube+shadow (0.72, running out of the
+  bottom of the frame) and the clean cube (0.71) inside it; `whole_objects()`
+  dropped the clean one as a "part" of the bigger, then the bigger was
+  clipped. Fixed: an outline that touches the frame edge is not a whole
+  object and cannot swallow one (test added, 78 vision+sweep tests pass).
+  Committed as b1a6675 is WITHOUT this fix; the fix is in the tree.
+* Both hint kinds seen working in one search: primary J1=90 saw a LEFT-edge
+  clip -> centring yaw to J1=82 -> far-edge clip there -> outer J1=74 -> cube
+  whole (162 / +81, 42 mm). Search 6.2 s.
+* Finding on the reach offset: with the default 20 mm offset (passes off)
+  a pick at 200 / +60 landed the tips 1.6 mm from the AIM, i.e. 20 mm past
+  the cube, and closed on nothing, shoving the cube 40 mm. The "model lands
+  short" shortfall is not constant: 1.6, 6.8, 13.6, 14.2, 16.4 mm on today's
+  five picks. With `reach_offset_mm = 0` (which turns the correction passes
+  back on) the next pick converged in three passes (15.7 -> 8.6 -> 5.0 mm),
+  landed 4.8 mm off, 6.6 mm up, and held; +3 s per pick. The panel is left
+  at 0 for the session; `cfg.REACH_OFFSET_M` still defaults to 20. Flip the
+  default after a few more picks at 0 -- the passes adapt, the offset guesses.
+
 **First retry gotcha**: with the ChArUco board still FACE UP the neural rung
 reads the board's 38 mm markers as 33 mm objects ("remove", 0.25); the search
 stopped at the first one and closed on nothing. Board face down for picks.

@@ -379,16 +379,17 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
     say(f"descending to {(GRASP_HEIGHT_M + travel) * 1000:.0f} mm, so the tips land "
         f"at {GRASP_HEIGHT_M * 1000:.0f} mm once they have shut "
         f"({travel * 1000:.0f} mm of closing travel)")
-    # ONE descent when a reach offset is in use. The correction passes exist to
-    # chase the model's own readback error, but the offset was measured on the
-    # REAL fingers with that error included -- so after a first landing that puts
-    # the fingers either side of the cube, a second pass "fixing" the model's
-    # 14 mm shortfall moves them off it again. Seen on the robot 2026-09-10: first
-    # phase perfect, then the arm backed off and re-settled. With no offset the
-    # loop is the only correction there is, and stays.
+    # Two errors, two fixes, BOTH always on. The servos land short of what they
+    # were sent (1.6..16 mm on 2026-09-14, different every pick) -- that shows in
+    # the readback and the passes remove it. The real tips then sit short of
+    # where the readback puts them (the offset's job; tools/touch_probe.py
+    # measures it) -- that does NOT show in the readback and no pass can touch it.
+    # The passes used to be switched off whenever an offset was set, on the
+    # theory that the offset had been tuned with the readback error baked in. It
+    # had, which is why it only worked when that error happened to be ~14 mm:
+    # at 1.6 mm the tips went 20 mm past the cube and closed on nothing.
     _reach_to(arm, target.x, target.y, table + GRASP_HEIGHT_M + travel, step.pitch,
-              step.opening, DESCEND_DPS, roll=step.roll,
-              passes=0 if reach_offset_m else REACH_PASSES)
+              step.opening, DESCEND_DPS, roll=step.roll)
     if verbose:
         tip = kin.forward({**arm.read(), cfg.GRIPPER_ID: step.opening})
         say(f"fingertip landed {math.dist(tip[:2], (target.x, target.y)) * 1000:.1f} mm "

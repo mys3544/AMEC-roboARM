@@ -162,7 +162,13 @@ JOINT_OFFSET_DEG = {2: 7.5, 3: -10.5, 4: -1.3}
 # than guess at a parameter, every grasp and place aims this much further out
 # along the bearing from the base. Adjustable from the control panel; set it to
 # zero to see the raw model again.
-REACH_OFFSET_M = 0.020
+# 2026-09-14: 20 -> 5. The touch probe (tools/touch_probe.py, closed tips driven
+# down along the radius across a 40 mm cube) found the cube under the model's
+# 0 and +10 mm points and table at -10 and +20: the real tips sit ~5 mm short of
+# the model, not 20. The other ~15 mm the old value covered was the servos'
+# readback shortfall, which varies 2..16 mm per pick and which grasp.pick()'s
+# correction passes now remove on every descent.
+REACH_OFFSET_M = 0.005
 
 # Readback tolerance. The SDK documents 1-2 degrees of deviation between the
 # commanded and reported angle, so anything inside this is not a fault.
