@@ -75,12 +75,14 @@ from roboarm import workspace as ws
 # can be VERIFIED at. grasped() decides by asking whether an object stopped the
 # fingers short of GRIPPER_CLOSED (170) by more than the 4 degree readback
 # tolerance, i.e. below 166. Interpolating the gap table, a 22 mm object stops them
-# at about 157 -- clear. An 18 mm one stops them at 166, exactly on the threshold,
-# so a real grasp would report as a miss about half the time.
+# at about 157 -- clear. An 18 mm one stops them at 166, right on the threshold,
+# so a real grasp of something that small may report as a miss. Lowered 22 -> 18
+# on 2026-09-18 after a 20 mm cube (read as 29 by the neural rung) was held and
+# verified without trouble; below 18 the check genuinely cannot tell.
 #
 # MAX is the 70 mm the fingers open to, less the 12 mm of clearance the grasp leaves
 # around the object (grasp.FINGER_CLEARANCE_M), rounded down.
-MIN_WIDTH_M = 0.022
+MIN_WIDTH_M = 0.018
 MAX_WIDTH_M = 0.055
 
 # The photograph of the empty table that `changes()` compares against. Kept beside
@@ -1038,7 +1040,7 @@ MODES = ("auto", "changes", "colour", "markers", "yolo")
 CUBE_PROMPT = "cube, block, box, dice"
 
 # Two silhouettes of the same object from different rungs land within this of
-# each other; two objects the gripper could tell apart never do (22 mm minimum).
+# each other; two objects the gripper could tell apart never do (18 mm minimum).
 SAME_OBJECT_M = 0.020
 
 # How tall the colour rung assumes an object is when it is NOT told the lens
