@@ -1,3 +1,77 @@
+# Status, 2026-09-21 afternoon (fixed drop pose 90 deg right; J1 to 180; offset capped)
+
+Seven picks on the robot, five of them one-click, on the user's phone hotspot
+(lab WiFi trouble): robot at 172.20.78.81, laptop on the same network, no
+WiFi hop needed. Bridge and vision were down after the reboot and were
+started over paramiko (`docker compose --profile bridge up -d bridge`,
+`--profile vision up -d vision`); `tools/sync_robot.py` still hard-codes
+192.168.73.210, `.claude/launch.json` points at the hotspot address and is
+NOT committed. Branch `drop-pose` is pushed with three commits (desktop work,
+drop pose + J1, offset cap); the PR is still to be opened by hand, `gh` is not
+installed here and there is no token (compare link:
+github.com/mys3544/AMEC-roboARM/compare/main...drop-pose).
+
+## What changed
+
+* **A pick ends at a FIXED DROP POSE** (user: "hardcoded pose, that's it"):
+  `cfg.DROP_POSE = {1: 180, 2: 44, 3: 38, 4: 19, 5: 90}`, base a full 90 deg
+  to the right, tips 189 mm out and ~110 mm above the table, chosen by
+  driving the arm there and looking (first at 139 mm, then 50 mm further
+  out, then 50 mm higher). `grasp.drop()` moves there and opens fully; no
+  descent, no put-down. The one-click and the pick job take no drop_x/drop_y
+  any more; the page's "place at x/y" button still uses `grasp.place()`.
+* **J1's ceiling 170 -> 180.** The 10 deg was only a servo-end margin, like
+  the J2 floor that went 15 -> 5; the servo takes 180 and reads it back. With
+  it the arm reaches a wedge on the right the ring never looked at (last
+  station J1 165), so `sweep.ring()` adds a station at an end of the yaw
+  range more than half a step past the last regular one: 16 stations, the
+  envelope test pins bearing -90. Nearest-first search is unaffected.
+* **The reach offset is capped at a quarter of the object's width**
+  (`grasp.aim_offset()`): see the 20 mm cube below.
+
+## The picks, and what they taught
+
+1. 40 mm cube at 212 mm radius: REFUSED before moving. The grown offset
+   (5 + 0.30 per mm beyond 160 = 20.6 mm) aimed at 232.7 mm, 0.7 mm outside
+   the 232 mm envelope at grasp height. Retried with the panel's base offset
+   at 0: found from the outer look at 182 / +9 (the failed search had
+   MERGED four outer-look detections from J1 83..98 into 210 / +30, 28 mm too
+   far -- the pooled outer-look merge is suspect, not investigated), passes
+   7.3 -> 1.5 mm, held, 28 s.
+2. Same cube at 180 mm, offset 0: passes 6.6 -> 4.0 -> 0.3 mm, held, 25 s.
+3. Same cube, offset 5 (7 mm at that reach): passes 6.6 / 5.8 / 7.2 mm, never
+   converged, landed 3.4 mm off -- and the user, watching, said the fingers
+   took the cube "just in the middle", better than run 2. THE PASS RESIDUAL
+   IS NOT THE GRIP QUALITY: offset 0 aims at the near face. 5 mm stays. With
+   a non-zero base the place aimed beyond the drop point too (185 asked, 198
+   aimed), the reason the cube crept outward pick after pick.
+4. First drop at the fixed pose: search from J1 180 walked 7 stations
+   (20 s), pick from 172 mm, drop, back to survey, 44.5 s. The re-look warned
+   "nothing within 30 mm of the sweep's estimate" and used it; harmless here.
+5. **20 mm cube, declared 20, at 168 / +40 (173 mm radius): closed on
+   nothing** and shoved the cube 10 mm toward the base. The offset was 9 mm
+   and the second pass overshot 3.4 mm (accepted, inside the 4 mm tolerance):
+   the pads landed on the far edge. Retry at 162 mm (offset 6): held, 24 s.
+   Hence the cap: 5 mm for a 20 mm cube, 40 mm cubes unchanged.
+6. Two cubes one after the other, no declared width: the small one (colour
+   rung read 29 mm -- the shadow again; the cap did not bite) at 161 / -23,
+   passes 13.2 -> 2.1, 27 s; the 40 mm one at 145 / +78 (found at J1 65
+   after two stations that saw it cut off), passes 10.7 -> 3.5, 31 s. Both
+   dropped at the pose.
+
+Pattern in every run: pass 1 lands 6..13 mm short, pass 2 corrects it and
+overshoots by 3..4 mm, which the 4 mm tolerance accepts. Fine for 40 mm,
+tight for 20 mm; the cap is the cheap answer, a smaller tolerance for small
+objects the next one.
+
+## Where everything was left
+
+Arm at survey, torque on, 11.6 V. Table empty; both cubes on the floor/box at
+the drop spot. Bridge and vision up, robot tree synced with the branch.
+Panel on :8091 with the offset at 5. 270 tests, ruff clean.
+
+---
+
 # Status, 2026-09-21 (the robot's desktop: one X session with or without a monitor)
 
 Designed offline in the morning, installed and checked on the robot at 11:20
