@@ -336,19 +336,51 @@ def test_the_depth_mode_falls_back_to_tags_when_the_service_is_down(monkeypatch)
     assert found == [] and any("falling back" in n for n in notes)
 
 
-def test_auto_prefers_what_depth_saw_standing_over_a_colour_or_neural_blob(monkeypatch):
-    """The same object seen by the neural rung (as a 16 mm 'book') and by depth
-    (26 mm): the depth reading wins whatever the scores, and a thing only the
-    neural rung saw is still listed."""
+def _auto(monkeypatch, detect_reply, raised_reply, tags=None):
     def fake_post(path, body, headers, url, timeout):
-        if path == "/detect":
-            return _reply([{"label": "book", "confidence": 0.95, "box": [207, 157, 16, 16]},
-                           {"label": "cup", "confidence": 0.5, "box": [400, 300, 30, 30]}])
-        return _reply([{"label": "raised", "confidence": 0.6, "box": [202, 152, 26, 26]}])
+        return _reply(detect_reply if path == "/detect" else raised_reply)
+
+    monkeypatch.setattr(detect, "_vision_post", fake_post)
+    monkeypatch.setattr(detect, "markers", lambda *a, **k: list(tags or []))
+    return detect.everything(np.zeros((480, 640, 3), np.uint8), MM_PER_PIXEL,
+                             nadir=(0.139, -0.05), lens_m=None, url="http://x",
+                             note=lambda s: None)
+
+
+def test_auto_is_gated_by_depth_once_it_has_answered(monkeypatch):
+    """The same object seen by the neural rung (as a 16 mm 'book') and by depth
+    (26 mm): the depth reading is what is listed. A thing only the neural rung
+    saw is a shadow or a picture, and is dropped -- unless it is clipped, which
+    is kept for the search's hints and is never graspable anyway."""
+    found = _auto(monkeypatch,
+                  [{"label": "book", "confidence": 0.95, "box": [207, 157, 16, 16]},
+                   {"label": "cup", "confidence": 0.5, "box": [400, 300, 30, 30]},
+                   {"label": "edge", "confidence": 0.5, "box": [600, 300, 40, 40]}],
+                  [{"label": "raised", "confidence": 0.6, "box": [202, 152, 26, 26]}])
+    by_label = {t.label: t for t in found}
+    assert set(by_label) == {"raised", "edge"}
+    assert by_label["raised"].width_m == pytest.approx(0.026, abs=1e-6)
+    assert by_label["edge"].clipped
+
+
+def test_without_a_depth_answer_the_other_rungs_fill_in(monkeypatch):
+    def fake_post(path, body, headers, url, timeout):
+        if path == "/raised":
+            raise ValueError("vision service rejected the request (503): no depth engine")
+        return _reply([{"label": "cup", "confidence": 0.5, "box": [400, 300, 30, 30]}])
 
     monkeypatch.setattr(detect, "_vision_post", fake_post)
     found = detect.everything(np.zeros((480, 640, 3), np.uint8), MM_PER_PIXEL,
                               nadir=(0.139, -0.05), lens_m=None, url="http://x", note=lambda s: None)
-    by_label = {t.label: t for t in found}
-    assert set(by_label) == {"raised", "cup"}
-    assert by_label["raised"].width_m == pytest.approx(0.026, abs=1e-6)
+    assert [t.label for t in found] == ["cup"]
+
+
+def test_a_tag_with_nothing_raised_under_it_is_lying_flat(monkeypatch):
+    def tag(x, y):
+        return detect.Target(x=x, y=y, width_m=0.026, length_m=0.026, angle_deg=0.0,
+                             label="tag 1", height_m=0.026)
+
+    found = _auto(monkeypatch, [], [{"label": "raised", "confidence": 0.6, "box": [202, 152, 26, 26]}],
+                  tags=[tag(0.215, 0.165), tag(0.400, 0.400)])
+    assert [t.label for t in found if t.label.startswith("tag")] == ["tag 1"]
+    assert next(t for t in found if t.label == "tag 1").x == pytest.approx(0.215)

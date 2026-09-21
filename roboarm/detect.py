@@ -1069,22 +1069,32 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
     except FileNotFoundError:
         pass
     standing: list[Target] = []
+    depth_answered = False
     if url:
         try:
             shapes += objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
             standing = raised(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
+            depth_answered = True
         except DetectorOffline as exc:
             note(f"  vision service down ({exc}); untagged pale cubes may be missed")
         except ValueError as exc:
             note(f"  vision service refused the frame: {exc}")
-    # What the depth rung saw standing up comes FIRST, whatever its score: its
-    # outline is the top face with no shadow and no colour in it, where a colour
-    # blob can be the picture on a white cube (16 mm for a 28 mm cube, 2026-09-21)
-    # and still look perfectly cube-like. The other silhouettes fill in only
-    # where depth saw nothing -- low things, and objects cut off in its map.
     standing = distinct(standing)
-    shapes = standing + [s for s in distinct(shapes)
-                         if all(math.dist((s.x, s.y), (d.x, d.y)) > SAME_OBJECT_M for d in standing)]
+    others = [s for s in distinct(shapes)
+              if all(math.dist((s.x, s.y), (d.x, d.y)) > SAME_OBJECT_M for d in standing)]
+    if depth_answered:
+        # THE GATE. Depth's outline is the top face with no shadow and no colour
+        # in it; on 2026-09-21 every colour-only target that "clear the table"
+        # tried was a shadow (three "closed on nothing"), while all four depth
+        # targets held first try. So once depth has answered, a silhouette it did
+        # not confirm is not an object -- except a CLIPPED one, which is never
+        # graspable but tells the search which way to look next (sweep.hints),
+        # and which depth, ignoring anything cut off by the frame, cannot give.
+        # A tag with nothing raised under it is a tag lying flat on the table.
+        others = [s for s in others if s.clipped]
+        tagged = [t for t in tagged
+                  if any(math.dist((t.x, t.y), (d.x, d.y)) <= FUSE_RADIUS_M for d in standing)]
+    shapes = standing + others
     # A tag that measured its own height is a complete reading, better than any
     # silhouette; only a tag that could not (no lens height) borrows a size.
     fused = [t if t.height_m else f for t, f in zip(tagged, fuse(tagged, shapes))]
