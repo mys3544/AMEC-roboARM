@@ -53,6 +53,15 @@ around them. Blue 40 mm cube: 38..41 mm on four frames.
 |---|---|---|---|---|
 | clear the table, auto before the gate | 4 raised + 2 colour | 6 | 4 (all raised) | 3 colour, all shadows |
 | clear the table, auto with the gate, cubes added mid-job | raised only | 5 | 4 | 0 |
+| CLEAR THE TABLE from the header button, three cubes | raised only | 3 | 3 | 0 |
+
+The last run is the clean case, 15:54: pressed in manual mode, one full sweep
+(60 s) listed the three cubes at 169 / 154 / 121 mm, all 27..28 mm, and the
+pile as "at the drop-off spot"; three picks landed 5.6 / 0.6 / 3.2 mm from
+the aim and all held; the second sweep saw only the pile and the job ended
+with "a full sweep found nothing left" after 200.8 s -- the clean exit, not
+the round cap. The first cube's re-look found nothing within 30 mm and used
+the sweep's estimate, which was good enough to hold.
 
 The one miss with the gate: a cube at 165 / -62 re-looked from a side station,
 moved 11 mm by the re-look, tips landed on the aim, closed on nothing. Both of
