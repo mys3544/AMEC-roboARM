@@ -1,3 +1,82 @@
+# Status, 2026-09-21 (the robot's desktop: one X session with or without a monitor)
+
+Designed offline in the morning, installed and checked on the robot at 11:20
+with an HP P244 on the port: the driver forces DP-1, reads the monitor's EDID,
+X and Mutter show one 1920x1080@60 monitor, gnome-remote-desktop (VNC 5900,
+RDP 3389) is up, the Xorg log is clean. Still to do by hand: unplug the
+monitor and confirm a 1920x1080 desktop over VNC, plug it back and confirm it
+lights up without a restart (list at the end).
+
+## What was wrong
+
+The headless setup from the initial commit forced the DisplayPort head DP-0 to
+report as connected (`ConnectedMonitor "DP-0"` added to the vendor
+/etc/X11/xorg.conf, a 1920x1080 modeline in xorg.conf.d/20-headless-virtual.conf,
+a DP-0/unknown entry in ~/.config/monitors.xml). That gives Mutter a monitor
+with nothing plugged in, which VNC and gnome-remote-desktop need. But the
+NVIDIA driver's ConnectedMonitor option REPLACES detection with its list, and
+DP-0 is the head that is not wired to the connector on this carrier: Mutter's
+own monitors.xml records both real monitors ever used here (the MPI7005 1080p
+panel and the Lontium 1440x900 adapter) on DP-1. With a monitor plugged in,
+DP-1 was ignored and the screen stayed black.
+
+## What changed
+
+- tools/20-headless-virtual.conf is self-contained now (its own Device
+  "Tegra0Headless", Monitor and Screen; with no ServerLayout, Xorg takes the
+  first Screen section) and forces DP-1, the physical head. The vendor
+  /etc/X11/xorg.conf goes back to stock. With no monitor there is no EDID and
+  the driver falls back to the modeline, 1920x1080@60; with a monitor, at boot
+  or plugged in later, the driver reads its EDID as usual and Mutter applies
+  the user's saved configuration for it. Unplugging returns to the virtual
+  mode. No restart in either direction.
+- tools/monitors.xml is Mutter's SYSTEM-WIDE fallback, installed as
+  /etc/xdg/monitors.xml: only the DP-1/unknown (no EDID) entry, pinned to
+  1920x1080@60. It applies to the jetson session and to the gdm greeter and
+  never touches the per-user file; a real monitor has a real vendor and never
+  matches it.
+- tools/display_setup.sh: `sudo bash tools/display_setup.sh install [PORT]
+  [--restart]`, `check`, `uninstall`. install also drops the stale DP-0 entry
+  from the per-user monitors.xml files. tools/sync_robot.py now pushes
+  tools/*.sh, *.conf, *.xml and *.service as well.
+
+## Verified on the robot (11:20, HP P244 plugged into the port)
+
+Installed with `sudo bash tools/display_setup.sh install`, gdm3 restarted.
+Before: xrandr had `DP-0 connected 1920x1080 0mm x 0mm` (the forced phantom)
+and `DP-1 disconnected`, while the kernel showed the HP on card1-DP-1 with a
+256-byte EDID: the black-screen bug, exactly. After: the log says
+`Using ConnectedMonitor string "DFP-1"` and `HP Inc. HP P244 (DFP-1):
+connected`; xrandr `DP-1 connected primary 1920x1080+0+0 530mm x 300mm` (the
+size comes from the EDID); Mutter reports ('DP-1', 'HPN', 'HP P244', serial)
+with one logical monitor at 1920x1080@60; gnome-remote-desktop is active (VNC
+5900, RDP 3389); no (WW)/(EE) in Xorg.0.log once NoDFPNativeResolutionCheck,
+which this driver (L4T R36.4) does not know, was dropped from ModeValidation.
+
+Learned on the way: DP-1 is "Internal TMDS" (HDMI-style signalling) and the
+driver assumes a 165 MHz pixel clock for it without an EDID, which the
+148.5 MHz modeline fits. Remote access is gnome-remote-desktop, not x11vnc:
+tools/x11vnc.service was never installed and is deleted. Hostname `yahboom`.
+The robot's WiFi (IISLab-AMEC) has no internet, so the laptop has to hop over
+and back for every robot session: tools/wifi_hop.ps1.
+
+## Still to verify by hand
+
+1. Unplug the monitor: `bash tools/display_setup.sh check` should show
+   `DP-1 connected 1920x1080` in xrandr with no EDID line, the Mutter monitor
+   as ('DP-1', 'unknown', 'unknown', 'unknown') with one logical monitor,
+   and a 1920x1080 desktop over VNC.
+2. Plug it back in: it should light up within seconds, no restart. If it
+   stays black, look in /var/log/Xorg.0.log for a new EDID after the plug;
+   none means the driver does not re-read EDID under ConnectedMonitor, and a
+   gdm restart on plug is the fallback.
+3. Reboot with nothing plugged in, then plug in: same expectations.
+
+If forcing DP-1 with nothing attached fails at modeset (DP-0 worked headless
+because nothing is behind it) the fallback design is a boot-time switch: force
+DP-0 as before when /sys/class/drm shows no connector, force nothing when one
+is connected. That gives up hot-plug but keeps both cases working.
+
 # Status, 2026-09-14 (first untagged pick succeeded; neural rung moved to YOLOE-26)
 
 ## The gripper fix is confirmed

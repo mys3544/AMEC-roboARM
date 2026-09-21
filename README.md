@@ -234,7 +234,11 @@ readback, then lift and place. About 22–29 s a pick.
       web/            the panel: server.py (HTTP), session.py (all the judgement),
                       remote.py (drive a robot over the bridge), sim.py (no robot)
     tools/            runnable scripts; webapp.py is the panel, the rest are probes
-                      and calibration routines that need the real hardware
+                      and calibration routines that need the real hardware.
+                      display_setup.sh (+ 20-headless-virtual.conf, monitors.xml)
+                      is the robot's own desktop: one X session that uses the
+                      monitor on the DisplayPort when there is one and a virtual
+                      1920x1080 screen for VNC when there is not
     tests/            pytest suite
     vision_service/   the neural detector; runs in its own container on the robot
     docs/STATUS.md    the engineering log -- what worked, what failed, and why.
@@ -257,6 +261,17 @@ laptop moving the arm; see the warning in section 2.
 **A pick shoves the cube instead of grasping it** -- it is probably not sized
 the way you think. Look at the `detect` view and the log line that gives the
 range and the measured width before blaming the arm.
+
+**The robot's monitor stays black, or VNC / remote desktop says there is no
+monitor** -- the robot's desktop is one X session for both cases: a monitor on
+the DisplayPort when one is plugged in, a virtual 1920x1080 screen when not
+(gnome-remote-desktop serves it: VNC on 5900, RDP on 3389). Plugging or
+unplugging needs no restart. On the robot,
+`bash tools/display_setup.sh check` shows what the kernel, Xorg and Mutter see;
+`sudo bash tools/display_setup.sh install` (re)applies the setup, which takes
+effect after `sudo systemctl restart gdm3` or a reboot. The earlier version
+forced the wrong DisplayPort head (DP-0, which is not wired) and a real monitor
+on DP-1 stayed black; `tools/20-headless-virtual.conf` explains.
 
 **Nothing at all responds and the arm is limp** -- check the battery pill.
 Below 10.0 V (`MIN_BATTERY_V` in roboarm/config.py) the arm refuses to engage

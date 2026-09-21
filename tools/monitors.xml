@@ -1,4 +1,16 @@
 <monitors version="2">
+  <!-- RoboARM: Mutter's system-wide fallback, installed as /etc/xdg/monitors.xml
+       by tools/display_setup.sh. Mutter reads $XDG_CONFIG_DIRS/monitors.xml
+       after the user's own ~/.config/monitors.xml, so this applies to every
+       session (the jetson autologin and the gdm greeter) and is used only when
+       no per-user entry matches.
+
+       With no monitor plugged in, xorg.conf.d/20-headless-virtual.conf forces
+       DP-1 to report as connected, but there is no EDID, so Mutter sees
+       vendor/product/serial "unknown" and would fall back to 1024x768. This
+       entry pins that state to 1920x1080@60, the modeline from the .conf.
+       A real monitor on DP-1 has its own vendor/product, so this entry never
+       matches it and the user's saved configuration for it applies as usual. -->
   <configuration>
     <logicalmonitor>
       <x>0</x>
@@ -8,55 +20,6 @@
       <monitor>
         <monitorspec>
           <connector>DP-1</connector>
-          <vendor>MPI</vendor>
-          <product>MPI7005</product>
-          <serial>7001</serial>
-        </monitorspec>
-        <mode>
-          <width>1920</width>
-          <height>1080</height>
-          <rate>60</rate>
-        </mode>
-      </monitor>
-    </logicalmonitor>
-  </configuration>
-  <configuration>
-    <logicalmonitor>
-      <x>0</x>
-      <y>0</y>
-      <scale>1</scale>
-      <primary>yes</primary>
-      <monitor>
-        <monitorspec>
-          <connector>DP-1</connector>
-          <vendor>LTM</vendor>
-          <product>LONTIUM</product>
-          <serial>0x01010101</serial>
-        </monitorspec>
-        <mode>
-          <width>1440</width>
-          <height>900</height>
-          <rate>74.984428405761719</rate>
-        </mode>
-      </monitor>
-    </logicalmonitor>
-  </configuration>
-  <!-- Headless (added for the RoboARM project).
-       With no monitor plugged in, xorg.conf forces DP-0 to report as connected
-       but there is no EDID, so Mutter sees vendor/product/serial as "unknown"
-       and would otherwise fall back to 1024x768. This entry pins it to
-       1920x1080@60, the modeline from xorg.conf.d/20-headless-virtual.conf.
-       The two real-monitor entries above are untouched, so plugging a monitor
-       back into DP-1 still restores its own saved configuration. -->
-  <configuration>
-    <logicalmonitor>
-      <x>0</x>
-      <y>0</y>
-      <scale>1</scale>
-      <primary>yes</primary>
-      <monitor>
-        <monitorspec>
-          <connector>DP-0</connector>
           <vendor>unknown</vendor>
           <product>unknown</product>
           <serial>unknown</serial>

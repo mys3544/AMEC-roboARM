@@ -23,7 +23,9 @@ REMOTE = "/home/jetson/roboarm"
 
 PATTERNS = ["roboarm/**/*.py", "roboarm/web/static/*.html", "tools/*.py", "tests/*.py",
             "vision_service/*.py", "docker/*", "docs/*.md", "compose.yaml", "pyproject.toml",
-            "uv.lock", ".dockerignore", ".gitignore"]
+            "uv.lock", ".dockerignore", ".gitignore",
+            # the robot's desktop setup, applied on the host by tools/display_setup.sh
+            "tools/*.sh", "tools/*.conf", "tools/*.xml"]
 
 
 def local_files() -> dict[str, str]:
