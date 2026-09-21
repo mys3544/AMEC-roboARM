@@ -54,6 +54,8 @@ VIEWS = ("raw", "detect", "mask", "edges")
 # disagree by, tight enough that it cannot lock on to a different object: two
 # graspable objects cannot physically sit closer than 30 mm.
 REFIND_M = 0.030
+# "Clear the table" gives up after this many full sweeps that still find something.
+PICKALL_ROUNDS = 3
 
 # Detection on the live view runs at most this often. The wrist camera is ~7 fps
 # and the detectors take tens of milliseconds, so this is plenty and leaves the
@@ -756,6 +758,7 @@ class Session:
         runner = {
             "sweep": self._job_sweep,
             "pick": self._job_pick,
+            "pickall": self._job_pickall,
             "place": self._job_place,
             "background": self._job_background,
             "survey": self._job_survey,
@@ -987,14 +990,20 @@ class Session:
             target = self.sweep_targets[int(index)]
             grasp.plan(target)  # raises GraspError with the reason
 
-        self.log(f"picking {target.label} at {target.x * 1000:.0f} mm fwd, "
-                 f"{target.y * 1000:+.0f} mm left")
         if dry_run:
             step = grasp.plan(target)
             self.log(f"dry run: would open to {cfg.GRIPPER_GAP_MM[step.opening]} mm and "
                      f"approach at pitch {step.pitch:.0f}; not moving")
             return
+        if not self._pick_one(target, refine):
+            raise ValueError("closed on nothing -- see the log for the usual causes")
+        self.log("done")
 
+    def _pick_one(self, target: detect.Target, refine: bool = True) -> bool:
+        """Pick `target`, drop it at cfg.DROP_POSE, return to the survey look.
+        False (with the arm back at survey) when the gripper closed on nothing."""
+        self.log(f"picking {target.label} at {target.x * 1000:.0f} mm fwd, "
+                 f"{target.y * 1000:+.0f} mm left")
         if refine:
             self._lap()
             target = self._refine(target)
@@ -1006,14 +1015,34 @@ class Session:
         if not held:
             self.log("the gripper closed on nothing")
             self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
-            raise ValueError("closed on nothing -- see the log for the usual causes")
+            return False
         self.log("holding it")
         grasp.drop(self.arm)
         self._lap("drop")
         self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
         self.sweep_targets = []
         self._lap("return to survey")
-        self.log("done")
+        return True
+
+    def _job_pickall(self, refine: bool = True, **_ignored) -> None:
+        """Clear the table: a FULL sweep, then pick and drop everything it found
+        that can be planned, surest first; sweep again; stop only when a full
+        sweep finds nothing left. A miss is logged and left for the next round.
+        2026-09-21: the search stops at the first find, so a tagged cube that
+        the first station could not see was still on the table afterwards."""
+        for round_ in range(1, PICKALL_ROUNDS + 1):
+            self.log(f"round {round_}: sweeping every station")
+            targets = self._job_sweep(first=False)
+            todo = sorted((t for t in targets if self._plannable(t)),
+                          key=lambda t: t.confidence, reverse=True)
+            if not todo:
+                self.log("a full sweep found nothing left to pick up")
+                return
+            self.log(f"{len(todo)} to pick up")
+            for target in todo:
+                self._pick_one(target, refine)
+        raise ValueError(f"still finding things after {PICKALL_ROUNDS} rounds -- "
+                         "something keeps being missed; see the log")
 
     def _refine(self, target: detect.Target) -> detect.Target:
         try:

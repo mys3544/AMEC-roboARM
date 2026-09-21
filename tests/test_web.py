@@ -391,6 +391,22 @@ def test_pick_and_drop_moves_the_block(world, url):
     assert get(url, "/api/state")["sweep"]["targets"] == [], "the table changed"
 
 
+def test_clear_the_table_sweeps_everything_and_sweeps_again(world, url):
+    """Full sweep, pick what can be picked, full sweep again, stop when it finds
+    nothing left: the 40 mm block is dropped, the 16 mm one is too thin and stays,
+    and the last thing in the log is the empty sweep, not a pick."""
+    post(url, "/api/mode", {"mode": "auto"})
+    post(url, "/api/auto/start", {"job": "pickall"})
+    job = finished(url, timeout=60)
+    assert job["status"] == "done", job
+    lines = [x["text"] for x in get(url, "/api/log?since=0")["lines"]]
+    assert sum("round " in x for x in lines) == 2
+    assert any("found nothing left" in x for x in lines)
+    moved = [b for b in world.blocks if at_drop_pose(b) and not b.held]
+    assert [b.size for b in moved] == [0.040]
+    assert all(not b.held for b in world.blocks)
+
+
 def test_one_click_does_the_whole_thing_from_manual_mode(world, url):
     assert get(url, "/api/state")["mode"] == "manual"
     # What the button sends: the auto detector, no declared size.
