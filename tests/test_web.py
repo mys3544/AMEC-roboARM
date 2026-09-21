@@ -391,6 +391,20 @@ def test_pick_and_drop_moves_the_block(world, url):
     assert get(url, "/api/state")["sweep"]["targets"] == [], "the table changed"
 
 
+def test_what_lies_at_the_drop_spot_is_never_a_target():
+    """The pile we dropped is in view from the ring's end stations; it is not
+    listed as graspable and never planned (2026-09-21: three grabs at the pile)."""
+    x, y, _z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_OPEN})
+    dropped = detect.Target(x=x + 0.030, y=y + 0.040, width_m=0.040, length_m=0.040,
+                            angle_deg=0.0, label="cube")
+    info = session.Session._target_dict(dropped)
+    assert not info["graspable"] and "drop-off" in info["why_not"]
+    assert not session.Session._plannable(dropped)
+    on_table = detect.Target(x=0.160, y=0.020, width_m=0.040, length_m=0.040,
+                             angle_deg=0.0, label="cube")
+    assert session.Session._plannable(on_table)
+
+
 def test_clear_the_table_sweeps_everything_and_sweeps_again(world, url):
     """Full sweep, pick what can be picked, full sweep again, stop when it finds
     nothing left: the 40 mm block is dropped, the 16 mm one is too thin and stays,

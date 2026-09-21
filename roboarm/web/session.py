@@ -56,6 +56,11 @@ VIEWS = ("raw", "detect", "mask", "edges")
 REFIND_M = 0.030
 # "Clear the table" gives up after this many full sweeps that still find something.
 PICKALL_ROUNDS = 3
+# Anything within this of where cfg.DROP_POSE lets go is what we dropped there.
+# The pile is in view from the ring's end stations (J1 180/165), and on
+# 2026-09-21 "clear the table" listed the dropped cubes and tried to pick them
+# from the pile -- three "closed on nothing" in a row.
+DROP_ZONE_M = 0.080
 
 # Detection on the live view runs at most this often. The wrist camera is ~7 fps
 # and the detectors take tens of milliseconds, so this is plenty and leaves the
@@ -555,12 +560,19 @@ class Session:
         return True
 
     @staticmethod
-    def _target_dict(target: detect.Target) -> dict:
+    def _at_drop_spot(target: detect.Target) -> bool:
+        x, y, _z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_OPEN})
+        return math.hypot(target.x - x, target.y - y) < DROP_ZONE_M
+
+    @classmethod
+    def _target_dict(cls, target: detect.Target) -> dict:
         try:
             grasp.plan(target)
             plan_error = None
         except grasp.GraspError as exc:
             plan_error = str(exc)
+        if cls._at_drop_spot(target):
+            plan_error = "at the drop-off spot -- we put it there"
         return {
             "label": target.label,
             "x_mm": round(target.x * 1000, 1),
@@ -966,6 +978,8 @@ class Session:
 
     @staticmethod
     def _plannable(target: detect.Target) -> bool:
+        if Session._at_drop_spot(target):
+            return False
         try:
             grasp.plan(target)
         except grasp.GraspError:
