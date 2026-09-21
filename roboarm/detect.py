@@ -869,13 +869,44 @@ def objects(
     (range_block), which puts the base where it is and sizes the cube; without
     them a tall object's box is its TOP, a few millimetres too far out.
     """
+    return _ranged(_ask_vision("/detect", frame, url), frame, matrix, nadir=nadir, lens_m=lens_m)
+
+
+def raised(
+    frame,
+    matrix: np.ndarray,
+    *,
+    url: str | None = None,
+    nadir: tuple[float, float] | None = None,
+    lens_m: float | None = None,
+) -> list[Target]:
+    """What STANDS UP on the table, from the vision service's depth model
+    (vision_service/depth.py), in table coordinates.
+
+    The service sends the outline of every raised region -- no shadow, and a
+    white cube on white paper included -- and it is ranged exactly like a
+    neural mask. Raises DetectorOffline when nothing answers and ValueError
+    when the service is up but has no depth engine (503).
+    """
+    # The depth model's plateau is the object's TOP FACE (the sides slope away
+    # from it), so it is ranged as a top, like a box, not as a full silhouette.
+    return _ranged(_ask_vision("/raised", frame, url), frame, matrix, nadir=nadir, lens_m=lens_m,
+                   top=True)
+
+
+def _ask_vision(path: str, frame, url: str | None) -> dict:
     ok, buffer = cv2.imencode(".jpg", frame)
     if not ok:
         raise ValueError("could not JPEG-encode the frame to send to the vision service")
+    return _vision_post(path, buffer.tobytes(), {"Content-Type": "image/jpeg"},
+                        url or cfg.DETECTOR_URL, cfg.DETECTOR_TIMEOUT_S)
 
-    reply = _vision_post("/detect", buffer.tobytes(), {"Content-Type": "image/jpeg"},
-                         url or cfg.DETECTOR_URL, cfg.DETECTOR_TIMEOUT_S)
 
+def _ranged(reply: dict, frame, matrix: np.ndarray, *,
+            nadir: tuple[float, float] | None, lens_m: float | None,
+            top: bool = False) -> list[Target]:
+    """The service's pixel outlines -> whole, cube-ranged targets on the table.
+    `top`: the outlines are top faces, not whole silhouettes."""
     outlines: list[tuple[dict, np.ndarray, bool]] = []
     for item in reply.get("detections", []):
         x, y, w, h = item["box"]
@@ -895,7 +926,7 @@ def objects(
         score = 0.0 if clipped else item.get("confidence", 1.0)
         if nadir is not None and lens_m is not None:
             quad, _width, tall, agreement = range_block(
-                ws.apply(matrix, polygon), nadir, lens_m, outline_is_top=boxed,
+                ws.apply(matrix, polygon), nadir, lens_m, outline_is_top=boxed or top,
                 chamfer_m=chamfer_for(matrix, polygon))
             score = score * agreement
             target = _target_from_quad(quad, item["label"], score, height_m=tall,
@@ -987,7 +1018,7 @@ def load_background(dyaw: float = 0.0, name: str = "primary"):
 
 
 # ---------------------------------------------------------------- ladder ----
-MODES = ("auto", "changes", "colour", "markers", "yolo")
+MODES = ("auto", "changes", "colour", "depth", "markers", "yolo")
 
 # Two silhouettes of the same object from different rungs land within this of
 # each other; two objects the gripper could tell apart never do (18 mm minimum).
@@ -1037,14 +1068,23 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
                           nadir=nadir, lens_m=lens_m)
     except FileNotFoundError:
         pass
+    standing: list[Target] = []
     if url:
         try:
             shapes += objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
+            standing = raised(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
         except DetectorOffline as exc:
             note(f"  vision service down ({exc}); untagged pale cubes may be missed")
         except ValueError as exc:
             note(f"  vision service refused the frame: {exc}")
-    shapes = distinct(shapes)
+    # What the depth rung saw standing up comes FIRST, whatever its score: its
+    # outline is the top face with no shadow and no colour in it, where a colour
+    # blob can be the picture on a white cube (16 mm for a 28 mm cube, 2026-09-21)
+    # and still look perfectly cube-like. The other silhouettes fill in only
+    # where depth saw nothing -- low things, and objects cut off in its map.
+    standing = distinct(standing)
+    shapes = standing + [s for s in distinct(shapes)
+                         if all(math.dist((s.x, s.y), (d.x, d.y)) > SAME_OBJECT_M for d in standing)]
     # A tag that measured its own height is a complete reading, better than any
     # silhouette; only a tag that could not (no lens height) borrows a size.
     fused = [t if t.height_m else f for t, f in zip(tagged, fuse(tagged, shapes))]
@@ -1080,9 +1120,10 @@ def ladder(frame, mode: str, matrix: np.ndarray, *,
     if mode == "auto":
         found = everything(frame, matrix, nadir=nadir, lens_m=lens_m, dyaw=dyaw,
                            url=url, look_name=look_name, note=note)
-    elif mode == "yolo":
+    elif mode in ("yolo", "depth"):
+        rung = objects if mode == "yolo" else raised
         try:
-            found = objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
+            found = rung(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
         except DetectorOffline as exc:
             note(f"  vision service down ({exc}); falling back to tags.")
             mode = "markers"

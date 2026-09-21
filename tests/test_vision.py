@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from roboarm import detect
+from vision_service import depth as vdepth
 from vision_service.detector import Detector, _resolve_model, extract_detections
 
 # Same trivial 1 px == 1 mm mapping as test_grasp: lets expected table coords be
@@ -272,3 +273,82 @@ def test_resolve_passes_through_an_explicit_engine_and_an_unfetched_name(tmp_pat
 def test_geometric_targets_default_to_full_confidence():
     t = detect.Target(x=0.1, y=0.0, width_m=0.03, length_m=0.03, angle_deg=0.0, label="x")
     assert t.confidence == 1.0
+
+
+# ------------------------------------------------------------ depth rung ----
+
+def _ramp_with_plateau(plateau=None, step=0.15):
+    """A relative depth map the way the model draws the table: a slow ramp (the
+    near edge looks nearer) plus, optionally, a flat plateau standing above it."""
+    h, w = 518, 686
+    ramp = np.linspace(0.2, 0.5, h)[:, None] * np.ones((1, w))
+    ramp = ramp + 0.0005 * np.random.default_rng(1).standard_normal((h, w))
+    if plateau:
+        x, y, side = plateau
+        ramp[y:y + side, x:x + side] += step
+    return ramp.astype(np.float32)
+
+
+def test_a_plateau_on_the_ramp_is_a_raised_region_with_its_outline():
+    found = vdepth.raised_regions(_ramp_with_plateau((300, 200, 120)))
+    assert len(found) == 1
+    outline, step = found[0]
+    assert step > vdepth.MIN_STEP
+    x, y, w, h = [int(v) for v in np.concatenate([outline.min(0), outline.max(0) - outline.min(0)])]
+    assert abs(x - 300) <= 6 and abs(y - 200) <= 6 and abs(w - 120) <= 12 and abs(h - 120) <= 12
+
+
+def test_the_bare_ramp_has_nothing_raised():
+    assert vdepth.raised_regions(_ramp_with_plateau(None)) == []
+
+
+def test_a_plateau_cut_off_by_the_border_is_not_a_region():
+    assert vdepth.raised_regions(_ramp_with_plateau((600, 200, 120))) == []
+
+
+def test_a_dip_is_not_raised():
+    assert vdepth.raised_regions(_ramp_with_plateau((300, 200, 120), step=-0.15)) == []
+
+
+def test_raised_posts_to_the_depth_route_and_ranges_like_a_mask(monkeypatch):
+    posted = {}
+
+    def fake_post(path, body, headers, url, timeout):
+        posted["path"] = path
+        return _reply([{"label": "raised", "confidence": 1.0, "box": [200, 150, 30, 30],
+                        "polygon": _square(200, 150, 30)}])
+
+    monkeypatch.setattr(detect, "_vision_post", fake_post)
+    found = detect.raised(np.zeros((480, 640, 3), np.uint8), MM_PER_PIXEL)
+    assert posted["path"] == "/raised"
+    assert len(found) == 1 and found[0].label == "raised"
+    assert found[0].width_m == pytest.approx(0.030, abs=1e-6)
+
+
+def test_the_depth_mode_falls_back_to_tags_when_the_service_is_down(monkeypatch):
+    def down(*_a, **_k):
+        raise detect.DetectorOffline("nobody home")
+
+    monkeypatch.setattr(detect, "_vision_post", down)
+    notes = []
+    found = detect.ladder(np.zeros((480, 640, 3), np.uint8), "depth", MM_PER_PIXEL,
+                          nadir=(0.139, -0.05), lens_m=0.212, note=notes.append)
+    assert found == [] and any("falling back" in n for n in notes)
+
+
+def test_auto_prefers_what_depth_saw_standing_over_a_colour_or_neural_blob(monkeypatch):
+    """The same object seen by the neural rung (as a 16 mm 'book') and by depth
+    (26 mm): the depth reading wins whatever the scores, and a thing only the
+    neural rung saw is still listed."""
+    def fake_post(path, body, headers, url, timeout):
+        if path == "/detect":
+            return _reply([{"label": "book", "confidence": 0.95, "box": [207, 157, 16, 16]},
+                           {"label": "cup", "confidence": 0.5, "box": [400, 300, 30, 30]}])
+        return _reply([{"label": "raised", "confidence": 0.6, "box": [202, 152, 26, 26]}])
+
+    monkeypatch.setattr(detect, "_vision_post", fake_post)
+    found = detect.everything(np.zeros((480, 640, 3), np.uint8), MM_PER_PIXEL,
+                              nadir=(0.139, -0.05), lens_m=None, url="http://x", note=lambda s: None)
+    by_label = {t.label: t for t in found}
+    assert set(by_label) == {"raised", "cup"}
+    assert by_label["raised"].width_m == pytest.approx(0.026, abs=1e-6)

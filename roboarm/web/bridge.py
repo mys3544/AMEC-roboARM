@@ -11,6 +11,7 @@ session.
     GET  /calibration                  data/table_homography.json, verbatim
     GET  /vision/health                forwarded to the vision container
     POST /vision/detect                raw JPEG in, forwarded to the vision container
+    POST /vision/raised                same, the depth rung (what stands up)
     POST /arm/connect                  open the serial port (idempotent)
     POST /arm/call                     {"method": "move_to", "args": [...], "kwargs": {...}}
                                        -> {"result": ...}; an ArmError is {"error": ..., "type": "ArmError"}
@@ -175,8 +176,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
-        if path == "/vision/detect":
-            self._forward_vision("/detect", body)
+        if path in ("/vision/detect", "/vision/raised"):
+            self._forward_vision(path.removeprefix("/vision"), body)
             return
         try:
             params = json.loads(body or b"{}")
