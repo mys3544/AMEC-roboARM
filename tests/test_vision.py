@@ -5,6 +5,9 @@ No network, no torch, no ultralytics. The HTTP call is stubbed; the Ultralytics
 results object is faked.
 """
 
+import base64
+
+import cv2
 import numpy as np
 import pytest
 
@@ -384,3 +387,34 @@ def test_a_tag_with_nothing_raised_under_it_is_lying_flat(monkeypatch):
                   tags=[tag(0.215, 0.165), tag(0.400, 0.400)])
     assert [t.label for t in found if t.label.startswith("tag")] == ["tag 1"]
     assert next(t for t in found if t.label == "tag 1").x == pytest.approx(0.215)
+
+
+def test_depth_picture_paints_the_map_and_the_outlines(monkeypatch):
+    small = np.zeros((259, 343), np.uint8)
+    small[80:140, 100:160] = 255
+    _ok, png = cv2.imencode(".png", small)
+    asked = {}
+
+    def fake_post(path, body, headers, url, timeout):
+        asked["path"] = path
+        return {**_reply([{"label": "raised", "confidence": 1.0, "box": [200, 150, 30, 30],
+                           "polygon": _square(200, 150, 30)}]),
+                "map": base64.b64encode(png.tobytes()).decode("ascii")}
+
+    monkeypatch.setattr(detect, "_vision_post", fake_post)
+    targets, picture = detect.depth_picture(np.zeros((480, 640, 3), np.uint8), MM_PER_PIXEL)
+    assert asked["path"] == "/raised?map=1"
+    assert [t.label for t in targets] == ["raised"]
+    assert picture.shape == (480, 640, 3)
+    assert not np.array_equal(picture[10, 10], picture[200, 240]), "the map is painted, not the frame"
+
+
+def test_mixed_picture_runs_every_rung_and_survives_a_dead_service(monkeypatch):
+    def down(*_a, **_k):
+        raise detect.DetectorOffline("nobody home")
+
+    monkeypatch.setattr(detect, "_vision_post", down)
+    frame = np.zeros((480, 640, 3), np.uint8)
+    picture = detect.mixed_picture(frame, MM_PER_PIXEL, nadir=(0.139, -0.05), lens_m=0.212,
+                                   url="http://x")
+    assert picture.shape == frame.shape and picture.any(), "the legend is drawn even with nothing found"

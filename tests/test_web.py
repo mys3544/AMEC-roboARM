@@ -518,3 +518,20 @@ def test_ladder_falls_back_to_tags_when_vision_is_down(monkeypatch):
 def test_ladder_rejects_an_unknown_rung():
     with pytest.raises(ValueError):
         detect.ladder(np.zeros((4, 4, 3), np.uint8), "psychic", np.eye(3))
+
+
+def test_the_clear_the_table_button_is_a_one_click_too(world, url):
+    code, body = post(url, "/api/auto/oneclick", {"job": "pickall"})
+    assert code == 200 and body["name"] == "pickall" and body["status"] == "running"
+    assert get(url, "/api/state")["mode"] == "auto"
+    assert finished(url, timeout=60)["status"] == "done"
+
+
+def test_the_depth_and_mixed_views_are_served_even_without_a_vision_service(url):
+    for view in ("depth", "mixed"):
+        code, _body = post(url, "/api/view", {"view": view})
+        assert code == 200
+        assert get(url, "/api/state")["view"] == view
+        req = urllib.request.Request(url + f"/snapshot.jpg?view={view}")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            assert r.status == 200 and r.read(2) == b"\xff\xd8"

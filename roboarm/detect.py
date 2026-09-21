@@ -55,6 +55,7 @@ THREE KNOWN ERRORS, measured rather than assumed -- see tools/detect_check.py:
 
 from __future__ import annotations
 
+import base64
 import json
 import math
 import urllib.error
@@ -977,6 +978,69 @@ def annotate(frame, matrix: np.ndarray, targets: list[Target]):
             (int(centre[0]) + 10, int(centre[1])),
             cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1,
         )
+    return out
+
+
+# One colour per rung for the pictures below (BGR).
+RUNG_COLOURS = {"colour": (255, 160, 0), "tags": (255, 0, 255), "neural": (0, 220, 255),
+                "depth": (0, 200, 0)}
+
+
+def _draw_rung(out, matrix: np.ndarray, targets: list[Target], colour, rung: str) -> None:
+    inverse = np.linalg.inv(matrix)
+    for target in targets:
+        if target.pixels:
+            pts = np.round(np.asarray(target.pixels)).astype(np.int32).reshape(-1, 1, 2)
+            cv2.polylines(out, [pts], True, colour, 2)
+        centre = ws.apply(inverse, [[target.x, target.y]])[0]
+        cv2.circle(out, (int(centre[0]), int(centre[1])), 5, colour, 2)
+        cv2.putText(out, f"{rung}: {target.label} {target.width_m * 1000:.0f}mm",
+                    (int(centre[0]) + 8, int(centre[1]) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                    colour, 1)
+
+
+def depth_picture(frame, matrix: np.ndarray, *, url: str | None = None,
+                  nadir: tuple[float, float] | None = None,
+                  lens_m: float | None = None):
+    """(targets, picture): the depth rung's targets, and its relative depth map
+    (nearer = brighter) with their outlines drawn on it. One request, so the
+    picture is of the very map the targets came from."""
+    reply = _ask_vision("/raised?map=1", frame, url)
+    targets = _ranged(reply, frame, matrix, nadir=nadir, lens_m=lens_m, top=True)
+    picture = frame.copy()
+    if reply.get("map"):
+        small = cv2.imdecode(np.frombuffer(base64.b64decode(reply["map"]), np.uint8),
+                             cv2.IMREAD_GRAYSCALE)
+        if small is not None:
+            full = cv2.resize(small, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR)
+            picture = cv2.applyColorMap(full, cv2.COLORMAP_VIRIDIS)
+    _draw_rung(picture, matrix, targets, RUNG_COLOURS["depth"], "depth")
+    return targets, picture
+
+
+def mixed_picture(frame, matrix: np.ndarray, *, url: str | None = None,
+                  nadir: tuple[float, float] | None = None,
+                  lens_m: float | None = None):
+    """Every rung on its own, UNGATED, each in its colour: what everything()'s
+    gate is choosing between. A rung that is off says so in the corner."""
+    out = frame.copy()
+    fixed = COLOUR_OBJECT_HEIGHT_M if (nadir is not None and lens_m is None) else 0.0
+    rungs = [
+        ("colour", lambda: coloured(frame, matrix, nadir=nadir, height_m=fixed, lens_m=lens_m)),
+        ("tags", lambda: markers(frame, matrix, tag_m=cfg.OBJECT_TAG_M, nadir=nadir, lens_m=lens_m)),
+        ("neural", lambda: objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m) if url else None),
+        ("depth", lambda: raised(frame, matrix, url=url, nadir=nadir, lens_m=lens_m) if url else None),
+    ]
+    y = 18
+    for rung, run in rungs:
+        try:
+            found = run()
+            note = f"{rung}: off" if found is None else f"{rung}: {len(found)}"
+        except (DetectorOffline, ValueError, FileNotFoundError) as exc:
+            found, note = None, f"{rung}: off ({type(exc).__name__})"
+        _draw_rung(out, matrix, found or [], RUNG_COLOURS[rung], rung)
+        cv2.putText(out, note, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, RUNG_COLOURS[rung], 1)
+        y += 18
     return out
 
 

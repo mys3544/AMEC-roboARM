@@ -22,6 +22,7 @@ answers 503 and the client skips it.
 
 from __future__ import annotations
 
+import base64
 import os
 
 import cv2
@@ -136,14 +137,18 @@ class Depth:
         self._stream.synchronize()
         return out.cpu().numpy().reshape(INPUT_H, INPUT_W)
 
-    def infer(self, jpeg: bytes) -> dict:
+    def infer(self, jpeg: bytes, want_map: bool = False) -> dict:
+        """The raised regions; with `want_map` also "map", the relative depth as
+        a base64 PNG at half size, 8-bit, nearer = brighter -- for a picture on
+        the panel, never for measuring."""
         frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
         if frame is None:
             raise ValueError("the body is not a decodable JPEG")
         height, width = frame.shape[:2]
         scale = np.array([width / INPUT_W, height / INPUT_H])
+        disp = self.depth_map(frame)
         detections = []
-        for outline, step in raised_regions(self.depth_map(frame)):
+        for outline, step in raised_regions(disp):
             pixels = outline * scale
             x, y, w, h = cv2.boundingRect(pixels.astype(np.float32))
             detections.append({
@@ -152,4 +157,11 @@ class Depth:
                 "box": [float(x), float(y), float(w), float(h)],
                 "polygon": [[round(float(px), 1), round(float(py), 1)] for px, py in pixels],
             })
-        return {"model": self.name, "width": width, "height": height, "detections": detections}
+        reply = {"model": self.name, "width": width, "height": height, "detections": detections}
+        if want_map:
+            small = cv2.resize(disp, (INPUT_W // 2, INPUT_H // 2), interpolation=cv2.INTER_AREA)
+            small = (255 * (small - small.min()) / (small.max() - small.min() + 1e-9)).astype(np.uint8)
+            ok, png = cv2.imencode(".png", small)
+            if ok:
+                reply["map"] = base64.b64encode(png.tobytes()).decode("ascii")
+        return reply

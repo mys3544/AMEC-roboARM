@@ -177,7 +177,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
         if path in ("/vision/detect", "/vision/raised"):
-            self._forward_vision(path.removeprefix("/vision"), body)
+            # the query goes along (/raised?map=1 asks for the depth picture)
+            self._forward_vision(self.path.removeprefix("/vision"), body)
             return
         try:
             params = json.loads(body or b"{}")

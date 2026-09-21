@@ -1,3 +1,71 @@
+# Status, 2026-09-21 evening (the depth rung: Depth Anything V2 Small as a gate)
+
+Branch `drop-pose`, commits after the afternoon's: the "clear the table" job
+(`pickall`), the drop-zone exclusion, the depth rung, the depth gate, and the
+two diagnostic views. All on the robot, panel restarted, 285 tests green.
+
+## Why depth
+
+The day's misses were the colour rung's: the white picture cube on the white
+paper read 15 / 17 / 29 mm (its picture, or its shadow, not the cube), the
+tagged cube was placed 19 mm off, and "clear the table" tried three shadows.
+An offline test on the saved sweep frames (laptop CPU, `depth-anything/
+Depth-Anything-V2-Small-hf`) showed every cube's top face as a crisp plateau
+with NO shadow -- white-on-white included -- and nothing on empty-table frames.
+What the model cannot do is metric depth: its relative map warps slowly across
+a flat table, a global scale+shift fit is ill-conditioned (70..120 mm for
+20..40 mm cubes), and background subtraction fails on window size. EDGES work:
+Sobel of the map, threshold at median + 8 MAD, regions enclosed by edges that
+do not touch the border and are nearer than a plane fitted to a 31 px ring
+around them. Blue 40 mm cube: 38..41 mm on four frames.
+
+## What was built
+
+* `vision_service/depth.py`: the engine (`models/da2s_518x686.fp16.engine`,
+  53 MB, built with trtexec --fp16 from the laptop's ONNX export at the wrist
+  camera's 4:3, 371 s; 26 ms per frame; output matches the CPU model, corr
+  0.99999) behind `POST /raised`, same wire format as /detect, label "raised",
+  confidence = step / 40 capped at 1. `?map=1` adds the map as a half-size
+  8-bit PNG for the panel. No engine -> 503, the client skips the rung.
+  Health shows `depth`. The fp16 map is quantised to ~1500 values; the
+  quantisation steps were gradients everywhere and lifted the threshold past
+  a real rim on two of three frames -- a 3x3 Gaussian blur first fixed it.
+* Client: `detect.raised()` ranges the outlines as TOP faces; mode "depth" on
+  the panel; the bridge forwards `/vision/raised` (query included).
+* **The gate** (`detect.everything`): once depth has answered, a colour or
+  neural silhouette it did not confirm is dropped, except a CLIPPED one (never
+  graspable, but it feeds `sweep.hints`); a tag with nothing raised under it is
+  lying flat. Without a depth answer the other rungs fill in as before.
+* "clear the table": `Session._job_pickall` -- full sweep, pick and drop every
+  plannable target surest first, sweep again, stop when a full sweep finds
+  nothing, give up after 3 rounds. Header button and card button. Anything
+  within 80 mm of the drop pose's fingertips is "at the drop-off spot" and
+  never a target (the pile is in view from the ring's end stations).
+* Views "depth" (the map, viridis, with the raised outlines) and "mixed"
+  (every rung ungated, each in its colour: blue colour, magenta tags, yellow
+  neural, green depth, with a per-rung count or "off" in the corner). Made
+  only while a client is watching them (`Session._wanted`), because each costs
+  a vision round trip -- 180..250 ms over the hotspot.
+
+## Live results
+
+| run | listed | attempted | held | ghosts |
+|---|---|---|---|---|
+| clear the table, auto before the gate | 4 raised + 2 colour | 6 | 4 (all raised) | 3 colour, all shadows |
+| clear the table, auto with the gate, cubes added mid-job | raised only | 5 | 4 | 0 |
+
+The one miss with the gate: a cube at 165 / -62 re-looked from a side station,
+moved 11 mm by the re-look, tips landed on the aim, closed on nothing. Both of
+the tagged cube's earlier misses also followed a re-look, and the tag rung had
+it 19 mm left of where depth, neural and colour all put it: the re-look from
+the side and the tag unlift are the two things to look at next.
+
+Open: the white "20 mm" cube and the tagged black cube both measure ~28 mm from
+the depth outline; measure them. `tools/export_engine.py` does not build the
+depth engine yet (it was built by hand with trtexec; the ONNX is in models/).
+
+---
+
 # Status, 2026-09-21 afternoon (fixed drop pose 90 deg right; J1 to 180; offset capped)
 
 Seven picks on the robot, five of them one-click, on the user's phone hotspot

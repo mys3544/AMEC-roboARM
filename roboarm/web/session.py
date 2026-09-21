@@ -47,7 +47,10 @@ from roboarm.arm import ArmError
 from roboarm.config import Pose
 
 MODES = ("manual", "auto")
-VIEWS = ("raw", "detect", "mask", "edges")
+VIEWS = ("raw", "detect", "mask", "edges", "depth", "mixed")
+# The depth and mixed pictures cost vision round trips, so they are only made
+# while some client has asked for that view within this many seconds.
+PICTURE_WANTED_S = 3.0
 
 # How far from the sweep's estimate the refine look may find the object and still
 # be believed to be the same one. Generous next to the few mm the two views should
@@ -210,6 +213,9 @@ class Session:
                                 "when": 0.0}
         self._annotated = None       # newest frame with detections drawn on
         self._mask = None            # newest detector mask / filter output
+        self._depth_pic = None       # the depth rung's map with its outlines
+        self._mixed_pic = None       # every rung ungated, each in its colour
+        self._wanted: dict[str, float] = {}   # view -> when a client last asked for it
         self._frame_seq = 0
         self.sweep_targets: list[detect.Target] = []
         self.sweep_when = 0.0
@@ -592,6 +598,7 @@ class Session:
     def frame(self, view: str | None = None):
         """The newest frame in `view` (default: the page's current view). (frame, seq)."""
         view = view or self.view
+        self._wanted[view] = time.time()
         stream = self.stream
         if stream is None:
             return None, 0
@@ -605,6 +612,10 @@ class Session:
             return cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR), seq
         if view == "mask" and self._mask is not None:
             return self._mask, seq
+        if view == "depth" and self._depth_pic is not None:
+            return self._depth_pic, seq
+        if view == "mixed" and self._mixed_pic is not None:
+            return self._mixed_pic, seq
         if self._annotated is not None:
             return self._annotated, seq
         return raw, seq
@@ -678,6 +689,20 @@ class Session:
 
         self._annotated = detect.annotate(frame, matrix, targets)
         self._mask = self._mask_for(frame, dyaw, targets)
+        # The two diagnostic pictures, only while a client is watching them:
+        # each costs a vision round trip (and the mixed one runs every rung).
+        now = time.time()
+        url = self._vision_url()
+        self._depth_pic = self._mixed_pic = None
+        if url and now - self._wanted.get("depth", 0.0) < PICTURE_WANTED_S:
+            try:
+                _seen, self._depth_pic = detect.depth_picture(
+                    frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
+            except (detect.DetectorOffline, ValueError):
+                pass
+        if now - self._wanted.get("mixed", 0.0) < PICTURE_WANTED_S:
+            self._mixed_pic = detect.mixed_picture(frame, matrix, url=url, nadir=nadir,
+                                                   lens_m=lens_m)
         listed = []
         for target in targets:
             info = self._target_dict(target)
@@ -785,19 +810,24 @@ class Session:
         self._job_thread.start()
         return self.job
 
-    def one_click(self, detector: str = "auto", object_mm: float | None = None) -> Job:
+    def one_click(self, detector: str = "auto", object_mm: float | None = None,
+                  job: str = "pick") -> Job:
         """The whole demo behind one button: choose the detector and the declared
         object width (None: measure it), switch to automatic, and run
-        sweep -> refine -> pick -> drop at cfg.DROP_POSE.
+        sweep -> refine -> pick -> drop at cfg.DROP_POSE. `job` "pickall" is
+        the "clear the table" button: every station, everything, until a full
+        sweep finds nothing.
 
         Refused while a job runs, like any other start. Switching the mode here is
         deliberate: the button is meant for someone who does not want to know that
         there is a mode."""
         if self._job_running():
             raise Busy(f"{self.job.name} is still running -- stop it first")
+        if job not in ("pick", "pickall"):
+            raise ValueError(f"the one-click job is pick or pickall, not {job!r}")
         self.set_view(detector=detector, object_mm=object_mm, view="detect")
         self.set_mode("auto")
-        return self.start_job("pick", refine=True, first=True)
+        return self.start_job(job, refine=True, first=True)
 
     def _run_job(self, job: Job, runner, params: dict) -> None:
         self.log(f"--- {job.name} ---")

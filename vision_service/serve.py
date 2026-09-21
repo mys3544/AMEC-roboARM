@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 from vision_service.depth import Depth
 from vision_service.detector import Detector
@@ -51,13 +52,16 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"no such endpoint: GET {self.path}"}, 404)
 
     def do_POST(self) -> None:
-        if self.path == "/detect":
+        url = urlparse(self.path)
+        options = {}
+        if url.path == "/detect":
             model = self.detector
-        elif self.path == "/raised":
+        elif url.path == "/raised":
             model = self.depth
             if model is None:
                 self._json({"error": "no depth engine is built -- see vision_service/depth.py"}, 503)
                 return
+            options["want_map"] = parse_qs(url.query).get("map", ["0"])[-1] == "1"
         else:
             self._json({"error": f"no such endpoint: POST {self.path}"}, 404)
             return
@@ -66,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "empty body -- POST a JPEG frame"}, 400)
             return
         try:
-            self._json(model.infer(body))
+            self._json(model.infer(body, **options))
         except Exception as exc:  # noqa: BLE001 -- the client must hear about it
             self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 

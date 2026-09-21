@@ -104,7 +104,8 @@
   <span class="pill" id="vispill">vision: …</span>
   <span class="pill" id="jobpill">idle</span>
   <span class="spacer"></span>
-  <button class="primary" id="oneclick" title="Auto detector (tags, colour and the neural service, each cube sized from its own outline; 'object mm' overrides the size if set), automatic mode, then search, refine, pick and place at the 'place at' point">▶ PICK &amp; PLACE THE CUBE</button>
+  <button class="primary" id="oneclick" title="Auto detector (tags, colour, neural and depth, each cube sized from its own outline; 'object mm' overrides the size if set), automatic mode, then search, refine, pick and drop at the fixed drop pose">▶ PICK &amp; PLACE THE CUBE</button>
+  <button class="primary" id="clearbtn" title="Auto detector, automatic mode, then a FULL sweep, pick and drop everything found, sweep again; stops only when a full sweep finds nothing left">▶ CLEAR THE TABLE</button>
   <button class="stop" id="stopbtn" title="Interrupts any move and holds the arm (Esc)">■ STOP / HOLD</button>
 </header>
 
@@ -117,6 +118,8 @@
           <option value="raw">raw</option>
           <option value="detect">detections</option>
           <option value="mask">detector mask</option>
+          <option value="depth">depth (the map, what stands up)</option>
+          <option value="mixed">mixed (every rung, ungated)</option>
           <option value="edges">edges</option>
         </select>
       </label>
@@ -145,12 +148,14 @@
       <label>show
         <select id="view2">
           <option value="mask">detector mask + outlines</option>
+          <option value="depth">depth: the map, what stands up</option>
+          <option value="mixed">mixed: every rung, ungated</option>
           <option value="detect">detections</option>
           <option value="edges">edges</option>
           <option value="raw">raw</option>
         </select>
       </label>
-      <span class="hint">green = graspable, red = cut off or refused; grey = the detector's own mask</span>
+      <span class="hint">green = graspable, red = cut off or refused; grey = the detector's own mask. mixed: blue colour, magenta tags, yellow neural, green depth</span>
       <button id="snapbtn2" title="open this view in a new tab">snapshot</button>
     </div>
     <div class="frame">
@@ -405,6 +410,11 @@
   $("oneclick").addEventListener("click", () => {
     const width = $("objectmm").value === "" ? null : +$("objectmm").value;
     api("/api/auto/oneclick", {detector: "auto", object_mm: width})
+      .then(poll).catch(() => {});
+  });
+  $("clearbtn").addEventListener("click", () => {
+    const width = $("objectmm").value === "" ? null : +$("objectmm").value;
+    api("/api/auto/oneclick", {detector: "auto", object_mm: width, job: "pickall"})
       .then(poll).catch(() => {});
   });
   $("connectbtn").addEventListener("click", () => api("/api/arm/connect", {}).then(poll).catch(() => {}));
