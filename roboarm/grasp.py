@@ -175,6 +175,15 @@ def reach_offset(x: float, y: float, base_m: float = cfg.REACH_OFFSET_M) -> floa
     return base_m + cfg.REACH_OFFSET_SLOPE * beyond
 
 
+def aim_offset(target: detect.Target, base_m: float = cfg.REACH_OFFSET_M) -> float:
+    """The reach offset for THIS object: reach_offset() capped at a quarter of
+    its width. The offset is a guess at where the tips really land, and the
+    correction passes accept 4 mm on top; a 40 mm cube forgives both, a 20 mm
+    one does not: on 2026-09-21 a 9 mm aim plus a 3 mm overshoot put the pads
+    on its far edge and shoved it 10 mm ("closed on nothing"); 6 mm held."""
+    return min(reach_offset(target.x, target.y, base_m), target.width_m / 4)
+
+
 def aim_for(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> detect.Target:
     """Where to SEND the fingertip so that it actually arrives on the target.
 
@@ -182,7 +191,7 @@ def aim_for(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -
     they are, along the reach. Aiming beyond the object by that much is what puts
     the fingers either side of it instead of on its near face.
     """
-    x, y = outward(target.x, target.y, reach_offset(target.x, target.y, reach_offset_m))
+    x, y = outward(target.x, target.y, aim_offset(target, reach_offset_m))
     return replace(target, x=x, y=y)
 
 
@@ -361,7 +370,7 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
             print(f"  {message}", flush=True)
 
     if reach_offset_m:
-        say(f"aiming {reach_offset(seen.x, seen.y, reach_offset_m) * 1000:.0f} mm beyond the object along the reach "
+        say(f"aiming {aim_offset(seen, reach_offset_m) * 1000:.0f} mm beyond the object along the reach "
             f"(the model lands the tips that much short): "
             f"{target.x * 1000:.0f} mm fwd, {target.y * 1000:+.0f} mm left")
 

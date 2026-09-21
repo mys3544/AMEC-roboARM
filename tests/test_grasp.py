@@ -195,7 +195,7 @@ def test_the_plan_undoes_the_base_yaw_for_a_cube_off_to_the_side():
 def test_the_aim_point_is_beyond_the_object_along_its_bearing():
     """The real tips land short along the reach, so the aim goes further out on
     the same bearing -- never sideways."""
-    seen = target(x=0.120, y=0.090)  # bearing 36.9 deg, 150 mm out
+    seen = target(x=0.120, y=0.090, width_m=0.080)  # bearing 36.9 deg, 150 mm out
     aimed = grasp.aim_for(seen, 0.020)
     assert math.hypot(aimed.x, aimed.y) == pytest.approx(0.170, abs=1e-6)
     assert math.atan2(aimed.y, aimed.x) == pytest.approx(math.atan2(seen.y, seen.x))
@@ -203,13 +203,25 @@ def test_the_aim_point_is_beyond_the_object_along_its_bearing():
     assert grasp.aim_for(seen, 0.0) == seen
 
 
+def test_the_aim_never_goes_beyond_a_quarter_of_the_objects_width():
+    """A 20 mm cube at 173 mm: the grown offset says 9 mm, which put the pads on
+    its far edge and shoved it (2026-09-21). Capped at 5 mm; a 40 mm cube keeps 9."""
+    small = target(x=0.168, y=0.040, width_m=0.020, length_m=0.020)
+    assert grasp.reach_offset(small.x, small.y, 0.005) == pytest.approx(0.0088, abs=0.0005)
+    assert grasp.aim_offset(small, 0.005) == pytest.approx(0.005)
+    big = target(x=0.168, y=0.040, width_m=0.040, length_m=0.040)
+    assert grasp.aim_offset(big, 0.005) == pytest.approx(0.0088, abs=0.0005)
+    assert grasp.aim_offset(small, 0.0) == 0.0
+
+
 def test_the_plan_aims_past_the_object_by_the_reach_offset():
-    raw = grasp.plan(target(), reach_offset_m=0.0)
-    offset = grasp.plan(target(), reach_offset_m=0.020)
+    cube = target(width_m=0.040, length_m=0.040)   # a 30 mm one would cap the aim at 7.5
+    raw = grasp.plan(cube, reach_offset_m=0.0)
+    offset = grasp.plan(cube, reach_offset_m=0.010)
     tip_raw = kin.forward(raw.grasp)
     tip_off = kin.forward(offset.grasp)
     further = math.hypot(*tip_off[:2]) - math.hypot(*tip_raw[:2])
-    assert further == pytest.approx(0.020, abs=0.004), "IK rounds to whole degrees"
+    assert further == pytest.approx(0.010, abs=0.004), "IK rounds to whole degrees"
     assert cfg.REACH_OFFSET_M == pytest.approx(0.005)   # touch-probed 2026-09-14
 
 
