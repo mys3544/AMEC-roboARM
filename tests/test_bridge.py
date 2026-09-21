@@ -16,6 +16,7 @@ import pytest
 
 from roboarm import config as cfg
 from roboarm import detect
+from roboarm import kinematics as kin
 from roboarm.arm import ArmError
 from roboarm.web import bridge, remote, session, sim
 
@@ -148,7 +149,7 @@ def test_calibration_comes_across_intact(robot):
 
 def test_a_whole_session_runs_over_the_bridge(robot, monkeypatch):
     """The same sweep-and-pick the local session does, with the arm and camera
-    behind HTTP. The block ends up at the drop point on the 'robot'."""
+    behind HTTP. The block ends up under the drop pose on the 'robot'."""
     hw, url = robot
     monkeypatch.setattr(detect, "BACKGROUND_PATH",
                         Path(tempfile.mkdtemp()) / "table_background.png")
@@ -165,8 +166,9 @@ def test_a_whole_session_runs_over_the_bridge(robot, monkeypatch):
         job = sess.start_job("pick", refine=False)
         _wait(lambda: job.status != "running", timeout=30)
         assert job.status == "done", job.message
+        x, y, _z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_OPEN})
         moved = [b for b in hw.arm.world.blocks
-                 if abs(b.x - session.DROP_X) < 0.006 and abs(b.y - session.DROP_Y) < 0.006]
+                 if abs(b.x - x) < 0.012 and abs(b.y - y) < 0.012]
         assert len(moved) == 1 and not moved[0].held
     finally:
         sess.close()

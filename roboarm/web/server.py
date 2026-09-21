@@ -25,7 +25,7 @@ stream open does not block the JSON calls the same page is making.
     POST /api/arm/engage        torque on
     POST /api/arm/connect       (re)open the serial port
     POST /api/auto/start        {"job": "sweep"|"pick"|"place"|"background"|"survey", ...params}
-    POST /api/auto/oneclick     {detector, object_mm, drop_x, drop_y}: set up, go automatic, pick & place
+    POST /api/auto/oneclick     {detector, object_mm}: set up, go automatic, pick & drop at cfg.DROP_POSE
     POST /api/auto/stop
     POST /api/calibration/reload
 
@@ -132,8 +132,7 @@ def _routes(session: Session) -> dict:
         ("POST", "/api/auto/start"): lambda p: session.start_job(
             p["job"], **{k: v for k, v in p.items() if k != "job"}).snapshot(),
         ("POST", "/api/auto/oneclick"): lambda p: session.one_click(
-            p.get("detector") or "auto", p.get("object_mm"),
-            p.get("drop_x"), p.get("drop_y")).snapshot(),
+            p.get("detector") or "auto", p.get("object_mm")).snapshot(),
         ("POST", "/api/auto/stop"): lambda p: (session.stop(), {"ok": True})[1],
         ("POST", "/api/calibration/reload"): lambda p: (
             session.reload_calibration(), session.snapshot()["calibration"])[1],

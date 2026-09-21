@@ -40,7 +40,18 @@ SDK_RANGE = {1: (0, 180), 2: (0, 180), 3: (0, 180), 4: (0, 180), 5: (0, 270), 6:
 HARD_LIMITS = {1: (0, 180), 2: (0, 180), 3: (0, 180), 4: (0, 180), 5: (0, 270), 6: (30, 180)}
 # J2 floor 15 -> 5 on 2026-09-14: it was only a margin from the servo end (0), and it
 # capped the fingertips at 210 mm when the links stretch to 272. 5 keeps the margin.
-SAFE_LIMITS = {1: (10, 170), 2: (5, 108), 3: (10, 170), 4: (10, 170), 5: (10, 260), 6: (30, 180)}
+# J1 ceiling 170 -> 180 on 2026-09-21 (user's wish): the drop point is a full 90 deg
+# to the right of straight ahead (J1 = 90), i.e. the servo's own end, and nothing is
+# in the way there. The left end keeps its 10 deg margin, untested. The sweep ring is
+# unchanged: the next 25 deg station to the right would need J1 = 190.
+SAFE_LIMITS = {1: (10, 180), 2: (5, 108), 3: (10, 170), 4: (10, 170), 5: (10, 260), 6: (30, 180)}
+
+# Where a picked object is let go: a FIXED pose, not a table point. Chosen by eye
+# on 2026-09-21 with the arm driven there and looked at: base a full 90 deg to the
+# right, fingertips 189 mm out and 110 mm above the table (model), so the object
+# falls the last bit. The one-click and the pick job end here; the "place at x/y"
+# button is the way to set something down at a table point.
+DROP_POSE = {1: 180, 2: 44, 3: 38, 4: 19, 5: 90}
 
 # J2's upper bound is a COLLISION with the camera mast, not a torque limit.
 # 108 keeps ~30 mm of modelled fingertip clearance and sits 13 deg below the angle

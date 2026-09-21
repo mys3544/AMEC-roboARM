@@ -232,7 +232,7 @@
         <label>place at x <input type="number" id="px" value="150" step="5"></label>
         <label>y <input type="number" id="py" value="-70" step="5"></label>
         <button data-job="place">place here</button>
-        <span class="muted" style="font-size:12px">(mm; also the drop point after a pick)</span>
+        <span class="muted" style="font-size:12px">(mm; a pick drops at the fixed pose in config.DROP_POSE instead)</span>
       </div>
       <div id="sweeptargets"></div>
     </div>
@@ -402,7 +402,7 @@
   $("stopbtn").addEventListener("click", () => api("/api/auto/stop", {}).then(poll).catch(() => {}));
   $("oneclick").addEventListener("click", () => {
     const width = $("objectmm").value === "" ? null : +$("objectmm").value;
-    api("/api/auto/oneclick", {detector: "auto", object_mm: width, drop_x: +$("px").value, drop_y: +$("py").value})
+    api("/api/auto/oneclick", {detector: "auto", object_mm: width})
       .then(poll).catch(() => {});
   });
   $("connectbtn").addEventListener("click", () => api("/api/arm/connect", {}).then(poll).catch(() => {}));
@@ -431,7 +431,7 @@
   });
   function startJob(name, extra = {}) {
     const params = {job: name, first: $("firstchk").checked, dry_run: $("dryrun").checked,
-                    refine: $("refinechk").checked, drop_x: +$("px").value, drop_y: +$("py").value, ...extra};
+                    refine: $("refinechk").checked, ...extra};
     if (name === "place") { params.x = +$("px").value; params.y = +$("py").value; }
     if (name === "background" && !confirm("Is the table EMPTY? The background is what every later detection is compared against.")) return;
     api("/api/auto/start", params).then(poll).catch(() => {});

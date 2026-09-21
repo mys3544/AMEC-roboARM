@@ -545,5 +545,5 @@ def test_the_graspable_envelope_is_an_annulus_we_can_state():
     bearings = np.degrees(np.arctan2(GRASPABLE[:, 1], GRASPABLE[:, 0]))
     assert radii.min() == pytest.approx(0.131, abs=0.006)
     assert radii.max() == pytest.approx(0.238, abs=0.006)   # 0.210 with the old J2 floor of 15
-    assert bearings.min() == pytest.approx(-80, abs=2)
+    assert bearings.min() == pytest.approx(-90, abs=2)   # -80 until J1's ceiling went to 180
     assert bearings.max() == pytest.approx(80, abs=2)

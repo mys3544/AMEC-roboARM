@@ -49,11 +49,6 @@ from roboarm.config import Pose
 MODES = ("manual", "auto")
 VIEWS = ("raw", "detect", "mask", "edges")
 
-# Where a picked object is put down. The sweep CAN see this spot, so a second
-# run finds the cube where the first one left it: a free end-to-end check.
-DROP_X = 0.150
-DROP_Y = -0.070
-
 # How far from the sweep's estimate the refine look may find the object and still
 # be believed to be the same one. Generous next to the few mm the two views should
 # disagree by, tight enough that it cannot lock on to a different object: two
@@ -775,11 +770,10 @@ class Session:
         self._job_thread.start()
         return self.job
 
-    def one_click(self, detector: str = "auto", object_mm: float | None = None,
-                  drop_x: float | None = None, drop_y: float | None = None) -> Job:
+    def one_click(self, detector: str = "auto", object_mm: float | None = None) -> Job:
         """The whole demo behind one button: choose the detector and the declared
         object width (None: measure it), switch to automatic, and run
-        sweep -> refine -> pick -> place.
+        sweep -> refine -> pick -> drop at cfg.DROP_POSE.
 
         Refused while a job runs, like any other start. Switching the mode here is
         deliberate: the button is meant for someone who does not want to know that
@@ -788,7 +782,7 @@ class Session:
             raise Busy(f"{self.job.name} is still running -- stop it first")
         self.set_view(detector=detector, object_mm=object_mm, view="detect")
         self.set_mode("auto")
-        return self.start_job("pick", refine=True, first=True, drop_x=drop_x, drop_y=drop_y)
+        return self.start_job("pick", refine=True, first=True)
 
     def _run_job(self, job: Job, runner, params: dict) -> None:
         self.log(f"--- {job.name} ---")
@@ -976,9 +970,7 @@ class Session:
         return True
 
     def _job_pick(self, index: int | None = None, dry_run: bool = False,
-                  refine: bool = True, first: bool = True,
-                  drop_x: float | None = None, drop_y: float | None = None,
-                  **_ignored) -> None:
+                  refine: bool = True, first: bool = True, **_ignored) -> None:
         if index is None or not self.sweep_targets:
             targets = self._job_sweep(first=first)
             # The SUREST plannable target, not the nearest. 2026-09-18: the outer
@@ -1016,10 +1008,8 @@ class Session:
             self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
             raise ValueError("closed on nothing -- see the log for the usual causes")
         self.log("holding it")
-        grasp.place(self.arm, DROP_X if drop_x is None else drop_x / 1000,
-                    DROP_Y if drop_y is None else drop_y / 1000,
-                    reach_offset_m=self.reach_offset_mm / 1000)
-        self._lap("place")
+        grasp.drop(self.arm)
+        self._lap("drop")
         self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
         self.sweep_targets = []
         self._lap("return to survey")

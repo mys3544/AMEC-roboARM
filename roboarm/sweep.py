@@ -207,11 +207,18 @@ def ring(survey: Pose, matrix: np.ndarray,
     if step_deg <= 0:
         raise ValueError(f"step must be positive, got {step_deg}")
     left, right = yaw_range(survey)
-    first = math.floor(left / step_deg)
-    last = math.ceil(right / step_deg)
+    first = math.ceil(left / step_deg)
+    last = math.floor(right / step_deg)
+    dyaws = [index * step_deg for index in range(first, last + 1)]
+    # An end of the range more than half a step past the last regular station
+    # gets a look of its own, else the arm could reach a wedge of table the ring
+    # never sees (J1's ceiling is 180 since 2026-09-21: -90 is 15 deg past -75).
+    if dyaws[0] - left > step_deg / 2:
+        dyaws.insert(0, left)
+    if right - dyaws[-1] > step_deg / 2:
+        dyaws.append(right)
     looks = []
-    for index in range(first, last + 1):
-        dyaw = index * step_deg
+    for dyaw in dyaws:
         try:
             pose = pose_at(survey, dyaw)
         except NoLook:

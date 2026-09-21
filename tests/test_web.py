@@ -18,6 +18,7 @@ import pytest
 
 from roboarm import camera, detect
 from roboarm import config as cfg
+from roboarm import kinematics as kin
 from roboarm.web import server, session, sim
 
 
@@ -337,7 +338,7 @@ def test_a_pick_does_not_look_twice_when_already_head_on(world, url):
     post(url, "/api/mode", {"mode": "auto"})
     post(url, "/api/auto/start", {"job": "survey"})
     finished(url)
-    post(url, "/api/auto/start", {"job": "pick", "drop_x": 140, "drop_y": -60})
+    post(url, "/api/auto/start", {"job": "pick"})
     assert finished(url, timeout=20)["status"] == "done"
     lines = " ".join(x["text"] for x in get(url, "/api/log?since=0")["lines"])
     assert "no second look needed" in lines or "looking again" in lines
@@ -373,30 +374,34 @@ def test_the_pose_is_tracked_while_a_job_holds_the_arm(sess, url):
     assert len(seen) >= 3, f"the base yaw only ever read {seen}"
 
 
-def test_pick_and_place_moves_the_block(world, url):
+def at_drop_pose(block) -> bool:
+    """Under cfg.DROP_POSE's fingertips, give or take the simulator's reach shortfall."""
+    x, y, _z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_OPEN})
+    return abs(block.x - x) < 0.012 and abs(block.y - y) < 0.012
+
+
+def test_pick_and_drop_moves_the_block(world, url):
     post(url, "/api/mode", {"mode": "auto"})
-    post(url, "/api/auto/start", {"job": "pick", "drop_x": 140, "drop_y": -60})
+    post(url, "/api/auto/start", {"job": "pick"})
     job = finished(url, timeout=20)
     assert job["status"] == "done", job
     block = world.blocks[0]
     assert not block.held
-    assert block.x == pytest.approx(0.140, abs=0.006)
-    assert block.y == pytest.approx(-0.060, abs=0.006)
+    assert at_drop_pose(block)
     assert get(url, "/api/state")["sweep"]["targets"] == [], "the table changed"
 
 
 def test_one_click_does_the_whole_thing_from_manual_mode(world, url):
     assert get(url, "/api/state")["mode"] == "manual"
     # What the button sends: the auto detector, no declared size.
-    code, body = post(url, "/api/auto/oneclick", {"drop_x": 140, "drop_y": -60})
+    code, body = post(url, "/api/auto/oneclick", {})
     assert code == 200 and body["status"] == "running"
     s = get(url, "/api/state")
     assert s["mode"] == "auto" and s["detector"] == "auto" and s["object_mm"] is None
     assert finished(url, timeout=20)["status"] == "done"
     # Each block is measured for itself: the 16 mm one is too thin and is left
-    # alone, the 40 mm one is picked and is now at the drop point.
-    moved = [b for b in world.blocks
-             if abs(b.x - 0.140) < 0.006 and abs(b.y + 0.060) < 0.006 and not b.held]
+    # alone, the 40 mm one is picked and is now under the drop pose.
+    moved = [b for b in world.blocks if at_drop_pose(b) and not b.held]
     assert len(moved) == 1 and moved[0].size == 0.040
     code, body = post(url, "/api/auto/oneclick", {})
     assert code == 200, "a second press after it finished simply runs again"
@@ -424,7 +429,7 @@ def test_picking_a_chosen_target_by_index(world, url):
     good = next(i for i, t in enumerate(targets) if t["graspable"])
     post(url, "/api/auto/start", {"job": "pick", "index": good, "refine": False})
     assert finished(url, timeout=20)["status"] == "done"
-    assert world.blocks[0].x == pytest.approx(session.DROP_X, abs=0.006)
+    assert at_drop_pose(world.blocks[0])
 
 
 def test_background_is_captured_per_station(url):

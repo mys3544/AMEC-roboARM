@@ -471,6 +471,23 @@ def lift(arm: Arm, x: float, y: float, pitch: float) -> None:
     )
 
 
+def drop(arm: Arm, pose: Pose = cfg.DROP_POSE, verbose: bool = True) -> None:
+    """Let go of whatever is held at a fixed pose (cfg.DROP_POSE), as it is.
+
+    No descent and no put-down: the pose was chosen by eye, high enough over the
+    drop-off spot that the object simply falls the last few centimetres. The
+    fingers end fully open, which is where the next pick wants them.
+    """
+    if verbose:
+        x, y, z = kin.forward({**pose, cfg.GRIPPER_ID: arm.read()[cfg.GRIPPER_ID]})
+        print(f"  dropping at {x * 1000:.0f} mm forward, {y * 1000:+.0f} mm left, "
+              f"{(z + cfg.TABLE_BELOW_PLATE) * 1000:.0f} mm up", flush=True)
+    arm.move_to(dict(pose), speed_dps=APPROACH_DPS)
+    time.sleep(0.2)
+    arm.set_gripper(cfg.GRIPPER_OPEN, speed_dps=GRIPPER_DPS)
+    time.sleep(0.3)
+
+
 def place(arm: Arm, x: float, y: float, verbose: bool = True,
           reach_offset_m: float = cfg.REACH_OFFSET_M) -> None:
     """Put down whatever is held, at (x, y) on the table.
