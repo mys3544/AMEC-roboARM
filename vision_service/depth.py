@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import base64
 import os
+import time
 
 import cv2
 import numpy as np
@@ -178,14 +179,19 @@ class Depth:
         """The raised regions; with `want_map` also "map", the relative depth as
         a base64 PNG at half size, 8-bit, nearer = brighter -- for a picture on
         the panel, never for measuring."""
+        t0 = time.perf_counter()
         frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
         if frame is None:
             raise ValueError("the body is not a decodable JPEG")
         height, width = frame.shape[:2]
         scale = np.array([width / self.width, height / self.height])
+        t1 = time.perf_counter()
         disp = self.depth_map(frame)
+        t2 = time.perf_counter()
+        regions = raised_regions(disp)
+        t3 = time.perf_counter()
         detections = []
-        for outline, step in raised_regions(disp):
+        for outline, step in regions:
             pixels = outline * scale
             x, y, w, h = cv2.boundingRect(pixels.astype(np.float32))
             detections.append({
@@ -201,4 +207,10 @@ class Depth:
             ok, png = cv2.imencode(".png", small)
             if ok:
                 reply["map"] = base64.b64encode(png.tobytes()).decode("ascii")
+        # Where the service's own time went, for roboarm.metrics on the client.
+        t4 = time.perf_counter()
+        reply["timing_ms"] = {"decode": round(1000 * (t1 - t0), 1),
+                              "model": round(1000 * (t2 - t1), 1),
+                              "regions": round(1000 * (t3 - t2), 1),
+                              "total": round(1000 * (t4 - t0), 1)}
         return reply

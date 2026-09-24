@@ -484,3 +484,36 @@ def test_the_coarse_pass_never_merges_what_the_fine_pass_kept_apart(monkeypatch)
     _stub_passes(monkeypatch, fine=[(_box(300, 370), 40.0), (_box(372, 440), 30.0)],
                  coarse=[(_box(300, 440), 80.0)])
     assert [step for _outline, step in vdepth.raised_regions(_ramp_with_plateau(None))] == [40.0, 30.0]
+
+
+def test_without_hints_depth_alone_is_asked_once_it_answers(monkeypatch):
+    """A scan or re-look has no use for what only colour and the neural rung add
+    past the gate (the clipped, for hints): not asked at all, and the object
+    depth saw is listed the same."""
+    asked = []
+
+    def fake_post(path, body, headers, url, timeout):
+        asked.append(path)
+        return _reply([{"label": "raised", "confidence": 0.6, "box": [202, 152, 26, 26]}])
+
+    monkeypatch.setattr(detect, "_vision_post", fake_post)
+    monkeypatch.setattr(detect, "markers", lambda *a, **k: [])
+    monkeypatch.setattr(detect, "coloured", lambda *a, **k: asked.append("colour") or [])
+    found = detect.everything(np.zeros((480, 640, 3), np.uint8), MM_PER_PIXEL,
+                              nadir=(0.139, -0.05), lens_m=None, url="http://x",
+                              note=lambda s: None, hints=False)
+    assert asked == ["/raised"]
+    assert [t.label for t in found] == ["raised"]
+
+
+def test_without_hints_the_other_rungs_still_stand_in_when_depth_cannot(monkeypatch):
+    def fake_post(path, body, headers, url, timeout):
+        if path == "/raised":
+            raise ValueError("vision service rejected the request (503): no depth engine")
+        return _reply([{"label": "cup", "confidence": 0.5, "box": [400, 300, 30, 30]}])
+
+    monkeypatch.setattr(detect, "_vision_post", fake_post)
+    found = detect.everything(np.zeros((480, 640, 3), np.uint8), MM_PER_PIXEL,
+                              nadir=(0.139, -0.05), lens_m=None, url="http://x",
+                              note=lambda s: None, hints=False)
+    assert [t.label for t in found] == ["cup"]

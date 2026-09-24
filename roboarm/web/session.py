@@ -40,7 +40,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from roboarm import camera, detect, grasp, sweep
+from roboarm import camera, detect, grasp, metrics, sweep
 from roboarm import config as cfg
 from roboarm import kinematics as kin
 from roboarm.arm import ArmError
@@ -87,7 +87,12 @@ MANUAL_WAIT_S = 1.0
 # very next frame lands within 1.7 mm of a frame taken 1.2 s later -- the
 # same 1.7 mm -- so a station-to-station look waits only for the frame after
 # the move (move_to itself already pauses a quarter second).
-SETTLE_S = 1.2
+# The C930e, 2026-09-24, measured through the bridge after moves between the
+# looks: brightness steady within 1.7 grey levels from the first frame (30 fps,
+# fast auto-exposure), and the picture's own shift against the settled frame
+# 4.8 px on arrival after the worst move (outer -> primary), 0.3 px by 0.4 s.
+# 19 settles of 1.2 s were 23 s of a 247 s "clear the table".
+SETTLE_S = {"sonix": 1.2, "c930e": 0.4}[cfg.WRIST_CAMERA]
 YAW_SETTLE_S = 0.15
 
 # Base yaw between stations, and any other move that is a transit rather than
@@ -193,6 +198,9 @@ class Session:
         self._stream_factory = stream
         self._calibration_loader = calibration
         self.out_dir = out_dir
+        if out_dir is not None:
+            # Every finished job's timing, one JSON line each (roboarm.metrics).
+            metrics.REGISTRY.log_path = Path(out_dir) / "metrics.jsonl"
         self.detector_url = detector_url
 
         self.mode = "manual"
@@ -653,7 +661,12 @@ class Session:
         seen = 0
         while not self._closing.is_set():
             stream = self.stream
-            if stream is None:
+            # While a job runs its own detection feeds the view (_detect_at).
+            # Detecting here as well made the vision service serve two clients:
+            # on 2026-09-24 this loop ran 571 detections during one 5-minute
+            # "clear the table", keeping the service busy throughout, and the
+            # job's own requests queued behind them (neural 244 ms mean, 382 p90).
+            if stream is None or self._job_running():
                 time.sleep(0.2)
                 continue
             frame, seq = stream.wait(seen, timeout=1.0)
@@ -662,7 +675,8 @@ class Session:
             seen = seq
             started = time.monotonic()
             try:
-                self._detect_frame(frame)
+                with metrics.scope("live"), metrics.span("detect"):
+                    self._detect_frame(frame)
             except Exception as exc:  # noqa: BLE001 -- a detector bug must not kill the view
                 self.detection = {"targets": [], "at_station": False,
                                   "error": f"{type(exc).__name__}: {exc}", "when": time.time()}
@@ -851,7 +865,7 @@ class Session:
     def _run_job(self, job: Job, runner, params: dict) -> None:
         self.log(f"--- {job.name} ---")
         started = time.monotonic()
-        with self._lock:
+        with self._lock, metrics.run(job.name) as timing:
             try:
                 runner(**params)
                 job.status = "done"
@@ -868,6 +882,7 @@ class Session:
                 self.log(traceback.format_exc())
             finally:
                 job.finished = time.time()
+                timing["status"] = job.status
                 self._refresh()
         self.log(f"{job.name}: {job.status} in {time.monotonic() - started:.1f} s"
                  + (f" -- {job.message}" if job.message else ""))
@@ -877,40 +892,50 @@ class Session:
             raise FileNotFoundError(self.calibration_error or "no table calibration loaded")
         return dict(self.calibrated[0][1])
 
-    def _look_all(self, look: sweep.Look) -> tuple[list[detect.Target], list[detect.Target]]:
+    def _look_all(self, look: sweep.Look,
+                  hints: bool = False) -> tuple[list[detect.Target], list[detect.Target]]:
         """Drive to one station and report what it can see, in table coordinates.
 
         Returns (measurable, clipped): the objects wholly in shot, and the ones
         cut off at a frame edge -- unusable as targets, but sweep.hints() reads
-        which edge they went out of. The exposure wait depends on what the move
-        changed: a yaw from one station to the next keeps the same view and
-        needs none (see YAW_SETTLE_S); anything that moved J2..J5 changed the
-        picture."""
+        which edge they went out of; only a search that follows hints needs the
+        rungs that find those (`hints`, see detect.everything). The exposure
+        wait depends on what the move changed: a yaw from one station to the
+        next keeps the same view and needs none (see YAW_SETTLE_S); anything
+        that moved J2..J5 changed the picture."""
         before = self.pose()
         yaw_only = before is not None and all(
             abs(before[j] - look.pose[j]) <= 1 for j in (2, 3, 4, 5))
-        self.arm.move_to(look.pose, speed_dps=STATION_DPS, repeatable=True)
-        self._refresh()
+        with metrics.span("look.move"):
+            self.arm.move_to(look.pose, speed_dps=STATION_DPS, repeatable=True)
+            self._refresh()
         settle = min(self.settle_s, YAW_SETTLE_S) if yaw_only else self.settle_s
-        frame = self.stream.settled(settle, count=1)[-1]
-        return self._detect_at(look, frame)
+        with metrics.span("camera.settle"):
+            frame = self.stream.settled(settle, count=1)[-1]
+        return self._detect_at(look, frame, hints)
 
-    def _detect_at(self, look: sweep.Look, frame) -> tuple[list[detect.Target], list[detect.Target]]:
+    def _detect_at(self, look: sweep.Look, frame,
+                   hints: bool = False) -> tuple[list[detect.Target], list[detect.Target]]:
         """What `frame`, taken from `look`, shows: (measurable, clipped) as _look_all."""
-        found = detect.ladder(frame, self.detector, look.matrix,
-                              nadir=look.nadir, dyaw=look.dyaw, object_mm=self.object_mm,
-                              url=self._vision_url(), lens_m=kin.camera_height(look.pose),
-                              look_name=look.name, note=self.log)
+        with metrics.span("detect"):
+            found = detect.ladder(frame, self.detector, look.matrix,
+                                  nadir=look.nadir, dyaw=look.dyaw, object_mm=self.object_mm,
+                                  url=self._vision_url(), lens_m=kin.camera_height(look.pose),
+                                  look_name=look.name, note=self.log, hints=hints)
         kept = [t for t in found if not t.clipped
                 and sweep.sees(look, t.x, t.y, self._span(t), self._height(t))]
         clipped = [t for t in found if t.clipped]
+        # The live view's own detection stands down while a job runs (it was a
+        # second client of the vision service, slowing the job's every request),
+        # so the view shows what the job saw instead.
+        annotated = detect.annotate(frame, look.matrix, found)
+        self._annotated = annotated
         if self.out_dir is not None:
             tag = f"sweep_{look.dyaw:+05.1f}.jpg".replace("+", "p").replace("-", "m")
             if look.name != "primary":
                 tag = f"sweep_{look.name}_{tag[6:]}"
-            with contextlib.suppress(camera.CameraError):
-                camera.write_image(str(self.out_dir / tag),
-                                   detect.annotate(frame, look.matrix, found))
+            with contextlib.suppress(camera.CameraError), metrics.span("detect.save_frame"):
+                camera.write_image(str(self.out_dir / tag), annotated)
         return kept, clipped
 
     def _span(self, target: detect.Target) -> float:
@@ -942,7 +967,8 @@ class Session:
         return self.detector_url
 
     def _job_survey(self) -> None:
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
+        with metrics.span("move"):
+            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
 
     def _lap(self, what: str | None = None) -> None:
         """Log how long the stage since the last call took, and start the next.
@@ -970,7 +996,7 @@ class Session:
         outer -- user's wish, 2026-09-22). Every other pass runs backwards, so
         the next look starts where this one ended instead of transiting the ring."""
         passes = []
-        entries = sorted(self._all_calibrated(), key=lambda e: sweep.nearest_of(e[0]))
+        entries = sorted(self._scan_calibrated(), key=lambda e: sweep.nearest_of(e[0]))
         for k, entry in enumerate(entries):
             dyaws = [look.dyaw for look in looks if look.name == entry[2]]
             if k % 2:
@@ -994,12 +1020,21 @@ class Session:
         """
         matrix, survey, name = entry
         first = sweep.pose_at(survey, dyaws[0])
-        self.arm.move_to(first, speed_dps=STATION_DPS, repeatable=True)
-        self._refresh()
-        frame = self.stream.settled(self.settle_s, count=1)[-1]
+        with metrics.span("scan.move"):
+            self.arm.move_to(first, speed_dps=STATION_DPS, repeatable=True)
+            self._refresh()
+        with metrics.span("camera.settle"):
+            frame = self.stream.settled(self.settle_s, count=1)[-1]
         result = on_frame(sweep.Look(dyaws[0], first, sweep.rotate(matrix, dyaws[0]), name), frame)
         if result or len(dyaws) == 1:
             return result
+        with metrics.span("scan.glide"):
+            return self._glide_and_look(entry, dyaws, first, on_frame)
+
+    def _glide_and_look(self, entry: tuple, dyaws: list[float], first: Pose, on_frame):
+        """The moving part of _ride(): from the first station, yaw steadily to
+        the last, a frame at each station's yaw as it goes by."""
+        _matrix, survey, _name = entry
         goal = self.arm.glide(sweep.pose_at(survey, dyaws[-1]), speed_dps=SCAN_DPS)
         ahead = 1 if goal[1] > first[1] else -1
         pending = [sweep.pose_at(survey, d)[1] for d in dyaws[1:]]
@@ -1047,7 +1082,7 @@ class Session:
         returns to the survey pose.
         """
         self._lap()
-        looks = sweep.stations(self._all_calibrated(), self.step_deg)
+        looks = sweep.stations(self._scan_calibrated(), self.step_deg)
         seen: list[tuple[sweep.Look, detect.Target]] = []
         stopped_early = False
         if first:
@@ -1057,7 +1092,7 @@ class Session:
                 # before the next: alternating between looks at every bearing
                 # would move J2..J5 each time, which is the slow kind of move
                 # and the one that needs the camera's exposure to settle again.
-                order = [name for _m, _p, name in self._all_calibrated()]
+                order = [name for _m, _p, name in self._scan_calibrated()]
                 looks.sort(key=lambda look: (order.index(look.name), abs(look.pose[1] - pose[1])))
             self.log(f"searching {len(looks)} stations {self.step_deg:.0f} deg apart, detector "
                      f"= {self.detector}, nearest station first, stopping when something is found")
@@ -1072,7 +1107,8 @@ class Session:
                 if key in visited:
                     continue
                 visited.add(key)
-                found, clipped = self._look_all(look)
+                with metrics.span("look"):
+                    found, clipped = self._look_all(look, hints=True)
                 self._station_line(look, found, clipped)
                 seen.extend((look, t) for t in found)
                 if any(self._plannable(t) for t in found):
@@ -1090,7 +1126,8 @@ class Session:
                 seen.extend((look, t) for t in found)
 
             for entry, dyaws in self._passes(looks):
-                self._ride(entry, dyaws, on_frame)
+                with metrics.span("scan"):
+                    self._ride(entry, dyaws, on_frame)
         merged = sweep.merge(seen)
         self.sweep_targets = merged
         self.sweep_when = time.time()
@@ -1101,7 +1138,8 @@ class Session:
             self.log(f"  {target.label:<12} {info['x_mm']:6.0f} mm fwd, {info['y_mm']:+6.0f} mm "
                      f"left  {info['width_mm']} x {info['length_mm']} mm   {verdict}")
         if not stopped_early:
-            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
+            with metrics.span("move"):
+                self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
         self._lap("search" if first else "sweep")
         return merged
 
@@ -1128,6 +1166,14 @@ class Session:
                 continue
             self.log(f"  hint: {hint.why} -> {hint.look.name} J1={hint.look.pose[1]}")
             queue.insert(0, hint.look)
+
+    def _scan_calibrated(self):
+        """The calibrated looks the scans walk: cfg.SCAN_LOOKS of them (all when
+        None, or when none of the named ones is calibrated)."""
+        looks = self._all_calibrated()
+        if cfg.SCAN_LOOKS is None:
+            return looks
+        return [e for e in looks if e[2] in cfg.SCAN_LOOKS] or looks
 
     def _all_calibrated(self):
         if not self.calibrated:
@@ -1184,22 +1230,29 @@ class Session:
         where = "the station" if back_to is not None else "survey"
         if refine:
             self._lap()
-            target = self._refine(target, force=force_refine)
+            with metrics.span("refine"):
+                target = self._refine(target, force=force_refine)
             self._lap("refine")
         self._lap()
-        held = grasp.pick(self.arm, target, reach_offset_m=self.reach_offset_mm / 1000)
-        self._refresh()
+        with metrics.span("pick"):
+            held = grasp.pick(self.arm, target, reach_offset_m=self.reach_offset_mm / 1000)
+            self._refresh()
         self._lap("pick")
         if not held:
             self.log("the gripper closed on nothing")
-            self.arm.move_to(home, speed_dps=STATION_DPS)
+            with metrics.span("return"):
+                self.arm.move_to(home, speed_dps=STATION_DPS, repeatable=True)
             return False
         self.log("holding it")
-        grasp.drop(self.arm)
+        with metrics.span("drop"):
+            grasp.drop(self.arm)
         self._lap("drop")
         # Nothing in hand and nothing to look at on the way: twice the station
         # speed, and no settle -- the look that follows waits for its own frame.
-        self.arm.move_to(home, speed_dps=RETURN_DPS, settle=False)
+        # Repeatable, so it arrives exactly: the scan that follows starts from
+        # this very pose and then has nothing to move.
+        with metrics.span("return"):
+            self.arm.move_to(home, speed_dps=RETURN_DPS, settle=False, repeatable=True)
         self.sweep_targets = []
         self._lap(f"return to {where}")
         return True
@@ -1236,14 +1289,15 @@ class Session:
         for round_ in range(1, PICKALL_ROUNDS + 1):
             started = time.monotonic()  # not _lap(): the picks inside restart that
             before, missed = picked, 0
-            looks = sweep.stations(self._all_calibrated(), self.step_deg)
+            looks = sweep.stations(self._scan_calibrated(), self.step_deg)
             self.log(f"round {round_}: {len(looks)} stations {self.step_deg:.0f} deg apart in "
                      f"one motion per look, detector = {self.detector}, picking as it goes")
             for entry, dyaws in self._passes(looks):
                 ahead = 1 if dyaws[-1] >= dyaws[0] else -1
                 misses_here: dict[int, int] = {}
                 while dyaws:
-                    hit = self._ride(entry, dyaws, on_frame)
+                    with metrics.span("scan"):
+                        hit = self._ride(entry, dyaws, on_frame)
                     if hit is None:
                         break
                     look, target = hit
@@ -1269,7 +1323,8 @@ class Session:
             if (picked == before and not missed) or round_ == PICKALL_ROUNDS:
                 self.log(f"the ring is done: {picked} picked up in all"
                          + (f", {missed} missed" if missed else "") + "; going home")
-                self.arm.home(speed_dps=STATION_DPS)
+                with metrics.span("home"):
+                    self.arm.home(speed_dps=STATION_DPS)
                 return
 
     def _refine(self, target: detect.Target, force: bool = False) -> detect.Target:

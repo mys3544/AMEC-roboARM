@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import io
 import os
+import time
 
 DEFAULT_MODEL = "/app/models/yoloe-26s-seg-pf.pt"
 
@@ -91,16 +92,25 @@ class Detector:
     def infer(self, jpeg: bytes) -> dict:
         from PIL import Image
 
+        t0 = time.perf_counter()
         image = Image.open(io.BytesIO(jpeg)).convert("RGB")
+        t1 = time.perf_counter()
         results = self._model.predict(image, imgsz=self.imgsz, conf=self.conf, verbose=False)
+        t2 = time.perf_counter()
         first = results[0]
         detections = extract_detections(first.boxes, first.names,
                                         getattr(first, "masks", None))
+        t3 = time.perf_counter()
         return {
             "model": self.name,
             "width": image.width,
             "height": image.height,
             "detections": detections,
+            # Where the service's own time went, for roboarm.metrics on the client.
+            "timing_ms": {"decode": round(1000 * (t1 - t0), 1),
+                          "model": round(1000 * (t2 - t1), 1),
+                          "masks": round(1000 * (t3 - t2), 1),
+                          "total": round(1000 * (t3 - t0), 1)},
         }
 
     def health(self) -> dict:

@@ -67,7 +67,7 @@ from dataclasses import replace
 from typing import NamedTuple
 
 from roboarm import config as cfg
-from roboarm import detect
+from roboarm import detect, metrics
 from roboarm import kinematics as kin
 from roboarm.arm import Arm, ArmError
 from roboarm.config import Pose
@@ -106,6 +106,12 @@ PLACE_DESCEND_DPS = 12.0
 # The fingers. Closing speed does not change the grip -- the servo's torque
 # does -- so both directions run at the speed the panel's buttons use.
 GRIPPER_DPS = 60
+# ... except in a pick. Measured 2026-09-24 (roboarm.metrics): the close from
+# fully open took 2.7 s and the drop's open 2.4 s, 38 s of a 247 s "clear the
+# table". The close runs twice as fast; the drop lets go in one quick move,
+# because once the object is falling nothing depends on how the fingers part.
+GRIPPER_CLOSE_DPS = 120
+DROP_OPEN_DPS = 600
 
 
 class GraspError(ArmError):
@@ -264,9 +270,10 @@ def _reach_to(arm: Arm, x: float, y: float, z: float, pitch: float, gripper: int
     pose, _used = kin.solve(x, y, z, pitches=(pitch,), gripper=gripper)
     roll = arm.read()[5] if roll is None else roll
     for _ in range(passes + 1):
-        arm.move_to(_arm_only(_rolled(pose, roll)), speed_dps=speed_dps)
-        time.sleep(0.4)
-        landed = kin.forward({**arm.read(), cfg.GRIPPER_ID: gripper})
+        with metrics.span("pick.pass"):
+            arm.move_to(_arm_only(_rolled(pose, roll)), speed_dps=speed_dps)
+            time.sleep(0.4)
+            landed = kin.forward({**arm.read(), cfg.GRIPPER_ID: gripper})
         short = [goal - got for goal, got in zip((x, y, z), landed)]
         # Narrated, because a miss here is the commonest way a pick fails and the
         # numbers say whether the arm is short, wide or high -- and whether the
@@ -396,9 +403,11 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
     # visibly close before the arm had gone anywhere. It looks odd; it is correct.)
     say(f"opening to {cfg.GRIPPER_GAP_MM[step.opening]} mm for a "
         f"{target.width_m * 1000:.0f} mm object, before moving")
-    arm.set_gripper(step.opening, speed_dps=GRIPPER_DPS)
+    with metrics.span("pick.open"):
+        arm.set_gripper(step.opening, speed_dps=GRIPPER_DPS)
     say("moving above it")
-    arm.move_to(_arm_only(step.hover), speed_dps=APPROACH_DPS)
+    with metrics.span("pick.hover"):
+        arm.move_to(_arm_only(step.hover), speed_dps=APPROACH_DPS)
     say(f"fingers turned to close along {kin.finger_heading(step.grasp):+.0f} deg "
         f"(object's narrow way is at {target.angle_deg:+.0f}; J5={step.roll})")
 
@@ -416,28 +425,32 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
     # theory that the offset had been tuned with the readback error baked in. It
     # had, which is why it only worked when that error happened to be ~14 mm:
     # at 1.6 mm the tips went 20 mm past the cube and closed on nothing.
-    _reach_to(arm, target.x, target.y, table + GRASP_HEIGHT_M + travel, step.pitch,
-              step.opening, DESCEND_DPS, roll=step.roll)
+    with metrics.span("pick.descend"):
+        _reach_to(arm, target.x, target.y, table + GRASP_HEIGHT_M + travel, step.pitch,
+                  step.opening, DESCEND_DPS, roll=step.roll)
     if verbose:
         tip = kin.forward({**arm.read(), cfg.GRIPPER_ID: step.opening})
         say(f"fingertip landed {math.dist(tip[:2], (target.x, target.y)) * 1000:.1f} mm "
             f"from the aim point, {(tip[2] - table) * 1000:.1f} mm up")
-    time.sleep(0.2)
 
     say("closing")
-    arm.close_gripper(speed_dps=GRIPPER_DPS)
-    # The servo has to have stopped against the object before grasped() asks
-    # where it is; move_to already waited a quarter second after the glide.
-    time.sleep(0.4)
-    holding = arm.grasped()
+    with metrics.span("pick.close"):
+        time.sleep(0.2)
+        arm.close_gripper(speed_dps=GRIPPER_CLOSE_DPS)
+        # The servo has to have stopped against the object before grasped() asks
+        # where it is; move_to already waited a quarter second after the glide.
+        time.sleep(0.4)
+        holding = arm.grasped()
     say("holding something" if holding else "closed on nothing")
     if holding:
         # Ask grasped() BEFORE this, never after: relaxing the squeeze changes the
         # gripper target, and grasped() only answers about a close it asked for.
-        settled = arm.read()[cfg.GRIPPER_ID]
-        arm.set_gripper(min(settled + SQUEEZE_DEG, cfg.GRIPPER_CLOSED))
+        with metrics.span("pick.squeeze"):
+            settled = arm.read()[cfg.GRIPPER_ID]
+            arm.set_gripper(min(settled + SQUEEZE_DEG, cfg.GRIPPER_CLOSED))
 
-    lift(arm, target.x, target.y, step.pitch)
+    with metrics.span("pick.lift"):
+        lift(arm, target.x, target.y, step.pitch)
     return holding
 
 
@@ -541,10 +554,12 @@ def drop(arm: Arm, pose: Pose | None = None, verbose: bool = True,
         spread = f" ({extra_m * 1000:.0f} mm further out)" if extra_m else ""
         print(f"  dropping at {x * 1000:.0f} mm forward, {y * 1000:+.0f} mm left, "
               f"{(z + cfg.TABLE_BELOW_PLATE) * 1000:.0f} mm up{spread}", flush=True)
-    arm.move_to(dict(pose), speed_dps=TRANSIT_DPS, settle=False)
-    time.sleep(0.1)
-    arm.set_gripper(cfg.GRIPPER_OPEN, speed_dps=GRIPPER_DPS)
-    time.sleep(0.15)
+    with metrics.span("drop.move"):
+        arm.move_to(dict(pose), speed_dps=TRANSIT_DPS, settle=False)
+    with metrics.span("drop.open"):
+        time.sleep(0.1)
+        arm.set_gripper(cfg.GRIPPER_OPEN, speed_dps=DROP_OPEN_DPS, settle=False)
+        time.sleep(0.15)
 
 
 def place(arm: Arm, x: float, y: float, verbose: bool = True,

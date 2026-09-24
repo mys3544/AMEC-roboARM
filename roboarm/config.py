@@ -122,6 +122,17 @@ SAFE_LIMITS = {1: (10, 180), 2: (-14, 108), 3: (0, 170), 4: (0, 170), 5: (10, 26
 # only ever saw the drop-off pile (2026-09-22, user: 160, then 140 the same evening).
 SWEEP_SPAN_DEG = 140.0
 
+# Which calibrated looks the scans walk, a ring of stations each; None = all of
+# them. The C930e's primary look sees 84..265 mm out along its centre line, the
+# arm's whole reach (91..262), so its one ring replaces the three the Sonix
+# needed (user, 2026-09-24). What a single ring gives up is the frame's edges:
+# a WHOLE object needs a margin there, and by sweep.coverage() a 30 mm cube is
+# measured whole from about 120 to 240 mm out (80 % of the reach; a 26 mm cube
+# 85 %, a 40 mm one 67 %). Objects nearer or further arrive cut off at the edge.
+# The other looks stay calibrated: the standstill re-look before a pick uses
+# whichever centres the object, and the one-click search's hints can send it there.
+SCAN_LOOKS = {"sonix": None, "c930e": ("primary",)}[WRIST_CAMERA]
+
 # Where a picked object is let go: a FIXED pose, not a table point. Chosen by eye
 # on 2026-09-21 with the arm driven there and looked at: base a full 90 deg to the
 # right, fingertips 189 mm out and 110 mm above the table (model), so the object

@@ -524,3 +524,40 @@ def test_an_ordinary_move_takes_no_detour(monkeypatch):
         board.sent.clear()
         a.move_to({2: 70, 3: 30, 4: 20})
         assert max(pose[2] for pose in _sent_poses(board)) == 70
+
+
+def test_a_repeatable_move_already_there_takes_no_detour(monkeypatch):
+    # The loaded joints READ their goal: the arm is there. Going up and coming
+    # back down would cost a second or two and change nothing.
+    a, board = build(monkeypatch, pose={**RESTING, 2: 70, 3: 30, 4: 20})
+    with a:
+        board.sent.clear()
+        a.move_to({1: 60, 2: 70, 3: 30, 4: 20}, repeatable=True)
+        sent = _sent_poses(board)
+        assert sent, "the base still turns"
+        assert all(pose[2] == 70 and pose[3] == 30 and pose[4] == 20 for pose in sent)
+
+
+def test_coming_back_to_the_same_goal_needs_no_second_detour(monkeypatch):
+    # J2 rests a degree short even from above, so its readback never equals
+    # the goal; what says the arm is still where the approach left it is that
+    # nothing has sent J2..J4 anywhere since. The base alone turning keeps that.
+    a, board = build(monkeypatch, pose={**RESTING, 2: 60, 3: 20, 4: 10}, sag={2: 1})
+    goal = {2: 70, 3: 30, 4: 20}
+    with a:
+        a.move_to(goal, repeatable=True)
+        assert board.pose[2] == 69, "short, as the real one is"
+        board.sent.clear()
+        a.move_to({**goal, 1: 60}, repeatable=True)
+        assert all(pose[2] <= 70 and pose[3] <= 30 and pose[4] <= 20 for pose in _sent_poses(board))
+
+
+def test_after_going_elsewhere_the_detour_is_back(monkeypatch):
+    a, board = build(monkeypatch, pose={**RESTING, 2: 60, 3: 20, 4: 10}, sag={2: 1})
+    goal = {2: 70, 3: 30, 4: 20}
+    with a:
+        a.move_to(goal, repeatable=True)
+        a.move_to({2: 65})                      # a pick, a drop: anywhere else
+        board.sent.clear()
+        a.move_to(goal, repeatable=True)
+        assert max(pose[2] for pose in _sent_poses(board)) == 70 + Arm.APPROACH_DEG

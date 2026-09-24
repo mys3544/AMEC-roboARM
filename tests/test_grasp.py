@@ -859,7 +859,7 @@ class _Recorder:
     def move_to(self, targets, speed_dps=40.0, settle=True, repeatable=False):
         self.moves.append(dict(targets))
 
-    def set_gripper(self, angle, speed_dps=40.0):
+    def set_gripper(self, angle, speed_dps=40.0, settle=True):
         self.moves.append({cfg.GRIPPER_ID: angle})
 
 
@@ -879,3 +879,19 @@ def test_the_drop_zone_is_the_whole_line_widened():
     assert grasp.from_drop_line(*out(cfg.DROP_SPREAD_M)) == pytest.approx(0.0, abs=1e-9)
     assert grasp.from_drop_line(*out(cfg.DROP_SPREAD_M + 0.050)) == pytest.approx(0.050, abs=1e-6)
     assert grasp.from_drop_line(*out(-0.030)) == pytest.approx(0.030, abs=1e-6)
+
+
+def test_a_drop_lets_go_in_one_quick_move(monkeypatch):
+    calls = []
+
+    class Arm:
+        def move_to(self, targets, speed_dps=40.0, settle=True, repeatable=False):
+            pass
+
+        def set_gripper(self, angle, speed_dps=40.0, settle=True):
+            calls.append((angle, speed_dps, settle))
+
+    monkeypatch.setattr(grasp.time, "sleep", lambda _s: None)
+    grasp.drop(Arm(), verbose=False, extra_m=0.0)
+    assert calls == [(cfg.GRIPPER_OPEN, grasp.DROP_OPEN_DPS, False)]
+    assert grasp.DROP_OPEN_DPS >= 4 * grasp.GRIPPER_DPS

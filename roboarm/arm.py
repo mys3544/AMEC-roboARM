@@ -162,6 +162,9 @@ class Arm:
         self._io = threading.RLock()
         self._glide_thread: threading.Thread | None = None
         self._glide_cancel = threading.Event()
+        # J2..J4 of the last repeatable approach, while every command since has
+        # kept them there; None once anything sent them elsewhere. See move_to().
+        self._approached: dict[int, int] | None = None
 
     # ------------------------------------------------------------- lifecycle --
     # ruff wants `Self` here, which needs Python 3.11 or a typing_extensions
@@ -253,6 +256,9 @@ class Arm:
             )
 
     def _send(self, pose: Pose, run_time: int) -> None:
+        approached = self._approached
+        if approached and any(pose.get(j, approached[j]) != approached[j] for j in approached):
+            self._approached = None
         with self._io:
             send_pose(self.bot, pose, run_time)
 
@@ -298,7 +304,15 @@ class Arm:
         """
         self._cancel_glide()
         start, goal = self._plan(targets)
-        if repeatable:
+        loaded = {j: goal[j] for j in self.APPROACH_JOINTS}
+        # No detour when the arm is already where an approach to this very goal
+        # left it -- nothing has sent J2..J4 anywhere since -- or reads the goal
+        # outright. The readback alone is not enough: J2 comes to rest a degree
+        # short even from above (56 commanded, 55 read, every time), so the scan
+        # that follows each return to a station used to make a second detour of
+        # 1.3 s to the same place (roboarm.metrics, 2026-09-24).
+        if repeatable and self._approached != loaded and any(
+                start[j] != goal[j] for j in self.APPROACH_JOINTS):
             above = self._above(goal)
             # Leaning back is leaning toward the mast: the detour must be as clear
             # of it as any goal (raises before anything moves if not).
@@ -307,7 +321,10 @@ class Arm:
                 self._glide(start, above, speed_dps)
                 time.sleep(0.15)
                 start = self.read()
-        if not self._glide(start, goal, speed_dps):
+        moved = self._glide(start, goal, speed_dps)
+        if repeatable:
+            self._approached = loaded
+        if not moved:
             return start
         if not settle:
             return goal

@@ -25,7 +25,7 @@ from collections.abc import Callable
 import cv2
 import numpy as np
 
-from roboarm import camera
+from roboarm import camera, metrics
 from roboarm import workspace as ws
 from roboarm.arm import ArmError
 from roboarm.web.bridge import ALLOWED
@@ -100,9 +100,14 @@ class RemoteArm:
             watcher = threading.Thread(target=self._watch, args=(stop,), daemon=True)
             watcher.start()
         try:
-            reply = _request(self.url + "/arm/call",
-                             {"method": method, "args": list(args), "kwargs": kwargs},
-                             timeout=CALL_TIMEOUT_S)
+            with metrics.span(f"arm.{method}"):
+                reply = _request(self.url + "/arm/call",
+                                 {"method": method, "args": list(args), "kwargs": kwargs},
+                                 timeout=CALL_TIMEOUT_S)
+                # How long the call ran on the robot; the rest of the round
+                # trip is the WiFi and the HTTP.
+                if "elapsed_s" in reply:
+                    metrics.record(f"arm.{method}.robot", reply["elapsed_s"])
         finally:
             stop.set()
             if watcher is not None:

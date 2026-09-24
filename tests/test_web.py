@@ -394,6 +394,20 @@ def test_pick_and_drop_moves_the_block(world, url):
     assert get(url, "/api/state")["sweep"]["targets"] == [], "the table changed"
 
 
+def test_a_finished_job_says_where_its_time_went(world, url):
+    post(url, "/api/metrics/reset", {})
+    post(url, "/api/mode", {"mode": "auto"})
+    post(url, "/api/auto/start", {"job": "pick"})
+    assert finished(url, timeout=20)["status"] == "done"
+    data = get(url, "/api/metrics")
+    run = data["runs"][0]
+    assert run["name"] == "pick" and run["status"] == "done" and run["total_s"] > 0
+    assert {"pick", "drop", "return"} <= set(run["top"])
+    assert {"pick.hover", "pick.descend", "pick.close", "detect"} <= set(run["stages"])
+    assert run["events"], "the newest run keeps its timeline"
+    assert data["stages"]["pick"]["count"] >= 1
+
+
 def test_what_lies_at_the_drop_spot_is_never_a_target():
     """The pile we dropped is in view from the ring's end stations; it is not
     listed as graspable and never planned (2026-09-21: three grabs at the pile)."""
@@ -544,3 +558,17 @@ def test_the_depth_and_mixed_views_are_served_even_without_a_vision_service(url)
         req = urllib.request.Request(url + f"/snapshot.jpg?view={view}")
         with urllib.request.urlopen(req, timeout=10) as r:
             assert r.status == 200 and r.read(2) == b"\xff\xd8"
+
+
+def test_scans_walk_only_the_configured_looks(monkeypatch):
+    """cfg.SCAN_LOOKS picks which calibrated looks get a ring (the C930e: the
+    primary alone); everything else -- hints, the re-look -- keeps them all."""
+    eye = np.eye(3)
+    looks = [(eye, {1: 90}, "primary"), (eye, {1: 90}, "outer"), (eye, {1: 90}, "near")]
+    owner = type("S", (), {"_all_calibrated": lambda self: looks})()
+    monkeypatch.setattr(cfg, "SCAN_LOOKS", ("primary",))
+    assert [e[2] for e in session.Session._scan_calibrated(owner)] == ["primary"]
+    monkeypatch.setattr(cfg, "SCAN_LOOKS", None)
+    assert [e[2] for e in session.Session._scan_calibrated(owner)] == ["primary", "outer", "near"]
+    monkeypatch.setattr(cfg, "SCAN_LOOKS", ("high",))    # not calibrated: fall back to all
+    assert len(session.Session._scan_calibrated(owner)) == 3

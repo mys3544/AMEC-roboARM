@@ -67,6 +67,7 @@ import cv2
 import numpy as np
 
 from roboarm import config as cfg
+from roboarm import metrics
 from roboarm import workspace as ws
 
 # Object widths this gripper can actually deal with, both ends derived from the
@@ -937,11 +938,19 @@ def raised(
 
 
 def _ask_vision(path: str, frame, url: str | None) -> dict:
-    ok, buffer = cv2.imencode(".jpg", frame)
+    with metrics.span("vision.jpeg"):
+        ok, buffer = cv2.imencode(".jpg", frame)
     if not ok:
         raise ValueError("could not JPEG-encode the frame to send to the vision service")
-    return _vision_post(path, buffer.tobytes(), {"Content-Type": "image/jpeg"},
-                        url or cfg.DETECTOR_URL, cfg.DETECTOR_TIMEOUT_S)
+    route = "vision." + path.split("?")[0].strip("/")
+    with metrics.span(route):
+        reply = _vision_post(path, buffer.tobytes(), {"Content-Type": "image/jpeg"},
+                             url or cfg.DETECTOR_URL, cfg.DETECTOR_TIMEOUT_S)
+        # The service's own clock: the rest of the round trip is the network,
+        # the bridge in between, and the JSON.
+        for part, ms in reply.get("timing_ms", {}).items():
+            metrics.record(route + ".server" + ("" if part == "total" else "." + part), ms / 1000)
+    return reply
 
 
 def _ranged(reply: dict, frame, matrix: np.ndarray, *,
@@ -961,6 +970,12 @@ def _ranged(reply: dict, frame, matrix: np.ndarray, *,
             polygon = corners
         outlines.append((item, polygon, boxed))
 
+    with metrics.span("detect.range"):
+        return _range_all(outlines, frame, matrix, nadir=nadir, lens_m=lens_m, top=top)
+
+
+def _range_all(outlines, frame, matrix, *, nadir, lens_m, top) -> list[Target]:
+    """_ranged()'s second half: each outline ranged into a target on the table."""
     found: list[Target] = []
     for item, polygon, boxed in whole_objects(outlines, frame.shape):
         edges = edges_touched(polygon, frame.shape)
@@ -1151,7 +1166,7 @@ def distinct(targets: list[Target], tol_m: float = SAME_OBJECT_M) -> list[Target
 
 def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
                lens_m: float | None, dyaw: float = 0.0, url: str | None = None,
-               look_name: str = "primary", note=print) -> list[Target]:
+               look_name: str = "primary", note=print, hints: bool = True) -> list[Target]:
     """Every rung at once, merged: the "auto" detector.
 
     Tags say exactly where a tagged object is; silhouettes -- colour, change
@@ -1164,26 +1179,46 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
     Rungs that are unavailable are skipped, not fallen back through: `url`
     None means the vision service is known to be down, and a missing
     background is simply a missing background.
+
+    `hints=False` skips colour, changes and neural once depth has answered.
+    Past the gate below, what those rungs contribute is only what is cut off
+    at the frame's edge, and that only serves a SEARCH, as hints of where to
+    look next (sweep.hints). A scan or a re-look has no use for it, and on
+    2026-09-24 the three cost 440 ms a frame of the 670 (roboarm.metrics).
     """
-    tagged = markers(frame, matrix, tag_m=cfg.OBJECT_TAG_M, nadir=nadir, lens_m=lens_m)
-    fixed = COLOUR_OBJECT_HEIGHT_M if (nadir is not None and lens_m is None) else 0.0
-    shapes = coloured(frame, matrix, nadir=nadir, height_m=fixed, lens_m=lens_m)
-    try:
-        shapes += changes(frame, load_background(dyaw, look_name), matrix,
-                          nadir=nadir, lens_m=lens_m)
-    except FileNotFoundError:
-        pass
+    with metrics.span("detect.tags"):
+        tagged = markers(frame, matrix, tag_m=cfg.OBJECT_TAG_M, nadir=nadir, lens_m=lens_m)
     standing: list[Target] = []
-    depth_answered = False
+    depth_answered = vision_down = False
     if url:
         try:
-            shapes += objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
-            standing = raised(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
+            with metrics.span("detect.depth"):
+                standing = raised(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
             depth_answered = True
         except DetectorOffline as exc:
+            vision_down = True
             note(f"  vision service down ({exc}); untagged pale cubes may be missed")
         except ValueError as exc:
             note(f"  vision service refused the frame: {exc}")
+    shapes: list[Target] = []
+    if hints or not depth_answered:
+        fixed = COLOUR_OBJECT_HEIGHT_M if (nadir is not None and lens_m is None) else 0.0
+        with metrics.span("detect.colour"):
+            shapes = coloured(frame, matrix, nadir=nadir, height_m=fixed, lens_m=lens_m)
+        try:
+            with metrics.span("detect.changes"):
+                shapes += changes(frame, load_background(dyaw, look_name), matrix,
+                                  nadir=nadir, lens_m=lens_m)
+        except FileNotFoundError:
+            pass
+        if url and not vision_down:
+            try:
+                with metrics.span("detect.neural"):
+                    shapes += objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
+            except DetectorOffline as exc:
+                note(f"  vision service down ({exc}); untagged pale cubes may be missed")
+            except ValueError as exc:
+                note(f"  vision service refused the frame: {exc}")
     standing = distinct(standing)
     others = [s for s in distinct(shapes)
               if all(math.dist((s.x, s.y), (d.x, d.y)) > SAME_OBJECT_M for d in standing)]
@@ -1231,7 +1266,7 @@ def ladder(frame, mode: str, matrix: np.ndarray, *,
            nadir: tuple[float, float] | None = None, dyaw: float = 0.0,
            object_mm: float | None = None, url: str | None = None,
            lens_m: float | None = None, look_name: str = "primary",
-           note=print) -> list[Target]:
+           note=print, hints: bool = True) -> list[Target]:
     """Run the chosen detector, dropping down a rung when one is unavailable.
 
     "auto" is everything() -- the mode that needs no tag, no background and no
@@ -1246,14 +1281,14 @@ def ladder(frame, mode: str, matrix: np.ndarray, *,
 
     `note` is told about fallbacks -- print for a tool, a log for a server. A
     declared `object_mm` overrides whatever size the detector measured, on every
-    rung; the position always stays the camera's.
+    rung; the position always stays the camera's. `hints` goes to everything().
     """
     if mode not in MODES:
         raise ValueError(f"unknown detector {mode!r}; one of {', '.join(MODES)}")
     found: list[Target] = []
     if mode == "auto":
         found = everything(frame, matrix, nadir=nadir, lens_m=lens_m, dyaw=dyaw,
-                           url=url, look_name=look_name, note=note)
+                           url=url, look_name=look_name, note=note, hints=hints)
     elif mode in ("yolo", "depth"):
         rung = objects if mode == "yolo" else raised
         try:

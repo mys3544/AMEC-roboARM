@@ -29,6 +29,9 @@ stream open does not block the JSON calls the same page is making.
                                 cfg.DROP_POSE; job "pickall" clears the whole table
     POST /api/auto/stop
     POST /api/calibration/reload
+    GET  /api/metrics?events=1  where the time goes: per-stage statistics, and the finished
+                                job runs with their breakdown (roboarm.metrics)
+    POST /api/metrics/reset
 
 Errors come back as {"error": "..."} with 400 (bad request / arm refused it),
 409 (busy, or wrong mode) or 500 (a bug).
@@ -45,7 +48,7 @@ from urllib.parse import parse_qs, urlparse
 
 import cv2
 
-from roboarm import camera, sweep
+from roboarm import camera, metrics, sweep
 from roboarm import kinematics as kin
 from roboarm.arm import ArmError
 from roboarm.web.session import VIEWS, Busy, Refused, Session
@@ -137,6 +140,8 @@ def _routes(session: Session) -> dict:
         ("POST", "/api/auto/stop"): lambda p: (session.stop(), {"ok": True})[1],
         ("POST", "/api/calibration/reload"): lambda p: (
             session.reload_calibration(), session.snapshot()["calibration"])[1],
+        ("GET", "/api/metrics"): lambda p: metrics.snapshot(events=p.get("events", "1") != "0"),
+        ("POST", "/api/metrics/reset"): lambda p: (metrics.reset(), {"ok": True})[1],
     }
 
 

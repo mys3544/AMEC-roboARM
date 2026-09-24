@@ -99,8 +99,70 @@ Live after both: the block measured 26 mm wide, the fingers turned across it
 went into the DROP TRAY -- dropped cubes, and the blue block lying half out of
 it -- at 92 and 108 mm from the drop point, just outside `DROP_ZONE_M` (80 mm).
 
+## Spread drops
+
+Each drop lets go a random 0..100 mm further out along the drop line
+(`cfg.DROP_SPREAD_M`, `grasp.drop_pose`), same height; the far end needs the
+tool tilted out to ~140 deg (`grasp.DROP_PITCHES`). The no-pick zone is now the
+whole line widened by `DROP_ZONE_M` (`grasp.from_drop_line`). Live: 7 drops at
++31..+94 mm, the cubes laid out along the tray.
+
+## Timing metrics, and a run 31 % faster
+
+`roboarm/metrics.py`: `span()`/`record()` time named stages; `run()` (round
+every job in `Session._run_job`) collects one job's spans into a timeline and
+a breakdown that adds up the top-level stages, with what no span covers
+("between", 0.006 s of 247 s on the first run). Instrumented: scans, looks,
+camera settles, every detection rung, vision round trips with the service's
+own clock (`timing_ms` in its replies: decode / model / post), every arm call
+over HTTP with the bridge's own time (`elapsed_s` in /arm/call replies),
+refine, pick phases (open, hover, descend + each pass, close, squeeze, lift),
+drop (move, open), return, home. The live view counts as `live.*`, never in a
+run. `GET /api/metrics`, `POST /api/metrics/reset`, finished runs appended to
+`out/metrics.jsonl`; a Timing card on the panel (a bar of the run by stage, the
+run's table, the session's per-stage count/mean/p90/max). perf_counter, not
+monotonic: on Windows monotonic ticks in 15.6 ms.
+
+What the first CLEAR THE TABLE said (247 s, 7 held, 1 missed): pick 41 %, scan
+29 %, refine 12 %, drop 11 %; gripper travel ~38 s (2.7 s close, 2.4 s drop
+open), camera settles 23 s (19 x 1.2 s), detection 669 ms a frame of which the
+neural and colour rungs 440 ms that the depth gate then discards, the live
+view running 571 detections alongside the job (the job's neural requests 244
+ms on the GPU, 382 p90), and a second repeatable detour at every scan start.
+
+Changed (user: "go ahead with 1-4", and one ring):
+1. `grasp.GRIPPER_CLOSE_DPS` 120 (was 60); the drop opens at
+   `DROP_OPEN_DPS` 600 without settling (2.36 -> 0.62 s).
+2. `session.SETTLE_S` per camera, C930e 0.4 s: measured the picture's shift
+   against the settled frame after moves between the looks, 4.8 px on arrival
+   after the worst, 0.3 px by 0.4 s; brightness steady from the first frame.
+3. `detect.everything(hints=False)`: depth first; once it answers, colour,
+   changes and neural are skipped -- past the gate they only add clipped
+   targets, i.e. hints, which only the one-click SEARCH follows (it passes
+   hints=True). The live view stands down while a job runs and shows the
+   job's annotated frames instead.
+4. `Arm.move_to(repeatable=True)` remembers its last approach (`_approached`,
+   cleared by any command sending J2..J4 elsewhere): J2 rests a degree short
+   even from above, so "readback == goal" never held. Returns after a drop are
+   repeatable; the scan that follows then moves 0.41..0.48 s instead of 1.3.
+5. `cfg.SCAN_LOOKS` = ("primary",) for the C930e: one ring of 7 stations
+   instead of 21. The primary frame spans 84..265 mm out on its centre line,
+   but a WHOLE object needs a margin at the frame edges: by sweep.coverage()
+   a 30 mm cube is seen whole from ~120 to ~240 mm (80 % of the reach; 26 mm
+   85 %, 40 mm 67 %). The other looks stay for the re-look and the search.
+
+| run | total | attempts | per attempt | scan | refine | pick | drop |
+|---|---|---|---|---|---|---|---|
+| before | 247.0 s | 8 | 30.9 s | 6.5 s | 3.6 s | 12.7 s | 4.0 s |
+| after 1-5 | 174.8 s | 7 | 25.0 s | 3.6 s | 2.4 s | 13.3 s | 2.5 s |
+| after the item-4 fix | 192.9 s | 9 | 21.4 s | 2.8 s | 1.9 s | 11.8 s | 2.3 s |
+
 ## Open
 
+* The descent is now the biggest single cost: 6..7.7 s a pick, ~2.7 passes
+  of ~2.4 s, each with a fixed 0.4 s pause, the passes swinging +-8 mm.
+  Next: a shorter pause, and a repeatable approach inside the passes.
+* A return after a MISS runs at STATION_DPS (5.7 s); RETURN_DPS would do.
 * The drop tray's contents are targets beyond 80 mm of the drop point; widen
   `session.DROP_ZONE_M` (to ~120 mm) or end the ring short of the tray -- the
   user's call, it takes a piece of the right-hand workspace with it.

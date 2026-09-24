@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -193,6 +194,7 @@ class Handler(BaseHTTPRequestHandler):
             self.bridge.connect()
             send_json(self, {"ok": self.bridge.arm is not None, "error": self.bridge.arm_error})
         elif path == "/arm/call":
+            started = time.perf_counter()
             try:
                 result = self.bridge.call(params.get("method", ""), params.get("args", []),
                                           params.get("kwargs", {}))
@@ -205,7 +207,11 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 if isinstance(result, dict):
                     result = {str(k): v for k, v in result.items()}
-                send_json(self, {"result": result})
+                # How long it ran here, so the laptop can tell the arm from the WiFi
+                # (roboarm.metrics "arm.<method>.robot"). Includes the wait for the
+                # one-call-at-a-time lock.
+                send_json(self, {"result": result,
+                                 "elapsed_s": round(time.perf_counter() - started, 4)})
         else:
             send_json(self, {"error": f"no such endpoint: POST {path}"}, 404)
 
