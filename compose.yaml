@@ -3,12 +3,15 @@ name: roboarm
 # Devices are referenced by their stable /dev/*/by-id/ paths and remapped to fixed
 # names inside the container, so USB re-enumeration on the host cannot shuffle them.
 #   1a86 CH340        -> Rosmaster expansion board (arm + base + IMU)
-#   Sonix (no serial) -> wrist camera on arm_link4      (eye-in-hand)
+#   Logitech C930e    -> wrist camera on arm_link4      (eye-in-hand), since 2026-09-24
 # (The Orbbec RGB on the mast, Sonix SN0001, is fixed horizontal and cannot see
 # the table, so nothing uses it.)
+# The wrist camera is swappable: ROBOARM_WRIST_CAM_DEV and ROBOARM_CAMERA pick it,
+# and cameras/sonix.env, copied to .env, puts the old Sonix camera back (see
+# cameras/README.md). A device that is not plugged in stops every container.
 x-robot-devices: &robot-devices
   - /dev/serial/by-id/usb-1a86_USB_Serial-if00-port0:/dev/robot_serial
-  - /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera-video-index0:/dev/video0
+  - ${ROBOARM_WRIST_CAM_DEV:-/dev/v4l/by-id/usb-046d_Logitech_Webcam_C930e_3E3B7A2E-video-index0}:/dev/video0
 
 services:
   # ---------------------------------------------------------------- core ----
@@ -34,6 +37,7 @@ services:
       PYTHONUNBUFFERED: "1"
       ROBOARM_SERIAL: /dev/robot_serial
       ROBOARM_WRIST_CAM: "0"
+      ROBOARM_CAMERA: ${ROBOARM_CAMERA:-c930e}
       ROBOARM_DETECTOR_URL: http://vision:8760   # ignored unless vision is up
     user: "1000:1000"             # matches host jetson uid, so ./data stays writable
     group_add: ["20", "44"]       # dialout, video
@@ -110,5 +114,7 @@ services:
       ROBOARM_VISION_MODEL: ${ROBOARM_VISION_MODEL:-/app/models/yoloe-26s-seg-pf.pt}
       ROBOARM_VISION_IMGSZ: ${ROBOARM_VISION_IMGSZ:-640}
       ROBOARM_VISION_CONF: ${ROBOARM_VISION_CONF:-0.25}
+      # Picks the depth engine built at this camera's aspect (vision_service/depth.py).
+      ROBOARM_CAMERA: ${ROBOARM_CAMERA:-c930e}
     ports:
       - "127.0.0.1:8760:8760"     # localhost only, for debugging

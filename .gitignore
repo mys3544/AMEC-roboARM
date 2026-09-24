@@ -11,3 +11,6 @@ vendor/Rosmaster_Lib/
 # Annotated frames from runs, and student bundles: not source.
 out/
 *.zip
+
+# Per-robot compose settings, e.g. the wrist camera (cameras/README.md).
+.env

@@ -34,6 +34,12 @@ REAL_H = np.array([
     [5.9373685046794684e-05, -8.77513698668719e-05, 1.0],
 ])
 REAL_SURVEY = {1: 90, 2: 56, 3: 23, 4: 10, 5: 89, 6: 30}
+# A background glide moves one degree per step and never faster than this per
+# step, whatever time_scale says: a scan reads the pose before and after each
+# frame and takes the mean, so the arm must not jump far between the two (the
+# robot yaws 12 deg/s and reads 4 times a second: 3 deg between reads).
+SIM_GLIDE_STEP_DEG = 1.0
+SIM_GLIDE_STEP_S = 0.01
 
 
 def calibration() -> list[tuple[np.ndarray, Pose, str]]:
@@ -97,6 +103,8 @@ class SimArm:
         self._gripper_target: int | None = None
         self._connected = False
         self.port = "sim"
+        self._glide_thread: threading.Thread | None = None
+        self._glide_cancel = threading.Event()
 
     # Session calls these the way it would on a real Arm.
     def __enter__(self) -> SimArm:
@@ -113,6 +121,9 @@ class SimArm:
     def get_battery_voltage(self) -> float:
         return self.voltage
 
+    def battery(self) -> float:
+        return self.voltage
+
     # ----------------------------------------------------------------- state --
     def read(self, attempts: int = 4) -> Pose:
         if not self._connected:
@@ -125,7 +136,47 @@ class SimArm:
                 if not (cfg.HARD_LIMITS[j][0] <= v <= cfg.HARD_LIMITS[j][1])}
 
     # ---------------------------------------------------------------- motion --
-    def move_to(self, targets: Pose, speed_dps: float = 40.0) -> Pose:
+    def move_to(self, targets: Pose, speed_dps: float = 40.0, settle: bool = True,
+                repeatable: bool = False) -> Pose:
+        # The simulated servos always reach their command, so there is nothing for
+        # `repeatable` to make repeatable.
+        self._cancel_glide()
+        start, goal = self._plan(targets)
+        self._glide(start, goal, speed_dps)
+        return self.read()
+
+    def glide(self, targets: Pose, speed_dps: float = 12.0) -> Pose:
+        """As Arm.glide(): move in the background, read() answers meanwhile.
+        With time_scale 0 the steps still take SIM_GLIDE_STEP_S each, so a scan
+        that reads the pose as it goes sees the arm pass every station."""
+        self._cancel_glide()
+        start, goal = self._plan(targets)
+        cancel = threading.Event()
+        self._glide_cancel = cancel
+
+        def run() -> None:
+            try:
+                self._glide(start, goal, speed_dps, cancel, min_step_s=SIM_GLIDE_STEP_S,
+                            step_deg=SIM_GLIDE_STEP_DEG)
+            except ArmError:
+                pass
+
+        self._glide_thread = threading.Thread(target=run, name="sim-glide", daemon=True)
+        self._glide_thread.start()
+        return goal
+
+    def moving(self) -> bool:
+        thread = self._glide_thread
+        return thread is not None and thread.is_alive()
+
+    def _cancel_glide(self) -> None:
+        thread = self._glide_thread
+        if thread is not None and thread.is_alive():
+            self._glide_cancel.set()
+            thread.join(timeout=5.0)
+        self._glide_thread = None
+
+    def _plan(self, targets: Pose) -> tuple[Pose, Pose]:
         start = self.read()
         for joint, angle in targets.items():
             if joint not in cfg.JOINT_IDS:
@@ -143,14 +194,15 @@ class SimArm:
                 f"pose would come within {clearance * 1000:.0f} mm of the camera mast "
                 f"(minimum {cfg.MIN_MAST_CLEARANCE_M * 1000:.0f} mm)"
             )
-        self._glide(start, goal, speed_dps)
-        return self.read()
+        return start, goal
 
-    def _glide(self, start: Pose, goal: Pose, speed_dps: float) -> None:
+    def _glide(self, start: Pose, goal: Pose, speed_dps: float,
+               cancel: threading.Event | None = None, min_step_s: float = 0.0,
+               step_deg: float | None = None) -> None:
         biggest = max(abs(goal[j] - start[j]) for j in cfg.JOINT_IDS)
         if biggest == 0:
             return
-        steps = max(1, math.ceil(biggest / self.step_deg))
+        steps = max(1, math.ceil(biggest / (step_deg or self.step_deg)))
         run_time = max(20, int(1000 * (biggest / steps) / speed_dps))
         for i in range(1, steps + 1):
             if self.interrupt is not None and self.interrupt():
@@ -158,8 +210,12 @@ class SimArm:
             frac = i / steps
             self._settle({j: round(start[j] + frac * (goal[j] - start[j]))
                           for j in cfg.JOINT_IDS})
-            if self.time_scale > 0:
-                time.sleep(run_time / 1000 * self.time_scale)
+            delay = max(run_time / 1000 * self.time_scale, min_step_s)
+            if cancel is not None:
+                if cancel.wait(delay):
+                    return
+            elif delay > 0:
+                time.sleep(delay)
 
     def _settle(self, pose: Pose) -> None:
         """Adopt `pose`, with the gripper stopping on whatever it is holding, and
@@ -225,6 +281,7 @@ class SimArm:
 
     # ---------------------------------------------------------------- torque --
     def hold(self) -> Pose:
+        self._cancel_glide()
         self.torque = True
         return self.read()
 
@@ -267,6 +324,18 @@ class SimStream(camera.Stream):
         while not self._stop.is_set():
             self.publish(self.render())
             time.sleep(self.frame_period)
+
+    def settled(self, settle_s: float = 1.2, count: int = 1) -> list:
+        """A frame asked for with no settle time is rendered right now, from the
+        pose the arm is at this instant. The robot's camera hands over a frame
+        at most 60 ms old (16 fps), under a degree of yaw during a scan; the
+        simulated arm sweeps a station in that time, which would make its
+        frames far staler than the real ones."""
+        if settle_s > 0:
+            return super().settled(settle_s, count)
+        frame = self.render()
+        self.publish(frame)
+        return [frame] * count
 
     def render(self):
         width, height = cfg.WRIST_CAM_SIZE

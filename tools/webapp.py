@@ -61,7 +61,7 @@ def remote_session(url: str) -> session.Session:
     # Detection runs HERE, so the empty-table photos and sweep pictures live here.
     data_dir = Path("data")
     data_dir.mkdir(exist_ok=True)
-    detect.BACKGROUND_PATH = data_dir / "table_background.png"
+    detect.BACKGROUND_PATH = data_dir / "cameras" / cfg.WRIST_CAMERA / "table_background.png"
     out_dir = Path("out")
     out_dir.mkdir(exist_ok=True)
     return session.Session(

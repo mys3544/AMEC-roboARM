@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import contextlib
 import math
+import struct
+import threading
 import time
 from collections.abc import Callable
 
@@ -53,14 +55,19 @@ def read_pose(bot: Rosmaster, attempts: int = 4) -> dict[int, int | None]:
 
     Values are never merged across attempts: a stitched frame would describe a pose
     the arm was never actually in.
+
+    Anything the batch gives at or below ZERO is asked for directly too. Since J2
+    may go below zero, -1 is a real angle as well as the SDK's "no reply", and the
+    SDK rounds every negative angle a degree high (see cfg.angle_from_raw); the
+    direct query returns the raw count, which settles both.
     """
-    pose: dict[int, int] = {}
+    pose: dict[int, int | None] = {}
     for _ in range(attempts):
         pose = dict(zip(cfg.JOINT_IDS, bot.get_uart_servo_angle_array()))
-        missing = [j for j, v in pose.items() if v == -1]
-        if not missing:
-            return dict(pose)
-        for joint in missing:
+        doubtful = [j for j, v in pose.items() if v <= 0]
+        if not doubtful:
+            return pose
+        for joint in doubtful:
             time.sleep(0.05)
             for _ in range(3):
                 read_id, raw = bot.get_uart_servo_value(joint)
@@ -68,9 +75,63 @@ def read_pose(bot: Rosmaster, attempts: int = 4) -> dict[int, int | None]:
                     pose[joint] = cfg.angle_from_raw(joint, raw)
                     break
                 time.sleep(0.05)
-        if all(v != -1 for v in pose.values()):
-            return dict(pose)
-    return {j: (None if v == -1 else v) for j, v in pose.items()}
+            else:
+                if pose[joint] == -1:
+                    pose[joint] = None   # answered neither reader
+        if all(v is not None for v in pose.values()):
+            return pose
+    return pose
+
+
+def send_pose(bot: Rosmaster, pose: Pose, run_time: int) -> None:
+    """Command all six joints, refusing anything the SDK would silently drop.
+
+    set_uart_servo_angle_array() validates its input and, when something is out
+    of range, prints "angle_s input error!" and returns having done NOTHING. The
+    move usually still looks fine because the next command lands, so the failure
+    is invisible. We have seen those errors appear intermittently; this turns
+    them into a loud one instead of a dropped command.
+
+    A joint below its SDK_RANGE (J2 near the far rim) is refused by the SDK's
+    ANGLE check, not by the board: the array packet carries pulses, and the
+    firmware moves J2 to pulse 3136 (-3 deg) as readily as to 3100 (0). So that
+    pose goes as the very same packet, built by _arm_ctrl(). Measured 2026-09-23,
+    arm stretched level: the hand-built packet reached -4 for -3 (the usual
+    degree of sag); a raw single-servo command 2 ms after the array was DROPPED
+    (J2 went to the array's 0), and 50 ms after worked but swung toward 0 first.
+    """
+    below, bad = False, []
+    for j in cfg.JOINT_IDS:
+        lo, hi = cfg.SDK_RANGE[j]
+        pulse = cfg.raw_from_angle(j, pose[j])
+        if pose[j] < lo and cfg.RAW_PULSE_RANGE[0] <= pulse <= cfg.RAW_PULSE_RANGE[1]:
+            below = True
+        elif not (lo <= pose[j] <= hi):
+            bad.append(f"J{j}={pose[j]} outside the SDK's {cfg.SDK_RANGE[j]}")
+    if bad:
+        raise ArmError("the SDK would discard this command: " + ", ".join(bad))
+    if below:
+        _arm_ctrl(bot, [cfg.raw_from_angle(j, pose[j]) for j in cfg.JOINT_IDS], run_time)
+    else:
+        bot.set_uart_servo_angle_array([pose[j] for j in cfg.JOINT_IDS], run_time=run_time)
+
+
+def _arm_ctrl(bot: Rosmaster, pulses: list[int], run_time: int) -> None:
+    """The packet set_uart_servo_angle_array() sends, byte for byte, minus its
+    angle check. Reaches into the vendored SDK's private fields, so a re-vendored
+    SDK that renamed them fails here, loudly, instead of moving anything."""
+    try:
+        if not bot._Rosmaster__arm_ctrl_enable:
+            return  # the SDK drops every arm command then; so do we
+        cmd = [bot._Rosmaster__HEAD, bot._Rosmaster__DEVICE_ID, 0x00, bot.FUNC_ARM_CTRL]
+        for value in (*pulses, min(max(int(run_time), 0), 2000)):
+            cmd += struct.pack("<h", int(value))
+        cmd[2] = len(cmd) - 1
+        cmd.append(sum(cmd, bot._Rosmaster__COMPLEMENT) & 0xFF)
+        bot.ser.write(cmd)
+        time.sleep(bot._Rosmaster__delay_time)
+    except AttributeError as exc:
+        raise ArmError(f"cannot build the arm packet by hand on this SDK: {exc}") from exc
 
 
 class ArmError(RuntimeError):
@@ -94,6 +155,13 @@ class Arm:
         # remote stop button reaches into a move already under way, without the
         # SDK having any notion of cancelling a command.
         self.interrupt: Callable[[], bool] | None = None
+        # One talker on the serial line at a time. A glide() runs its steps on a
+        # thread of its own so read() can be answered meanwhile; the two must not
+        # interleave bytes (two readers fired back to back already corrupt each
+        # other, see read_pose), so every SDK call goes through this lock.
+        self._io = threading.RLock()
+        self._glide_thread: threading.Thread | None = None
+        self._glide_cancel = threading.Event()
 
     # ------------------------------------------------------------- lifecycle --
     # ruff wants `Self` here, which needs Python 3.11 or a typing_extensions
@@ -143,7 +211,8 @@ class Arm:
     def read(self, attempts: int = 4) -> Pose:
         """Current servo angles, as one self-consistent frame. Raises if a joint is
         answering neither reader -- that is a real fault, not a dropped frame."""
-        pose = read_pose(self.bot, attempts)
+        with self._io:
+            pose = read_pose(self.bot, attempts)
         silent = [j for j, v in pose.items() if v is None]
         if silent:
             raise ArmError(
@@ -184,35 +253,15 @@ class Arm:
             )
 
     def _send(self, pose: Pose, run_time: int) -> None:
-        """Hand one angle array to the SDK, refusing anything it would silently drop.
+        with self._io:
+            send_pose(self.bot, pose, run_time)
 
-        set_uart_servo_angle_array() validates its input and, when something is out
-        of range, prints "angle_s input error!" and returns having done NOTHING. The
-        move usually still looks fine because the next command lands, so the failure
-        is invisible. We have seen those errors appear intermittently; this turns
-        them into a loud one instead of a dropped command.
-        """
-        angles = [pose[j] for j in cfg.JOINT_IDS]
-        bad = [
-            f"J{j}={pose[j]} outside the SDK's {cfg.SDK_RANGE[j]}"
-            for j in cfg.JOINT_IDS
-            if not (cfg.SDK_RANGE[j][0] <= pose[j] <= cfg.SDK_RANGE[j][1])
-        ]
-        if bad:
-            raise ArmError("the SDK would discard this command: " + ", ".join(bad))
-        self.bot.set_uart_servo_angle_array(angles, run_time=run_time)
+    def battery(self) -> float:
+        with self._io:
+            return float(self.bot.get_battery_voltage())
 
-    def move_to(self, targets: Pose, speed_dps: float = 40.0) -> Pose:
-        """Move to `targets` (partial poses allowed), interpolated so no single step
-        exceeds step_deg. Bounding the step bounds the speed, and keeps every
-        intermediate pose a legal one.
-
-        Open loop on purpose. Real droop on this arm is about a degree (the -6 deg
-        once seen at J2=120 was the arm pushing into the mast), which is inside the
-        readback tolerance, and a joint-space correction cannot fix what matters --
-        the fingertip landing millimetres short at a top-down pitch. grasp._reach_to()
-        corrects that where it is measured, in millimetres.
-        """
+    def _plan(self, targets: Pose) -> tuple[Pose, Pose]:
+        """(where we are, the legal goal) for `targets`, partial poses allowed."""
         start = self.read()
         # Only what the caller actually asked for has to be a legal target. Joints
         # they did not mention keep their current angle, eased back inside the safe
@@ -224,18 +273,109 @@ class Arm:
             lo, hi = cfg.SAFE_LIMITS[joint]
             goal[joint] = int(min(max(targets.get(joint, start[joint]), lo), hi))
         self._assert_clear_of_mast(goal)
+        return start, goal
 
+    def move_to(self, targets: Pose, speed_dps: float = 40.0, settle: bool = True,
+                repeatable: bool = False) -> Pose:
+        """Move to `targets` (partial poses allowed), interpolated so no single step
+        exceeds step_deg. Bounding the step bounds the speed, and keeps every
+        intermediate pose a legal one.
+
+        Open loop on purpose. Real droop on this arm is about a degree (the -6 deg
+        once seen at J2=120 was the arm pushing into the mast), which is inside the
+        readback tolerance, and a joint-space correction cannot fix what matters --
+        the fingertip landing millimetres short at a top-down pitch. grasp._reach_to()
+        corrects that where it is measured, in millimetres.
+
+        `settle=False` skips the quarter-second pause and the readback at the end
+        and returns the goal: for a transit that the next move follows straight
+        on from (the lift, the trip to the drop pose, the way back), where the
+        pause is a visible stop and nothing needs the readback.
+
+        `repeatable=True` makes the last approach to J2..J4 always come down from
+        above (see APPROACH_DEG): for the camera's look poses, where what matters
+        is landing in the same place every time.
+        """
+        self._cancel_glide()
+        start, goal = self._plan(targets)
+        if repeatable:
+            above = self._above(goal)
+            # Leaning back is leaning toward the mast: the detour must be as clear
+            # of it as any goal (raises before anything moves if not).
+            self._assert_clear_of_mast(above)
+            if above != goal:
+                self._glide(start, above, speed_dps)
+                time.sleep(0.15)
+                start = self.read()
         if not self._glide(start, goal, speed_dps):
             return start
+        if not settle:
+            return goal
 
         time.sleep(0.25)  # let the last segment settle before believing the readback
         return self.read()
 
-    def _glide(self, start: Pose, goal: Pose, speed_dps: float) -> bool:
+    # The joints gravity loads, and how far above its goal each one is sent first
+    # when a move must be repeatable. These joints stop inside a deadband of about a
+    # degree either side of a command, WHICH side depending on the way they came:
+    # with the C930e on the wrist (2026-09-24) J3 read 22 arriving from below and 24
+    # from above for the same command 24, and at a look pose that difference moved
+    # the picture 10..20 mm on the table. Re-commanding by the shortfall does not
+    # help -- a one-degree nudge lands inside the deadband or jumps across it -- but
+    # arriving from the same side every time lands in the same place. From above is
+    # the side that read the goal: coming down with gravity.
+    APPROACH_JOINTS = (2, 3, 4)
+    APPROACH_DEG = 4
+
+    def _above(self, goal: Pose) -> Pose:
+        above = dict(goal)
+        for joint in self.APPROACH_JOINTS:
+            above[joint] = min(goal[joint] + self.APPROACH_DEG, cfg.SAFE_LIMITS[joint][1])
+        return above
+
+    def glide(self, targets: Pose, speed_dps: float = 12.0) -> Pose:
+        """Start moving toward `targets` and return at once, with the legal goal.
+
+        The steps are sent from a thread of their own, so read() keeps answering
+        while the arm is under way -- that is what a continuous camera scan needs:
+        the base yawing steadily while frames are taken and their yaw read. It is
+        the same interpolated, interruptible glide as move_to(); moving() says
+        whether it is still going, and hold() or any move_to() stops it where it
+        is. A glide the SDK refuses mid-way ends quietly: moving() goes False
+        short of the goal, and the caller reads where it got to.
+        """
+        self._cancel_glide()
+        start, goal = self._plan(targets)
+        cancel = threading.Event()
+        self._glide_cancel = cancel
+
+        def run() -> None:
+            with contextlib.suppress(ArmError):
+                self._glide(start, goal, speed_dps, cancel)
+
+        self._glide_thread = threading.Thread(target=run, name="arm-glide", daemon=True)
+        self._glide_thread.start()
+        return goal
+
+    def moving(self) -> bool:
+        thread = self._glide_thread
+        return thread is not None and thread.is_alive()
+
+    def _cancel_glide(self) -> None:
+        thread = self._glide_thread
+        if thread is not None and thread.is_alive():
+            self._glide_cancel.set()
+            thread.join(timeout=5.0)
+        self._glide_thread = None
+
+    def _glide(self, start: Pose, goal: Pose, speed_dps: float,
+               cancel: threading.Event | None = None) -> bool:
         """Interpolated move, no step larger than step_deg. Returns False if already there.
 
         Bounding the step bounds the speed and keeps every intermediate pose legal.
         A loaded joint also simply cannot complete a large jump in one command.
+        With `cancel`, the move stops at its last sent step as soon as the event
+        is set (that is a glide() being held or superseded).
         """
         # A joint that has sagged out of range cannot be glided back: every
         # intermediate angle is out of range too, and the SDK discards the lot.
@@ -261,7 +401,10 @@ class Arm:
                 {j: round(start[j] + frac * (goal[j] - start[j])) for j in cfg.JOINT_IDS},
                 run_time,
             )
-            time.sleep(run_time / 1000)
+            if cancel is None:
+                time.sleep(run_time / 1000)
+            elif cancel.wait(run_time / 1000):
+                return True
         return True
 
     def home(self, **kw) -> Pose:
@@ -299,6 +442,7 @@ class Arm:
     def hold(self) -> Pose:
         """Freeze where we are. This is the e-stop: holding is safer than going limp,
         because a limp arm falls."""
+        self._cancel_glide()
         pose = self.read()
         if not self.out_of_range(pose):
             self._send(pose, run_time=0)

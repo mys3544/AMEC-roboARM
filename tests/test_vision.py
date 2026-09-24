@@ -379,14 +379,36 @@ def test_without_a_depth_answer_the_other_rungs_fill_in(monkeypatch):
 
 
 def test_a_tag_with_nothing_raised_under_it_is_lying_flat(monkeypatch):
-    def tag(x, y):
+    """A tag that could not measure its height (its apparent size was the printed
+    size: flat, or no lens height) is kept only where depth saw something raised.
+    A tag that measured itself raised is an object wherever depth looked --
+    2026-09-22: depth left out the tagged cube at the bottom of the frame as
+    'cut off', and the gate threw the tag rung's reading away with it."""
+    def tag(x, y, label, height):
         return detect.Target(x=x, y=y, width_m=0.026, length_m=0.026, angle_deg=0.0,
-                             label="tag 1", height_m=0.026)
+                             label=label, height_m=height)
 
     found = _auto(monkeypatch, [], [{"label": "raised", "confidence": 0.6, "box": [202, 152, 26, 26]}],
-                  tags=[tag(0.215, 0.165), tag(0.400, 0.400)])
-    assert [t.label for t in found if t.label.startswith("tag")] == ["tag 1"]
+                  tags=[tag(0.215, 0.165, "tag 1", None), tag(0.400, 0.400, "tag 2", None),
+                        tag(0.300, 0.300, "tag 3", 0.027), tag(0.350, 0.100, "tag 4", 0.004)])
+    assert sorted(t.label for t in found if t.label.startswith("tag")) == ["tag 1", "tag 3"]
     assert next(t for t in found if t.label == "tag 1").x == pytest.approx(0.215)
+
+
+def test_depth_places_a_tagged_object_and_the_tag_only_names_it(monkeypatch):
+    """2026-09-22: the tag rung put a small tagged cube 25 mm too far (its tag is
+    not the 26 mm assumed), the gripper closed on nothing, and depth's outline at
+    the same spot picked it next. So depth's outline wins the position and the
+    size; the label stays the tag's."""
+    tag = detect.Target(x=0.230, y=0.170, width_m=0.026, length_m=0.026, angle_deg=0.0,
+                        label="tag 3", height_m=0.028)
+    found = _auto(monkeypatch, [],
+                  [{"label": "raised", "confidence": 0.7, "box": [202, 152, 26, 26]}],
+                  tags=[tag])
+    assert [t.label for t in found] == ["tag 3"]
+    placed = found[0]
+    assert abs(placed.x - 0.230) > 0.005 or abs(placed.y - 0.170) > 0.005, "moved to depth's spot"
+    assert placed.width_m == pytest.approx(0.026, abs=1e-6) and placed.confidence == pytest.approx(0.7)
 
 
 def test_depth_picture_paints_the_map_and_the_outlines(monkeypatch):
@@ -418,3 +440,47 @@ def test_mixed_picture_runs_every_rung_and_survives_a_dead_service(monkeypatch):
     picture = detect.mixed_picture(frame, MM_PER_PIXEL, nadir=(0.139, -0.05), lens_m=0.212,
                                    url="http://x")
     assert picture.shape == frame.shape and picture.any(), "the legend is drawn even with nothing found"
+
+
+def _sloped_plateau(tilt):
+    """A plateau whose top the model draws SLOPING across it, as it drew a 30 x 60
+    block lying flat on 2026-09-24, on the table's ramp (the C930e's 16:9 map)."""
+    h, w = 518, 910
+    ramp = np.linspace(0.2, 0.5, h)[:, None] * np.ones((1, w))
+    ramp = ramp + 0.0005 * np.random.default_rng(1).standard_normal((h, w))
+    ramp[150:350, 300:440] += 0.4 + tilt * np.linspace(0, 1, 140)[None, :]
+    return ramp.astype(np.float32)
+
+
+def test_a_plateau_whose_top_slopes_is_found_whole():
+    # With only the noise threshold its whole top was "edge" (found nothing).
+    found = vdepth.raised_regions(_sloped_plateau(0.3))
+    assert len(found) == 1
+    area = cv2.contourArea(found[0][0].astype(np.float32))
+    assert area == pytest.approx(140 * 200, rel=0.15)
+
+
+def _stub_passes(monkeypatch, fine, coarse):
+    """raised_regions() with its two passes replaced: `fine` below the floor,
+    `coarse` at it. Each is a list of (mask, step)."""
+    def regions(_disp, _grad, threshold):
+        chosen = coarse if threshold >= vdepth.EDGE_FLOOR else fine
+        return [(mask, np.argwhere(mask)[:, ::-1].astype(float), step) for mask, step in chosen]
+    monkeypatch.setattr(vdepth, "_regions", regions)
+
+
+def _box(x0, x1):
+    mask = np.zeros((518, 910), bool)
+    mask[150:350, x0:x1] = True
+    return mask
+
+
+def test_the_coarse_pass_mends_a_sliver(monkeypatch):
+    _stub_passes(monkeypatch, fine=[(_box(360, 380), 9.0)], coarse=[(_box(300, 440), 80.0)])
+    assert [step for _outline, step in vdepth.raised_regions(_ramp_with_plateau(None))] == [80.0]
+
+
+def test_the_coarse_pass_never_merges_what_the_fine_pass_kept_apart(monkeypatch):
+    _stub_passes(monkeypatch, fine=[(_box(300, 370), 40.0), (_box(372, 440), 30.0)],
+                 coarse=[(_box(300, 440), 80.0)])
+    assert [step for _outline, step in vdepth.raised_regions(_ramp_with_plateau(None))] == [40.0, 30.0]

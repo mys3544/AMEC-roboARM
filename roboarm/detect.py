@@ -96,7 +96,7 @@ MAX_WIDTH_M = 0.055
 # precisely the situation `changes()` reads as one table-sized object. The
 # calibrated look keeps the unsuffixed name, so a single-pose setup captured
 # before the sweep existed still loads.
-BACKGROUND_PATH = Path("/app/data/table_background.png")
+BACKGROUND_PATH = Path("/app/data/cameras") / cfg.WRIST_CAMERA / "table_background.png"
 
 # Below this a "change" is noise -- a shadow edge, a compression artefact.
 MIN_AREA_M2 = 0.00020   # about 14 x 14 mm
@@ -446,7 +446,8 @@ CHAMFER_PX = 8
 
 def range_block(outline: np.ndarray, nadir, lens_m: float,
                 outline_is_top: bool = False,
-                chamfer_m: float = CHAMFER_M) -> tuple[np.ndarray, float, float, float]:
+                chamfer_m: float = CHAMFER_M,
+                rectangular: bool = False) -> tuple[np.ndarray, float, float, float]:
     """Where a CUBE really is and how big it is, from its apparent outline.
 
     The homography maps the TABLE plane, so a solid object images as its top
@@ -481,6 +482,10 @@ def range_block(outline: np.ndarray, nadir, lens_m: float,
     its silhouette (a detector that sends no mask); the box's short side is
     then read as the top's.
 
+    `rectangular` (with `outline_is_top`) says the outline really IS the top
+    face -- the depth rung's plateau -- and reads it as a rectangle rather than
+    a square: see _range_top_face().
+
     Agreement is how well the cube found explains the outline seen: its
     predicted outline -- base plus magnified top -- overlapped with the
     observation. A clean cube scores high; touching objects or a wide shadow
@@ -493,6 +498,8 @@ def range_block(outline: np.ndarray, nadir, lens_m: float,
         raise ValueError("range_block needs an outline of at least 3 points and a lens height")
 
     hull = cv2.convexHull(points.astype(np.float32)).reshape(-1, 2).astype(float)
+    if outline_is_top and rectangular:
+        return _range_top_face(hull, nadir, lens)
     top_side, yaw, top_centre = _top_from_far_corner(hull, nadir, outline_is_top, chamfer_m)
 
     size = top_side * lens / (lens + top_side)
@@ -501,6 +508,32 @@ def range_block(outline: np.ndarray, nadir, lens_m: float,
     centre = nadir + (top_centre - nadir) / grown
     agreement = _overlap(hull, _block_outline(centre, size, size, yaw, nadir, lens))
     return _footprint(centre, size, yaw), size, size, float(agreement)
+
+
+def _range_top_face(hull: np.ndarray, nadir: np.ndarray,
+                    lens: float) -> tuple[np.ndarray, float, float, float]:
+    """range_block() for an outline that is the object's TOP FACE, as a block
+    that need not be a cube: its footprint keeps the top's length.
+
+    The short side of the top sets the height by the cube relation, exactly as
+    before -- a bar lying down stands as tall as it is narrow -- and both sides
+    then shrink by the same magnification. Reading the top as a square threw
+    the length away, and with it the one thing the grasp needed: which way is
+    narrow. On 2026-09-24 a 30 x 30 x 60 block (two 30 mm cubes glued) lying
+    flat came out as a 34 mm square, the wrist took either pair of faces as
+    equally good, and nine times in a row the fingers closed along the 60 mm
+    way -- 5 mm to spare either side of the 70 mm opening -- and pushed it off.
+    """
+    (cx, cy), (along, across), angle = cv2.minAreaRect(hull.astype(np.float32))
+    short = min(along, across)
+    size = short * lens / (lens + short)
+    size = float(min(max(size, 0.001), 0.75 * lens))
+    grown = lens / (lens - size)
+    centre = nadir + (np.array([cx, cy]) - nadir) / grown
+    yaw = math.radians(angle)                    # minAreaRect's angle is along `along`
+    along, across = along / grown, across / grown
+    agreement = _overlap(hull, _block_outline(centre, along, size, yaw, nadir, lens, across))
+    return _footprint(centre, along, yaw, across), size, size, float(agreement)
 
 
 # An outline edge within this of pointing straight back at the nadir is the seam
@@ -595,19 +628,22 @@ def _meet(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, p4: np.ndarray) -> np.
     return p1 + t * d1
 
 
-def _footprint(centre: np.ndarray, width: float, yaw: float) -> np.ndarray:
-    half = width / 2
+def _footprint(centre: np.ndarray, width: float, yaw: float,
+               across: float | None = None) -> np.ndarray:
+    """A rectangle `width` along heading `yaw` and `across` the other way
+    (a square when `across` is not given)."""
+    a, c = width / 2, (width if across is None else across) / 2
     cos, sin = math.cos(yaw), math.sin(yaw)
     spin = np.array([[cos, -sin], [sin, cos]])
-    return centre + np.array([[-half, -half], [half, -half], [half, half], [-half, half]]) @ spin.T
+    return centre + np.array([[-a, -c], [a, -c], [a, c], [-a, c]]) @ spin.T
 
 
 def _block_outline(centre: np.ndarray, width: float, height: float, yaw: float,
-                   nadir: np.ndarray, lens_m: float) -> np.ndarray:
+                   nadir: np.ndarray, lens_m: float, across: float | None = None) -> np.ndarray:
     """The table-plane outline a block this size, here, would show: the hull of
     its base and its top magnified about the nadir. sweep.apparent() is this
     same relation for a single point."""
-    base = _footprint(centre, width, yaw)
+    base = _footprint(centre, width, yaw, across)
     top = nadir + (base - nadir) * (lens_m / (lens_m - height))
     return cv2.convexHull(np.vstack([base, top]).astype(np.float32)).reshape(-1, 2).astype(float)
 
@@ -732,6 +768,11 @@ def markers(
 # A silhouette within this of a tag is the object the tag is stuck to. Half a
 # 55 mm cube plus a few mm of disagreement between the two measurements.
 FUSE_RADIUS_M = 0.040
+# A tag whose magnification says it sits at least this high is on top of
+# something, whatever the depth rung saw. A flat tag reads 0 within a few mm
+# (1 mm of apparent-size error on the 26 mm tag is ~8 mm of height, and the
+# corners are read to a fraction of that); a 20 mm cube reads ~20.
+TAG_RAISED_M = 0.010
 
 
 def fuse(tagged: list[Target], silhouettes: list[Target],
@@ -928,7 +969,7 @@ def _ranged(reply: dict, frame, matrix: np.ndarray, *,
         if nadir is not None and lens_m is not None:
             quad, _width, tall, agreement = range_block(
                 ws.apply(matrix, polygon), nadir, lens_m, outline_is_top=boxed or top,
-                chamfer_m=chamfer_for(matrix, polygon))
+                chamfer_m=chamfer_for(matrix, polygon), rectangular=top and not boxed)
             score = score * agreement
             target = _target_from_quad(quad, item["label"], score, height_m=tall,
                                        clipped=clipped, edges=edges, pixels=polygon)
@@ -1154,14 +1195,33 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
         # not confirm is not an object -- except a CLIPPED one, which is never
         # graspable but tells the search which way to look next (sweep.hints),
         # and which depth, ignoring anything cut off by the frame, cannot give.
-        # A tag with nothing raised under it is a tag lying flat on the table.
+        # A tag with nothing raised under it is a tag lying flat on the table --
+        # unless the tag measured ITSELF raised (its magnification, TAG_RAISED_M).
+        # 2026-09-22: the tagged cube sat whole in shot near the bottom of the
+        # frame; the depth model drew it, but its region ran into the frame
+        # border and was left out as "cut off", and the gate then threw away the
+        # tag rung's good reading. Two rounds of "clear the table" walked past it.
         others = [s for s in others if s.clipped]
         tagged = [t for t in tagged
-                  if any(math.dist((t.x, t.y), (d.x, d.y)) <= FUSE_RADIUS_M for d in standing)]
+                  if (t.height_m or 0.0) >= TAG_RAISED_M
+                  or any(math.dist((t.x, t.y), (d.x, d.y)) <= FUSE_RADIUS_M for d in standing)]
     shapes = standing + others
-    # A tag that measured its own height is a complete reading, better than any
-    # silhouette; only a tag that could not (no lens height) borrows a size.
-    fused = [t if t.height_m else f for t, f in zip(tagged, fuse(tagged, shapes))]
+
+    # Where depth drew a top face under a tag, DEPTH places and sizes the object
+    # and the tag only names it. 2026-09-22: the tag rung put a small tagged cube
+    # 25 mm too far out (its printed tag is not the 26 mm the rung assumes, and a
+    # mis-sized tag mis-lifts), the gripper closed on nothing, and depth's outline
+    # at the same spot picked it next. Otherwise a tag that measured its own
+    # height is a complete reading, better than any silhouette; only a tag that
+    # could not (no lens height) borrows a size.
+    def placed(tag: Target, borrowed: Target) -> Target:
+        under = [d for d in standing
+                 if math.dist((d.x, d.y), (tag.x, tag.y)) <= FUSE_RADIUS_M]
+        if under:
+            return replace(max(under, key=lambda d: d.confidence), label=tag.label)
+        return tag if tag.height_m else borrowed
+
+    fused = [placed(t, f) for t, f in zip(tagged, fuse(tagged, shapes))]
     untagged = [s for s in shapes
                 if all(math.dist((s.x, s.y), (t.x, t.y)) > FUSE_RADIUS_M for t in tagged)]
     return sorted(fused + untagged, key=lambda t: math.hypot(t.x, t.y))

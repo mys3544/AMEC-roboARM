@@ -61,6 +61,7 @@ NOT HANDLED, and worth saying out loud rather than discovering during a demo:
 from __future__ import annotations
 
 import math
+import random
 import time
 from dataclasses import replace
 from typing import NamedTuple
@@ -95,6 +96,9 @@ SQUEEZE_DEG = 6
 # does, so 30 is a safe middle for every move that is not the descent.
 APPROACH_DPS = 30.0
 DESCEND_DPS = 8.0   # slow: this is the step that can touch something
+# The trip to the drop pose with the object held: a known route with nothing to
+# measure on the way, so twice the approach speed (user's wish, 2026-09-22).
+TRANSIT_DPS = 60.0
 # Putting down: the object is already held, the height is 6 mm above where it
 # was picked, and nothing has to be measured on the way -- so faster than the
 # pick's descent, slower than a transit.
@@ -469,7 +473,9 @@ def lift(arm: Arm, x: float, y: float, pitch: float) -> None:
         except kin.Unreachable:
             continue
         # The wrist keeps its roll too: un-turning it here would twist what is held.
-        arm.move_to(_arm_only(_rolled(up_pose, now[5])), speed_dps=APPROACH_DPS)
+        # No settle: the trip to the drop pose follows straight on (user's wish,
+        # 2026-09-22: "not go-stop-go").
+        arm.move_to(_arm_only(_rolled(up_pose, now[5])), speed_dps=TRANSIT_DPS, settle=False)
         return
     # Nothing above it is reachable while holding this. Stay put rather than raise:
     # the caller still has the object, and can place it from where it stands.
@@ -480,21 +486,65 @@ def lift(arm: Arm, x: float, y: float, pitch: float) -> None:
     )
 
 
-def drop(arm: Arm, pose: Pose = cfg.DROP_POSE, verbose: bool = True) -> None:
-    """Let go of whatever is held at a fixed pose (cfg.DROP_POSE), as it is.
+# Tool pitches a drop may use, most upright first. The grasp's list stops at 140,
+# which reaches only 80 of the 100 mm of cfg.DROP_SPREAD_M at the drop height; a
+# drop does not need the tool upright, only the object let go of.
+DROP_PITCHES = (165.0, 170.0, 160.0, 155.0, 150.0, 145.0, 140.0, 135.0, 130.0, 125.0, 120.0)
+
+
+def drop_pose(extra_m: float = 0.0) -> Pose:
+    """cfg.DROP_POSE with the fingertips `extra_m` further out along its bearing,
+    at the same height. No gripper joint in it: the fingers keep hold of the
+    object on the way, and a closing command would squeeze it. Raises
+    kin.Unreachable if the arm cannot get there."""
+    if extra_m <= 0.0:
+        return dict(cfg.DROP_POSE)
+    x, y, z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_CLOSED})
+    out = (math.hypot(x, y) + extra_m) / math.hypot(x, y)
+    pose, _pitch = kin.solve(x * out, y * out, z, pitches=DROP_PITCHES)
+    pose.pop(cfg.GRIPPER_ID, None)
+    return pose
+
+
+def from_drop_line(x: float, y: float) -> float:
+    """How far a table point is from where drops land: the line from under
+    cfg.DROP_POSE's (open) fingertips to cfg.DROP_SPREAD_M further out."""
+    nx, ny, _z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_OPEN})
+    ux, uy = nx / math.hypot(nx, ny), ny / math.hypot(nx, ny)
+    t = min(max((x - nx) * ux + (y - ny) * uy, 0.0), cfg.DROP_SPREAD_M)
+    return math.hypot(x - (nx + t * ux), y - (ny + t * uy))
+
+
+def drop(arm: Arm, pose: Pose | None = None, verbose: bool = True,
+         extra_m: float | None = None) -> None:
+    """Let go of whatever is held over the drop-off spot, as it is.
 
     No descent and no put-down: the pose was chosen by eye, high enough over the
     drop-off spot that the object simply falls the last few centimetres. The
     fingers end fully open, which is where the next pick wants them.
+
+    Where exactly: `pose` if given; otherwise cfg.DROP_POSE moved `extra_m`
+    further out, by default a random 0..cfg.DROP_SPREAD_M so that cubes do not
+    land on each other. Should that ever be out of reach, cfg.DROP_POSE itself.
     """
+    if pose is None:
+        if extra_m is None:
+            extra_m = random.uniform(0.0, cfg.DROP_SPREAD_M)
+        try:
+            pose = drop_pose(extra_m)
+        except kin.Unreachable:
+            pose, extra_m = dict(cfg.DROP_POSE), 0.0
     if verbose:
-        x, y, z = kin.forward({**pose, cfg.GRIPPER_ID: arm.read()[cfg.GRIPPER_ID]})
+        # The closed tool length for the log line: a readback here would be one
+        # more round trip standing still with the object in hand.
+        x, y, z = kin.forward({**pose, cfg.GRIPPER_ID: cfg.GRIPPER_CLOSED})
+        spread = f" ({extra_m * 1000:.0f} mm further out)" if extra_m else ""
         print(f"  dropping at {x * 1000:.0f} mm forward, {y * 1000:+.0f} mm left, "
-              f"{(z + cfg.TABLE_BELOW_PLATE) * 1000:.0f} mm up", flush=True)
-    arm.move_to(dict(pose), speed_dps=APPROACH_DPS)
-    time.sleep(0.2)
+              f"{(z + cfg.TABLE_BELOW_PLATE) * 1000:.0f} mm up{spread}", flush=True)
+    arm.move_to(dict(pose), speed_dps=TRANSIT_DPS, settle=False)
+    time.sleep(0.1)
     arm.set_gripper(cfg.GRIPPER_OPEN, speed_dps=GRIPPER_DPS)
-    time.sleep(0.3)
+    time.sleep(0.15)
 
 
 def place(arm: Arm, x: float, y: float, verbose: bool = True,

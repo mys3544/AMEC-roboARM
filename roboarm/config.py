@@ -20,9 +20,61 @@ SERIAL_PORT = os.environ.get("ROBOARM_SERIAL", "/dev/robot_serial")
 
 # The wrist camera, on arm_link4: the only camera that can see the workspace (the
 # mast camera is fixed horizontal and the table sits 72 degrees below its axis).
-# USB 2 YUYV-only, ~7 fps at 640x480.
 WRIST_CAM = int(os.environ.get("ROBOARM_WRIST_CAM", "0"))
-WRIST_CAM_SIZE = (640, 480)
+
+# WHICH wrist camera is fitted. Everything that changes with the camera is keyed by
+# this: its picture size and V4L2 settings, where its lens sits (the lens section
+# below), and its calibration and empty-table photos (data/cameras/<name>/).
+#   "sonix"  the stock Yahboom camera, USB 2 YUYV-only, ~7 fps at 640x480. Fitted
+#            until 2026-09-24; every measurement in this project before that date
+#            was made through it.
+#   "c930e"  Logitech Webcam C930e, fitted 2026-09-24. 848x480 at ~24 fps, and a
+#            much wider view: 305 x 171 mm of table from the survey pose (the
+#            Sonix saw ~157 mm across).
+# Going back to the Sonix: cameras/README.md.
+WRIST_CAMERA = os.environ.get("ROBOARM_CAMERA", "c930e")
+WRIST_CAMERAS = ("sonix", "c930e")
+if WRIST_CAMERA not in WRIST_CAMERAS:
+    raise ValueError(f"ROBOARM_CAMERA={WRIST_CAMERA!r} -- expected one of {WRIST_CAMERAS}")
+
+# The C930e's picture sizes are CROPS of different width. Measured 2026-09-24 at the
+# survey pose, table footprint through the board:
+#     640x480, 800x600 (4:3)                 228 x 172 mm, ~24 fps
+#     640x360 .. 1920x1080 (all 16:9)        305 x 171 mm, ~24 fps   <- the widest usable
+#     2304x1536 (3:2, the whole sensor)      303 x 204 mm, 1 fps, uncompressed only
+# So every 16:9 size sees the same table, and the 4:3 ones are its middle. 848x480
+# keeps the pixels per mm (and so every pixel-sized threshold) of the 640x480 the
+# pipeline was built at, for 1.3x the pixels. The depth engine is built at the same
+# aspect (models/da2s_518x910).
+WRIST_CAM_SIZE = {"sonix": (640, 480), "c930e": (848, 480)}[WRIST_CAMERA]
+
+# V4L2 settings applied every time the camera is opened, as OpenCV properties, in
+# this order (the format before the size). MJPG because 848x480 uncompressed at
+# 30 fps is most of a USB 2 bus the mast camera shares. The C930e's continuous
+# autofocus hunts on a plain table (and refocusing changes the magnification the
+# calibration was fitted at), so its focus is fixed: 45 was the sharpest at the
+# survey pose, lens ~150 mm above the table (0 = infinity, 255 = the nearest). The
+# camera KEEPS these after it is closed, until it is unplugged, so they are set on
+# every open rather than trusted to still be there.
+WRIST_CAM_PROPS = {
+    "sonix": {},
+    "c930e": {"CAP_PROP_FOURCC": "MJPG", "CAP_PROP_AUTOFOCUS": 0, "CAP_PROP_FOCUS": 45},
+}[WRIST_CAMERA]
+
+# Lens distortion, undone on every frame as it is captured (camera.py), so that
+# everything downstream -- the homographies above all, which cannot model it --
+# sees a straight-line picture. (K 3x3 at WRIST_CAM_SIZE, k1 k2 p1 p2 k3), or None.
+# The C930e's, from 23 board views at 848x480 over 8 poses and +-20 deg of yaw,
+# 2026-09-24: a homography fitted to one view was out by 1.4 mm on average and
+# 3.1 mm at worst at the frame's edges, and by 0.8 / 0.95 mm once undistorted.
+# The focal length is poorly pinned by views that all look down (416 here, 501
+# with more distortion terms, which undistort no better) -- do not read the lens
+# height off it. The Sonix was never corrected; its narrow view did not need it.
+WRIST_CAM_LENS = {
+    "sonix": None,
+    "c930e": ([[416.5, 0.0, 425.5], [0.0, 416.5, 249.5], [0.0, 0.0, 1.0]],
+              [0.0305, -0.0429, 0.0, 0.0, 0.0]),
+}[WRIST_CAMERA]
 
 # ------------------------------------------------------------------- arm ----
 # Six bus servos, addressed 1..6. The SDK speaks degrees in these ranges;
@@ -37,14 +89,38 @@ GRIPPER_ID = 6
 # vanish. Note this is WIDER than HARD_LIMITS for the gripper (SDK allows 0).
 SDK_RANGE = {1: (0, 180), 2: (0, 180), 3: (0, 180), 4: (0, 180), 5: (0, 270), 6: (0, 180)}
 
-HARD_LIMITS = {1: (0, 180), 2: (0, 180), 3: (0, 180), 4: (0, 180), 5: (0, 270), 6: (30, 180)}
+# What set_uart_servo() -- one servo, raw position pulses -- accepts. The angle
+# calls stop at 0 degrees, but that is the SDK's conversion, not the servo: on
+# J1-J4 pulse 3100 IS 0 degrees and 4000 is -74. arm.py sends a joint below its
+# SDK_RANGE this way (only J2 is allowed there -- see SAFE_LIMITS).
+RAW_PULSE_RANGE = (96, 4000)
+
+# J2 -73: pulse 4000, the end of RAW_PULSE_RANGE (2026-09-23; was 0, the angle API's end).
+HARD_LIMITS = {1: (0, 180), 2: (-73, 180), 3: (0, 180), 4: (0, 180), 5: (0, 270), 6: (30, 180)}
 # J2 floor 15 -> 5 on 2026-09-14: it was only a margin from the servo end (0), and it
 # capped the fingertips at 210 mm when the links stretch to 272. 5 keeps the margin.
 # J1 ceiling 170 -> 180 on 2026-09-21 (user's wish): the drop point is a full 90 deg
 # to the right of straight ahead (J1 = 90), i.e. the servo's own end, and nothing is
 # in the way there. The left end keeps its 10 deg margin, untested. The sweep ring is
 # unchanged: the next 25 deg station to the right would need J1 = 190.
-SAFE_LIMITS = {1: (10, 180), 2: (5, 108), 3: (10, 170), 4: (10, 170), 5: (10, 260), 6: (30, 180)}
+# J3 floor 10 -> 0 on 2026-09-22 (user's wish: more range; the SDK discards anything
+# below 0, so 0 is as far as it goes). The 10 was only a margin from the servo end,
+# like J2's. It buys the NEAR side: the nearest grasp point moves 132 -> 122 mm and
+# the grasp grid grows 6 % (3679 -> 3893 points); the 238 mm reach is unchanged.
+# J4 floor 10 -> 0 the same day, same reason; it changes the grasp envelope not at all
+# (J4 only aims the tool, and the pitches a grasp uses never need it that low).
+# J2 floor 5 -> -14 on 2026-09-23. The far rim was J2's floor: at the old 232 mm edge
+# (open tips, grasp height) the solution sat at J2 = 5 exactly. The user set the arm by
+# hand to "limit reach, fingers on the ground" and it read raw 3288 = -15.4 deg, so -14
+# is a degree inside a pose shown clear, at J1 = 89 only. Below 0 the angle API refuses
+# and arm.py sends raw pulses. Grasp edge 232 -> 253 mm (model; the model put that hand
+# pose's tips 18 mm UNDER the table, so it is not calibrated out there -- touch_probe).
+SAFE_LIMITS = {1: (10, 180), 2: (-14, 108), 3: (0, 170), 4: (0, 170), 5: (10, 260), 6: (30, 180)}
+
+# How far the base yaws when SEARCHING, in all: 70 deg either side of the calibrated
+# look (J1 20..160). J1 itself still goes to 180 for the drop pose; a station there
+# only ever saw the drop-off pile (2026-09-22, user: 160, then 140 the same evening).
+SWEEP_SPAN_DEG = 140.0
 
 # Where a picked object is let go: a FIXED pose, not a table point. Chosen by eye
 # on 2026-09-21 with the arm driven there and looked at: base a full 90 deg to the
@@ -52,6 +128,12 @@ SAFE_LIMITS = {1: (10, 180), 2: (5, 108), 3: (10, 170), 4: (10, 170), 5: (10, 26
 # falls the last bit. The one-click and the pick job end here; the "place at x/y"
 # button is the way to set something down at a table point.
 DROP_POSE = {1: 180, 2: 44, 3: 38, 4: 19, 5: 90}
+
+# ... and each drop lets go a random distance up to this much FURTHER OUT along
+# the same bearing, same height, so the cubes spread instead of landing on each
+# other (user, 2026-09-24: "current position +10 cm max"). The far end needs the
+# tool tilted out to 130 deg (grasp.DROP_PITCHES); the mast stays 200+ mm clear.
+DROP_SPREAD_M = 0.100
 
 # J2's upper bound is a COLLISION with the camera mast, not a torque limit.
 # 108 keeps ~30 mm of modelled fingertip clearance and sits 13 deg below the angle
@@ -181,7 +263,14 @@ JOINT_OFFSET_DEG = {2: 7.5, 3: -10.5, 4: -1.3}
 # the model, not 20. The other ~15 mm the old value covered was the servos'
 # readback shortfall, which varies 2..16 mm per pick and which grasp.pick()'s
 # correction passes now remove on every descent.
-REACH_OFFSET_M = 0.005
+#
+# PER CAMERA since 2026-09-24: this is about how the arm carries its own weight, and
+# the C930e is far heavier than the Sonix. With it on, fingertips put down by the
+# kinematics landed 4..8 mm FURTHER out than their readback said (seen through the
+# board, five corners), and a 26 mm cube at 197 mm out was missed twice with 5 mm
+# (6 mm grown and capped) and held first time with 0, passes 14.3 -> 4.2 -> 2.2 mm.
+# One cube, so watch the grips and tune it on the panel ("reach offset").
+REACH_OFFSET_M = {"sonix": 0.005, "c930e": 0.0}[WRIST_CAMERA]
 # ... and it GROWS WITH REACH, like the height error above. By eye on 2026-09-18:
 # 5 mm centred every grip at 150-165 mm; at 174 mm the same 5 mm took the cube by
 # its near third (tips ~8 mm short). So the offset used is
@@ -372,17 +461,40 @@ TABLE_BELOW_PLATE = 0.190
 # the lens 213 mm above the table, against 222 mm derived from how much a tag of
 # known size is magnified by being 40 mm closer to it. With the old swapped value
 # the same calculation gave 153 mm, nowhere near.
-CAMERA_FROM_J4 = 0.065
-CAMERA_OFF_AXIS = 0.050
-
-# Which side of the forearm the lens sits on, seen from behind the robot looking
-# the way the arm points:  -1 = the robot's RIGHT (-y),  +1 = its LEFT (+y).
+# (All of the above is the Sonix camera's. The C930e's numbers follow below.)
 #
-# Matters because parallax pushes an elevated object away from the LENS, so this
-# sign decides which way the correction pulls. INFERRED, not yet confirmed by eye:
-# the 20 mm miss was in the direction a right-mounted lens predicts, and the left
-# hypothesis moves the answer the wrong way entirely.
-CAMERA_SIDE = -1
+# Where the lens sits, per camera, in metres, relative to the link it is bolted to.
+# Both cameras are on arm_link4: they move with J4 but NOT with the wrist roll J5
+# (for the C930e, rolling J5 by 30 degrees swung a finger through the picture and
+# left the table where it was).
+#   FROM_J4     along the tool axis, out from J4.
+#   ABOVE_TOOL  across the tool axis, within the arm's own vertical plane. + is the
+#               side that is UP when the tool points forward -- which is FORWARD,
+#               away from the base, when the tool points down.
+#   OFF_AXIS    across the arm's plane, sideways, on the CAMERA_SIDE.
+#   SIDE        -1 = the robot's RIGHT (-y), +1 = its LEFT (+y), seen from behind
+#               the robot looking the way the arm points.
+#
+# These decide where parallax pushes an elevated object (away from the LENS), so
+# they are what the unlift corrects about. The Sonix sat 50 mm to the right of the
+# forearm; its SIDE was INFERRED from the direction of a 20 mm miss, the left
+# hypothesis moving the answer the wrong way entirely.
+_LENS = {
+    #          FROM_J4  ABOVE_TOOL  OFF_AXIS  SIDE
+    "sonix":  (0.065,   0.0,        0.050,    -1),
+    "c930e":  (0.085,   0.039,      0.0,      -1),
+}
+# The C930e's, 2026-09-24. The user's ruler: 85 mm from J4 towards J5, 50 mm off the
+# axis on top of the arm, centred. The pictures agree on the side -- with the tool
+# pointing down the fingertips show at the BOTTOM of the frame, the base side, so
+# the lens is forward of them -- and on two of the numbers: the lens position
+# solved from 23 board views (8 poses, +-20 deg of yaw, horizontal only, since the
+# height rides on a focal length those views cannot pin) gave 90 mm along the tool,
+# 3 mm sideways and 38 mm across, 3.1 mm rms; with 85 held, 39 mm across, 3.1 mm rms,
+# against 8.3 mm rms for the ruler's 50. 50 is presumably to the camera's body;
+# parallax is about the OPTICAL centre, so 39 it is. (Its 11 mm moves the unlift of
+# a 40 mm cube by ~2 mm.)
+CAMERA_FROM_J4, CAMERA_ABOVE_TOOL, CAMERA_OFF_AXIS, CAMERA_SIDE = _LENS[WRIST_CAMERA]
 
 # The board in the lab is DICT_5X5 -- verified by testing every predefined
 # dictionary against a captured frame. 4X4 finds nothing.
@@ -432,7 +544,18 @@ BOARD_MARKER_M = 0.0385
 # brought higher board-Y markers into view, and moving LEFT brought higher board-X
 # into view. So board +Y is forward and board +X is left.
 BOARD_X0 = 0.0560           # table x (forward) where board Y = 0: 40 + 16 mm
-BOARD_Y0 = -0.1855          # table y (left) where board X = 0: -371/2 mm
+BOARD_Y0 = -0.1965          # table y (left) where board X = 0: -371/2 mm, then -11 (below)
+
+# THE BOARD HAD MOVED by 2026-09-24 (between the paper going on and coming off, or
+# the robot being nudged while the C930e was fitted): 11 mm to the robot's right of
+# the -185.5 mm it was measured and validated at. Found two ways that do not depend
+# on any camera calibration: the fingertip, closed, put down by the kinematics on
+# five board corners and located in each frame through that frame's own markers
+# (lateral 7.7..13.1 mm, mean 10.9; forward +2.7..+5.6, left alone -- that is the
+# arm's own reach bias; rotation -0.8 deg, negligible); and the J1 axis, found as the
+# centre of the camera's circle as the base yawed +-20 deg, 10..17 mm to the left of
+# where the board said it was. The Sonix's saved calibration was fitted before the
+# move and stays valid as it is: it is in robot coordinates, not board ones.
 
 
 def board_to_table(board_x: float, board_y: float) -> tuple[float, float]:
@@ -445,19 +568,33 @@ MIN_BATTERY_V = 10.0
 
 
 def angle_from_raw(joint: int, raw: int) -> int:
-    """Raw servo count -> degrees, reproducing the SDK's own conversion exactly.
+    """Raw servo count -> degrees, the SDK's own conversion, but rounded honestly.
 
     Reimplemented rather than calling get_uart_servo_angle() because that clamps
     anything outside the joint's range to -1 -- the same value it uses for "no
     reply" -- and we need the honest angle, out-of-range ones included. Verified
     against the SDK on real readings: raw 1988/2051/2014/2035/1481/1283 give
     91/86/89/87/90/31, matching get_uart_servo_angle_array() exactly.
+
+    The SDK rounds with int(x + 0.5), which truncates toward zero, so every
+    NEGATIVE angle comes out a degree high (raw 3288 is -15.4 deg; the SDK says
+    -14). floor() is the same above zero and right below it.
     """
     if joint <= 4:
-        return int((raw - 900) * (0 - 180) / (3100 - 900) + 180 + 0.5)
+        return math.floor((raw - 900) * (0 - 180) / (3100 - 900) + 180 + 0.5)
     if joint == 5:
-        return int((270 - 0) * (raw - 380) / (3700 - 380) + 0 + 0.5)
-    return int((180 - 0) * (raw - 900) / (3100 - 900) + 0 + 0.5)
+        return math.floor((270 - 0) * (raw - 380) / (3700 - 380) + 0 + 0.5)
+    return math.floor((180 - 0) * (raw - 900) / (3100 - 900) + 0 + 0.5)
+
+
+def raw_from_angle(joint: int, angle: int) -> int:
+    """Degrees -> raw position pulse, exactly as the SDK's angle calls convert it
+    (Rosmaster.__arm_convert_value), for a joint sent below its SDK_RANGE."""
+    if joint <= 4:
+        return int((3100 - 900) * (angle - 180) / (0 - 180) + 900)
+    if joint == 5:
+        return int((3700 - 380) * (angle - 0) / (270 - 0) + 380)
+    return int((3100 - 900) * (angle - 0) / (180 - 0) + 900)
 
 
 # ------------------------------------------------------- self-collision ----

@@ -45,8 +45,8 @@ from roboarm.web.server import Server, send_json, send_mjpeg
 # Everything a caller may invoke on the arm. Anything else is a 400, so a bug on
 # the laptop cannot reach into the SDK object behind it.
 ALLOWED = frozenset({
-    "read", "move_to", "home", "set_gripper", "open_gripper", "close_gripper",
-    "grasped", "hold", "release", "engage", "out_of_range", "battery",
+    "read", "move_to", "glide", "moving", "home", "set_gripper", "open_gripper",
+    "close_gripper", "grasped", "hold", "release", "engage", "out_of_range", "battery",
 })
 
 
@@ -96,7 +96,7 @@ class Bridge:
             # A stale interrupt from the last stop must not abort this new call.
             self._interrupt.clear()
             if method == "battery":
-                return float(self.arm.bot.get_battery_voltage())
+                return float(self.arm.battery())
             fn = getattr(self.arm, method)
             return fn(*[_int_keys(a) for a in args],
                       **{k: _int_keys(v) for k, v in kwargs.items()})

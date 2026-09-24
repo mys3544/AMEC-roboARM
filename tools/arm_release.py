@@ -18,6 +18,7 @@ import time
 
 from Rosmaster_Lib import Rosmaster
 
+from roboarm import arm
 from roboarm import config as cfg
 
 
@@ -31,14 +32,15 @@ def connect() -> Rosmaster:
 
 
 def read_all(bot: Rosmaster) -> dict[int, int | None]:
-    """One batch read -- a single bus transaction, and unclamped so a joint sitting
-    outside its range reports its real angle instead of being masked as -1.
+    """Every joint, unclamped so a joint sitting outside its range reports its real
+    angle instead of being masked as -1. None = answered neither reader.
 
-    Never mix this with get_uart_servo_angle(): each is reliable alone, but
-    interleaving them confuses the SDK's async receive thread and both start
-    returning spurious -1s.
+    roboarm.arm.read_pose: the batch call, plus a SPACED direct query for what it
+    drops and for anything at or below zero -- where J2 now goes, where -1 is a
+    real angle and the batch rounds a degree high. Fired back to back the two
+    readers corrupt each other; read_pose spaces them.
     """
-    return {sid: (None if v == -1 else v) for sid, v in zip(cfg.JOINT_IDS, bot.get_uart_servo_angle_array())}
+    return arm.read_pose(bot, attempts=1)
 
 
 def read_pose(bot: Rosmaster) -> dict[int, int]:
@@ -78,7 +80,6 @@ def engage(bot: Rosmaster) -> None:
         if target[sid] != value:
             rescued[sid] = (value, target[sid])
 
-    angles = [target[s] for s in cfg.JOINT_IDS]
     print("holding at:", " ".join(f"J{s}={target[s]}" for s in cfg.JOINT_IDS))
     if rescued:
         print("recovering :", " ".join(f"J{s} {a}->{b}" for s, (a, b) in rescued.items()),
@@ -90,8 +91,10 @@ def engage(bot: Rosmaster) -> None:
 
     bot.set_uart_servo_torque(True)
     # Target = present position, so there is nothing to snap towards. run_time is
-    # slowed from the SDK's 500 ms default so any correction is gentle.
-    bot.set_uart_servo_angle_array(angles, run_time=1500)
+    # slowed from the SDK's 500 ms default so any correction is gentle. send_pose,
+    # not the angle array: J2 may be held below 0, which the array silently drops --
+    # and then the servo snaps to whatever stale setpoint it still had.
+    arm.send_pose(bot, target, run_time=1500)
     time.sleep(2.0)
 
     after = {s: v for s, v in read_all(bot).items() if v is not None}

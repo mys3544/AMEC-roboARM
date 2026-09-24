@@ -1,8 +1,10 @@
 """See the whole reachable table by turning the base under one fixed look.
 
 The wrist camera sees about 150 mm of table at a time, and the arm can grasp
-anywhere in an annulus 131..210 mm from the base and +-80 degrees wide -- roughly
-380 cm2. One survey pose covers 27.7% of that. This module covers the rest.
+anywhere in an annulus 90..262 mm from the base and -90..+80 degrees wide (a
+10 deg back-tilt of the tool sets the inner edge, the J2 floor of -14 the outer;
+no calibrated look sees past about 238 mm yet).
+One survey pose covers about a tenth of that. This module covers the rest.
 
 THE ONE IDEA HERE. J1 is a pure yaw about the origin of the kinematics frame, and
 the camera is bolted downstream of it on arm_link4. So changing ONLY J1, with
@@ -43,7 +45,7 @@ worst. Before grasping, the base turns so the chosen object sits on the bearing
 that runs through the middle of the picture (`look_bearing()`), and it is measured
 again from there. So every object is finally measured from the same relative
 geometry, near the image centre, no matter where on the table it sits. Objects at
-131..209 mm can all be centred this way; only the outermost millimetre of reach
+90..237 mm can all be centred this way; only the outermost millimetre of reach
 cannot, and the arm can barely grasp there anyway.
 
 MEASURED COVERAGE of a tagged 40 mm cube, computed against the real calibration
@@ -65,7 +67,7 @@ bearing the arm can reach is now looked at. What a yaw cannot change is RADIUS.
 The camera sits at a fixed height and tilt, so its footprint lands on a fixed band
 of distances, and no amount of turning moves that band. The result:
 
-    the arm can grasp        131..210 mm from the base, bearing -80..+80
+    the arm can grasp         90..262 mm from the base, bearing -90..+80
     the sweep can measure    129..189 mm from the base, bearing -80..+80
 
 So the ring delivers the whole angular range and about three quarters of the
@@ -191,9 +193,11 @@ def pose_at(survey: Pose, dyaw_deg: float) -> Pose:
 
 
 def yaw_range(survey: Pose) -> tuple[float, float]:
-    """How far the base can yaw either way from the calibrated pose, in degrees."""
+    """How far the base yaws either way from the calibrated pose when searching,
+    in degrees: the joint's range, capped at cfg.SWEEP_SPAN_DEG in all."""
     low, high = cfg.SAFE_LIMITS[1]
-    return float(survey[1] - high), float(survey[1] - low)
+    half = cfg.SWEEP_SPAN_DEG / 2
+    return max(float(survey[1] - high), -half), min(float(survey[1] - low), half)
 
 
 def ring(survey: Pose, matrix: np.ndarray,
@@ -441,6 +445,17 @@ def reach_of(matrix: np.ndarray) -> float:
     return float(math.hypot(*ws.apply(matrix, [middles[sides["far"]]])[0]))
 
 
+def nearest_of(matrix: np.ndarray) -> float:
+    """How close in, in metres from the base, the near edge of this look's picture lies."""
+    width, height = cfg.WRIST_CAM_SIZE
+    sides = frame_sides(matrix)
+    middles = {
+        "top": (width / 2, 0.0), "bottom": (width / 2, height - 1.0),
+        "left": (0.0, height / 2), "right": (width - 1.0, height / 2),
+    }
+    return float(math.hypot(*ws.apply(matrix, [middles[sides["near"]]])[0]))
+
+
 def hints(look: Look, clipped: list, calibrated: list[tuple[np.ndarray, Pose, str]],
           ) -> list[Hint]:
     """Looks worth taking next, from what a station saw cut off at its edges.
@@ -459,7 +474,12 @@ def hints(look: Look, clipped: list, calibrated: list[tuple[np.ndarray, Pose, st
         nothing in calibration -- rather than wait for the next station,
         which may cut it off at the other side.
 
-    Out of the NEAR edge means closer than the arm can grasp; nothing to do.
+      * out of the NEAR edge: the mirror of the far case. Since the J3 floor
+        went to 0 (2026-09-22) the arm grasps down to 122 mm while the primary
+        look's near edge is 129 mm, so a cube straight in front of the robot
+        was never listed. If a calibrated look that sees nearer exists (the
+        near look), take it on that bearing; with none, nothing to do.
+
     The clipped position's bearing is used and its radius is not: a cut-off
     outline still points the right way to within a few degrees, which is all
     a centring yaw needs, whereas its distance is whatever the visible part
@@ -485,7 +505,16 @@ def hints(look: Look, clipped: list, calibrated: list[tuple[np.ndarray, Pose, st
             why = (f"{target.label} runs out of the far edge at bearing {bearing:+.0f} deg; "
                    f"the {name} look reaches further")
         elif sides["near"] in edges:
-            continue
+            nearer = sorted(
+                ((nearest_of(matrix), matrix, survey, name)
+                 for matrix, survey, name in calibrated
+                 if name != look.name and nearest_of(matrix) < nearest_of(look.matrix) - 0.005),
+                key=lambda item: item[0])
+            if not nearer:
+                continue
+            _near, matrix, survey, name = nearer[0]
+            why = (f"{target.label} runs out of the near edge at bearing {bearing:+.0f} deg; "
+                   f"the {name} look sees nearer")
         elif sides["left"] in edges or sides["right"] in edges:
             matrix, survey = by_name[look.name]
             name = look.name

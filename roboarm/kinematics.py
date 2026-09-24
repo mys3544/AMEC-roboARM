@@ -85,7 +85,7 @@ def camera_nadir(pose: Pose) -> tuple[float, float]:
 
     This is the point parallax pushes elevated things AWAY from, so it is what
     detect.markers() has to correct about. It is emphatically NOT the middle of the
-    picture: the lens sits 50 mm off the forearm axis and the optical axis is not
+    picture: the lens sits off the tool axis and the optical axis is not
     exactly vertical, so at the survey pose the image centre lands about 70 mm from
     here. Assuming the two were the same left 20 mm of a 20 mm reach error in place.
 
@@ -95,8 +95,10 @@ def camera_nadir(pose: Pose) -> tuple[float, float]:
     """
     a2, a3, a4 = _link_angles(pose)
     # Out to J4 within the arm's own vertical plane, then on to the lens along the
-    # tool axis. Only J2 and J3 place J4; J4's own angle aims the segment beyond it.
-    reach = L1 * math.sin(a2) + L2 * math.sin(a3) + cfg.CAMERA_FROM_J4 * math.sin(a4)
+    # tool axis and across it. Only J2 and J3 place J4; J4's own angle aims the
+    # segment beyond it.
+    reach = (L1 * math.sin(a2) + L2 * math.sin(a3) + cfg.CAMERA_FROM_J4 * math.sin(a4)
+             - cfg.CAMERA_ABOVE_TOOL * math.cos(a4))
     yaw = math.radians(90 - pose[1])
     # The lens also sits off to one side of that plane, which is a sideways offset
     # in the horizontal plane, perpendicular to the direction the arm points.
@@ -115,6 +117,7 @@ def camera_height(pose: Pose) -> float:
         + L1 * math.cos(a2)
         + L2 * math.cos(a3)
         + cfg.CAMERA_FROM_J4 * math.cos(a4)
+        + cfg.CAMERA_ABOVE_TOOL * math.sin(a4)
     )
     return above_plate + cfg.TABLE_BELOW_PLATE
 
@@ -135,6 +138,7 @@ def inverse(
     pitch_deg: float = 90.0,
     elbow_up: bool = True,
     gripper: int = cfg.GRIPPER_CLOSED,
+    lowest_z: float | None = None,
 ) -> Pose:
     """Fingertip position -> servo angles. Raises Unreachable if it cannot be done.
 
@@ -149,11 +153,16 @@ def inverse(
     `gripper` is not optional information: an open gripper is 28 mm shorter than a
     closed one, so solving without it puts the fingertips 28 mm off. It defaults to
     CLOSED because that is the state every calibration on this arm was measured in.
+
+    `lowest_z` lowers the floor below the table surface, for tools/touch_probe.py
+    only: it is LOOKING for the table, and out at the rim the model puts the
+    real table below its own (18 mm, on the hand-set pose of 2026-09-23).
     """
-    if z < -cfg.TABLE_BELOW_PLATE:
+    floor = -cfg.TABLE_BELOW_PLATE if lowest_z is None else lowest_z
+    if z < floor:
         raise Unreachable(
             f"z={z * 1000:.0f} mm is below the table surface at "
-            f"{-cfg.TABLE_BELOW_PLATE * 1000:.0f} mm"
+            f"{floor * 1000:.0f} mm"
         )
 
     yaw = math.atan2(y, x)
@@ -259,7 +268,13 @@ def roll_for(closing_deg: float, j1: int, square: bool = False) -> int:
 # 185 mm forearm is longer than the 170 mm upper arm -- so near targets must be
 # taken straight down and far ones at a slant. Fixing one pitch throws most of the
 # workspace away.
-GRASP_PITCHES = (180.0, 175.0, 170.0, 165.0, 160.0, 155.0, 150.0, 145.0, 140.0)
+# 185 and 190 (the tool leaning back toward the base) added 2026-09-22, tried last:
+# straight down the arm cannot get its fingertips nearer than 122 mm (J3 would have
+# to go negative), leaning back 10 deg it reaches 90 mm (J2 23, J3 19, J4 34 at
+# 107 mm, 222 mm clear of the mast). Not beyond 190: 195 would allow 74 mm and 210
+# 23 mm, and nothing here models the base plate, whose edge is about 60 mm out.
+GRASP_PITCHES = (180.0, 175.0, 170.0, 165.0, 160.0, 155.0, 150.0, 145.0, 140.0,
+                 185.0, 190.0)
 
 
 def solve(
@@ -269,6 +284,7 @@ def solve(
     pitches: tuple[float, ...] = GRASP_PITCHES,
     elbow_up: bool = True,
     gripper: int = cfg.GRIPPER_CLOSED,
+    lowest_z: float | None = None,
 ) -> tuple[Pose, float]:
     """Find a legal pose for a point, letting the tool pitch follow the distance.
 
@@ -276,7 +292,8 @@ def solve(
     """
     for pitch in pitches:
         try:
-            return inverse(x, y, z, pitch, elbow_up=elbow_up, gripper=gripper), pitch
+            return inverse(x, y, z, pitch, elbow_up=elbow_up, gripper=gripper,
+                           lowest_z=lowest_z), pitch
         except Unreachable:
             continue
     raise Unreachable(

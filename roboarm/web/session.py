@@ -57,9 +57,12 @@ PICTURE_WANTED_S = 3.0
 # disagree by, tight enough that it cannot lock on to a different object: two
 # graspable objects cannot physically sit closer than 30 mm.
 REFIND_M = 0.030
-# "Clear the table" gives up after this many full sweeps that still find something.
-PICKALL_ROUNDS = 3
-# Anything within this of where cfg.DROP_POSE lets go is what we dropped there.
+# How many rounds of the ring "clear the table" rides at most; a round that picks
+# nothing ends it early. 1 since 2026-09-22 evening (user): the confirming ride
+# after a productive round cost a minute to find nothing.
+PICKALL_ROUNDS = 1
+# Anything within this of where drops land (cfg.DROP_POSE, and up to
+# cfg.DROP_SPREAD_M further out) is what we dropped there.
 # The pile is in view from the ring's end stations (J1 180/165), and on
 # 2026-09-21 "clear the table" listed the dropped cubes and tried to pick them
 # from the pile -- three "closed on nothing" in a row.
@@ -91,13 +94,28 @@ YAW_SETTLE_S = 0.15
 # a grasp. Measured the same day: 40 deg/s lands the camera 0.8 mm further
 # from where 20 deg/s does; 30 is the compromise.
 STATION_DPS = 30.0
+# The way back from the drop pose to the station: empty-handed and a known
+# route, so twice as fast (user's wish, 2026-09-22; grasp.TRANSIT_DPS matches
+# for the way there with the cube held).
+RETURN_DPS = 60.0
+
+# Base yaw of a continuous scan (sweep, clear the table): the arm keeps turning
+# while frames are taken and detected on. A frame's yaw is read once before and
+# once after it, about 0.25 s apart over WiFi, so at 12 deg/s its yaw is known to
+# about 1.5 deg -- 5 mm at 170 mm, inside sweep.MERGE_M, and a pick re-looks from
+# a standstill anyway. Any faster and the wrist camera's rolling exposure smears.
+SCAN_DPS = 16.0   # 12 until 2026-09-22 evening ("a little faster")
+SCAN_POLL_S = 0.02
 
 # A refine look is skipped when the base is already within this many degrees
-# of the centred bearing: at 160 mm a degree is 2.8 mm or 12 px, so 8 deg
-# leaves the object under 100 px from the middle of a 640 px frame, where
-# the mapping is as good as it is at the centre. Measured 2026-09-11: a
-# refine from 10 deg off moved the estimate 0.7 mm and cost two seconds.
-REFINE_IF_OFF_DEG = 8
+# of the centred bearing. Was 8: at 160 mm a degree is 2.8 mm or 12 px, and on
+# 2026-09-11 a PRIMARY-look refine from 10 deg off moved the estimate 0.7 mm.
+# The OUTER look is another matter (2026-09-22, rotated cubes at 214 mm): its
+# reading 10 deg off centre was 11 mm to the outside of the centred one, 7 deg
+# off 3 mm -- the user's "reaches to the right of a cube right of centre" --
+# and the search's skipped re-look is where that went uncorrected. 3 deg keeps
+# the skip for a cube that really is dead ahead and costs 2.5 s otherwise.
+REFINE_IF_OFF_DEG = 3
 
 
 class Busy(RuntimeError):
@@ -407,7 +425,7 @@ class Session:
         if name == "survey":
             look = self._primary_look()
             return self._manual(
-                lambda arm: arm.move_to(look, speed_dps=min(self.speed_dps, 20.0)),
+                lambda arm: arm.move_to(look, speed_dps=min(self.speed_dps, 20.0), repeatable=True),
                 "survey pose")
         raise ValueError(f"no preset called {name!r}")
 
@@ -567,8 +585,9 @@ class Session:
 
     @staticmethod
     def _at_drop_spot(target: detect.Target) -> bool:
-        x, y, _z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_OPEN})
-        return math.hypot(target.x - x, target.y - y) < DROP_ZONE_M
+        # Drops land anywhere along a line out from under cfg.DROP_POSE
+        # (cfg.DROP_SPREAD_M), so the zone is that line, widened.
+        return grasp.from_drop_line(target.x, target.y) < DROP_ZONE_M
 
     @classmethod
     def _target_dict(cls, target: detect.Target) -> dict:
@@ -870,10 +889,14 @@ class Session:
         before = self.pose()
         yaw_only = before is not None and all(
             abs(before[j] - look.pose[j]) <= 1 for j in (2, 3, 4, 5))
-        self.arm.move_to(look.pose, speed_dps=STATION_DPS)
+        self.arm.move_to(look.pose, speed_dps=STATION_DPS, repeatable=True)
         self._refresh()
         settle = min(self.settle_s, YAW_SETTLE_S) if yaw_only else self.settle_s
         frame = self.stream.settled(settle, count=1)[-1]
+        return self._detect_at(look, frame)
+
+    def _detect_at(self, look: sweep.Look, frame) -> tuple[list[detect.Target], list[detect.Target]]:
+        """What `frame`, taken from `look`, shows: (measurable, clipped) as _look_all."""
         found = detect.ladder(frame, self.detector, look.matrix,
                               nadir=look.nadir, dyaw=look.dyaw, object_mm=self.object_mm,
                               url=self._vision_url(), lens_m=kin.camera_height(look.pose),
@@ -919,7 +942,7 @@ class Session:
         return self.detector_url
 
     def _job_survey(self) -> None:
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
+        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
 
     def _lap(self, what: str | None = None) -> None:
         """Log how long the stage since the last call took, and start the next.
@@ -931,6 +954,87 @@ class Session:
             self.log(f"  [{what} took {now - self._lap_started:.1f} s]")
         self._lap_started = now
 
+    @staticmethod
+    def _look_from(entry: tuple, j1: float) -> sweep.Look:
+        """The calibrated look `entry` (matrix, survey pose, name) with the base
+        at `j1`: a station wherever the arm happens to be pointing."""
+        matrix, survey, name = entry
+        dyaw = float(survey[1] - j1)
+        pose = dict(survey)
+        pose[1] = round(j1)
+        return sweep.Look(dyaw, pose, sweep.rotate(matrix, dyaw), name)
+
+    def _passes(self, looks: list[sweep.Look]) -> list[tuple[tuple, list[float]]]:
+        """The stations grouped into one continuous pass per calibrated look:
+        (entry, dyaws in travel order), nearest-seeing look first (near, primary,
+        outer -- user's wish, 2026-09-22). Every other pass runs backwards, so
+        the next look starts where this one ended instead of transiting the ring."""
+        passes = []
+        entries = sorted(self._all_calibrated(), key=lambda e: sweep.nearest_of(e[0]))
+        for k, entry in enumerate(entries):
+            dyaws = [look.dyaw for look in looks if look.name == entry[2]]
+            if k % 2:
+                dyaws.reverse()
+            if dyaws:
+                passes.append((entry, dyaws))
+        return passes
+
+    def _ride(self, entry: tuple, dyaws: list[float], on_frame):
+        """One look's pass over `dyaws` in ONE base motion: drive to the first
+        station, then yaw steadily to the last while a frame is taken as each
+        station's yaw goes by and handed to `on_frame(look, frame)`; the look
+        carries the yaw actually read around the frame, not the station's
+        nominal one. `on_frame` returning something truthy stops the arm right
+        there and that value is returned; None means the pass completed.
+
+        2026-09-22, the user's "stable movement": station by station the arm
+        moved, stopped, settled and looked, 2.3..3.5 s per station with the
+        camera standing still for most of it. Now it keeps turning at SCAN_DPS
+        and the detector works on the frames as they come.
+        """
+        matrix, survey, name = entry
+        first = sweep.pose_at(survey, dyaws[0])
+        self.arm.move_to(first, speed_dps=STATION_DPS, repeatable=True)
+        self._refresh()
+        frame = self.stream.settled(self.settle_s, count=1)[-1]
+        result = on_frame(sweep.Look(dyaws[0], first, sweep.rotate(matrix, dyaws[0]), name), frame)
+        if result or len(dyaws) == 1:
+            return result
+        goal = self.arm.glide(sweep.pose_at(survey, dyaws[-1]), speed_dps=SCAN_DPS)
+        ahead = 1 if goal[1] > first[1] else -1
+        pending = [sweep.pose_at(survey, d)[1] for d in dyaws[1:]]
+        last_j1, still = None, 0
+        while pending:
+            if self._stop.is_set():
+                raise ArmError("stopped by the operator")
+            before = self.arm.read()
+            self._note_pose(before)
+            reached = [s for s in pending if ahead * (before[1] - s) >= 0]
+            ended = False
+            if not reached:
+                still = still + 1 if before[1] == last_j1 else 0
+                last_j1 = before[1]
+                # Not turning any more and short of the next station: the glide
+                # ended early (the readback resting a degree off the goal, or
+                # the SDK refused a step). Take what is in view here and finish.
+                ended = still >= 3 and not self.arm.moving()
+                if not ended:
+                    time.sleep(SCAN_POLL_S)
+                    continue
+                reached = [pending[0]]
+            frame = self.stream.settled(0.0, count=1)[-1]
+            after = before if ended else self.arm.read()
+            look = self._look_from(entry, (before[1] + after[1]) / 2)
+            pending = [s for s in pending if s not in reached]
+            if ended and pending:
+                self.log(f"  the scan stopped at J1={before[1]}, {len(pending)} station(s) short")
+                pending = []
+            result = on_frame(look, frame)
+            if result:
+                self.arm.hold()
+                return result
+        return None
+
     def _job_sweep(self, first: bool = False, **_ignored) -> list[detect.Target]:
         """Scan the ring of stations and list what is on the table.
 
@@ -939,54 +1043,54 @@ class Session:
         in view costs no move at all -- works outward alternately left and right,
         and stops the moment something graspable is seen. The arm then stays at
         the station that saw it, ready to approach. Without `first` every station
-        is visited and the arm returns to the survey pose.
+        is visited, in one continuous motion per look (_ride), and the arm
+        returns to the survey pose.
         """
         self._lap()
         looks = sweep.stations(self._all_calibrated(), self.step_deg)
-        pose = self.pose()
-        if first and pose is not None:
-            # Nearest station first -- but one calibrated look's whole ring before
-            # the next: alternating between looks at every bearing would move
-            # J2..J5 each time, which is the slow kind of move and the one that
-            # needs the camera's exposure to settle again.
-            order = [name for _m, _p, name in self._all_calibrated()]
-            looks.sort(key=lambda look: (order.index(look.name), abs(look.pose[1] - pose[1])))
-        self.log(f"{'searching' if first else 'sweeping'} {len(looks)} stations "
-                 f"{self.step_deg:.0f} deg apart, detector = {self.detector}"
-                 + (", nearest station first, stopping when something is found" if first else ""))
         seen: list[tuple[sweep.Look, detect.Target]] = []
         stopped_early = False
-        # A search follows HINTS: something seen cut off at a frame edge says
-        # where to look next (sweep.hints), and that look goes to the front of
-        # the queue. Each station is visited once, hint or not.
-        queue = list(looks)
-        visited: set[tuple[str, int]] = set()
-        while queue:
-            look = queue.pop(0)
-            key = (look.name, look.pose[1])
-            if key in visited:
-                continue
-            visited.add(key)
-            found, clipped = self._look_all(look)
-            self.log(f"  J1={look.pose[1]:3d} (dyaw {look.dyaw:+6.1f}, {look.name}): "
-                     f"{len(found)} object(s)"
-                     + (f", {len(clipped)} cut off at the edge" if clipped else ""))
-            seen.extend((look, t) for t in found)
-            if first and any(self._plannable(t) for t in found):
-                self.log("  found something graspable; stopping the scan here")
-                stopped_early = True
-                break
-            if first and clipped:
-                for lost in sweep.beyond_reach(look, clipped, self._all_calibrated()):
-                    bearing = math.degrees(math.atan2(lost.y, lost.x))
-                    self.log(f"  {lost.label} at bearing {bearing:+.0f} deg runs out of the "
-                             f"far edge of the {look.name} look, the furthest there is: "
-                             f"beyond reach")
-                for hint in reversed(sweep.hints(look, clipped, self._all_calibrated())):
-                    if (hint.look.name, hint.look.pose[1]) in visited:
-                        continue
-                    self.log(f"  hint: {hint.why} -> {hint.look.name} J1={hint.look.pose[1]}")
-                    queue.insert(0, hint.look)
+        if first:
+            pose = self.pose()
+            if pose is not None:
+                # Nearest station first -- but one calibrated look's whole ring
+                # before the next: alternating between looks at every bearing
+                # would move J2..J5 each time, which is the slow kind of move
+                # and the one that needs the camera's exposure to settle again.
+                order = [name for _m, _p, name in self._all_calibrated()]
+                looks.sort(key=lambda look: (order.index(look.name), abs(look.pose[1] - pose[1])))
+            self.log(f"searching {len(looks)} stations {self.step_deg:.0f} deg apart, detector "
+                     f"= {self.detector}, nearest station first, stopping when something is found")
+            # A search follows HINTS: something seen cut off at a frame edge says
+            # where to look next (sweep.hints), and that look goes to the front of
+            # the queue. Each station is visited once, hint or not.
+            queue = list(looks)
+            visited: set[tuple[str, int]] = set()
+            while queue:
+                look = queue.pop(0)
+                key = (look.name, look.pose[1])
+                if key in visited:
+                    continue
+                visited.add(key)
+                found, clipped = self._look_all(look)
+                self._station_line(look, found, clipped)
+                seen.extend((look, t) for t in found)
+                if any(self._plannable(t) for t in found):
+                    self.log("  found something graspable; stopping the scan here")
+                    stopped_early = True
+                    break
+                self._follow_hints(look, clipped, queue, visited)
+        else:
+            self.log(f"sweeping {len(looks)} stations {self.step_deg:.0f} deg apart in one "
+                     f"motion per look, detector = {self.detector}")
+
+            def on_frame(look: sweep.Look, frame) -> None:
+                found, clipped = self._detect_at(look, frame)
+                self._station_line(look, found, clipped)
+                seen.extend((look, t) for t in found)
+
+            for entry, dyaws in self._passes(looks):
+                self._ride(entry, dyaws, on_frame)
         merged = sweep.merge(seen)
         self.sweep_targets = merged
         self.sweep_when = time.time()
@@ -997,9 +1101,33 @@ class Session:
             self.log(f"  {target.label:<12} {info['x_mm']:6.0f} mm fwd, {info['y_mm']:+6.0f} mm "
                      f"left  {info['width_mm']} x {info['length_mm']} mm   {verdict}")
         if not stopped_early:
-            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
+            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
         self._lap("search" if first else "sweep")
         return merged
+
+    def _station_line(self, look: sweep.Look, found: list, clipped: list) -> None:
+        self.log(f"  J1={look.pose[1]:3d} (dyaw {look.dyaw:+6.1f}, {look.name}): "
+                 f"{len(found)} object(s)"
+                 + (f", {len(clipped)} cut off at the edge" if clipped else ""))
+
+    def _follow_hints(self, look: sweep.Look, clipped: list[detect.Target],
+                      queue: list[sweep.Look], visited: set[tuple[str, int]]) -> None:
+        """Something cut off at a frame edge says where to look next
+        (sweep.hints); that look goes to the front of the queue unless it has
+        been visited. What runs out of the furthest look's far edge is logged
+        as beyond reach."""
+        if not clipped:
+            return
+        for lost in sweep.beyond_reach(look, clipped, self._all_calibrated()):
+            bearing = math.degrees(math.atan2(lost.y, lost.x))
+            self.log(f"  {lost.label} at bearing {bearing:+.0f} deg runs out of the "
+                     f"far edge of the {look.name} look, the furthest there is: "
+                     f"beyond reach")
+        for hint in reversed(sweep.hints(look, clipped, self._all_calibrated())):
+            if (hint.look.name, hint.look.pose[1]) in visited:
+                continue
+            self.log(f"  hint: {hint.why} -> {hint.look.name} J1={hint.look.pose[1]}")
+            queue.insert(0, hint.look)
 
     def _all_calibrated(self):
         if not self.calibrated:
@@ -1043,14 +1171,20 @@ class Session:
             raise ValueError("closed on nothing -- see the log for the usual causes")
         self.log("done")
 
-    def _pick_one(self, target: detect.Target, refine: bool = True) -> bool:
-        """Pick `target`, drop it at cfg.DROP_POSE, return to the survey look.
-        False (with the arm back at survey) when the gripper closed on nothing."""
+    def _pick_one(self, target: detect.Target, refine: bool = True,
+                  back_to: Pose | None = None, force_refine: bool = False) -> bool:
+        """Pick `target`, drop it at cfg.DROP_POSE, return to `back_to` (default
+        the survey look). False (with the arm back there) when the gripper
+        closed on nothing. `force_refine` takes the second look even when the
+        base already points the right way: a target seen from a moving camera
+        deserves one from a standstill."""
         self.log(f"picking {target.label} at {target.x * 1000:.0f} mm fwd, "
                  f"{target.y * 1000:+.0f} mm left")
+        home = back_to if back_to is not None else self._primary_look()
+        where = "the station" if back_to is not None else "survey"
         if refine:
             self._lap()
-            target = self._refine(target)
+            target = self._refine(target, force=force_refine)
             self._lap("refine")
         self._lap()
         held = grasp.pick(self.arm, target, reach_offset_m=self.reach_offset_mm / 1000)
@@ -1058,37 +1192,87 @@ class Session:
         self._lap("pick")
         if not held:
             self.log("the gripper closed on nothing")
-            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
+            self.arm.move_to(home, speed_dps=STATION_DPS)
             return False
         self.log("holding it")
         grasp.drop(self.arm)
         self._lap("drop")
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
+        # Nothing in hand and nothing to look at on the way: twice the station
+        # speed, and no settle -- the look that follows waits for its own frame.
+        self.arm.move_to(home, speed_dps=RETURN_DPS, settle=False)
         self.sweep_targets = []
-        self._lap("return to survey")
+        self._lap(f"return to {where}")
         return True
 
     def _job_pickall(self, refine: bool = True, **_ignored) -> None:
-        """Clear the table: a FULL sweep, then pick and drop everything it found
-        that can be planned, surest first; sweep again; stop only when a full
-        sweep finds nothing left. A miss is logged and left for the next round.
+        """Clear the table, picking as it goes: walk the ring of stations, and
+        at one that shows something graspable pick the surest thing, drop it,
+        come BACK to that station and look again (a grasp can shove a
+        neighbour, and there may be more in view); move on only when the
+        station shows nothing. A miss gets one retry from the same station --
+        the failed grasp usually moved the object, and the new look says where
+        to. No hints here: every bearing gets both looks in a round anyway, and
+        on the first live run the neural rung's edge junk ("server room",
+        "clip art") chained six hint looks between two regular stations. A
+        round of the ring that picks nothing means the table is clear.
+
+        2026-09-22: replaces full sweep -> pick everything -> full sweep -> ...,
+        which spent a 60 s sweep per round and, at the round cap, said FAILED
+        even when the last round had done its job (5 held out of 6, 330 s).
         2026-09-21: the search stops at the first find, so a tagged cube that
         the first station could not see was still on the table afterwards."""
-        for round_ in range(1, PICKALL_ROUNDS + 1):
-            self.log(f"round {round_}: sweeping every station")
-            targets = self._job_sweep(first=False)
-            todo = sorted((t for t in targets if self._plannable(t)),
-                          key=lambda t: t.confidence, reverse=True)
-            if not todo:
-                self.log("a full sweep found nothing left to pick up")
-                return
-            self.log(f"{len(todo)} to pick up")
-            for target in todo:
-                self._pick_one(target, refine)
-        raise ValueError(f"still finding things after {PICKALL_ROUNDS} rounds -- "
-                         "something keeps being missed; see the log")
+        picked = 0
 
-    def _refine(self, target: detect.Target) -> detect.Target:
+        def on_frame(look: sweep.Look, frame):
+            found, clipped = self._detect_at(look, frame)
+            self._station_line(look, found, clipped)
+            self.sweep_targets = sweep.merge([(look, t) for t in found])
+            self.sweep_when = time.time()
+            todo = [t for t in found if self._plannable(t)]
+            return (look, max(todo, key=lambda t: t.confidence)) if todo else None
+
+        # ONE round (user, 2026-09-22 evening): the confirming second ride cost a
+        # minute to find nothing. PICKALL_ROUNDS stays for anyone who wants it back.
+        for round_ in range(1, PICKALL_ROUNDS + 1):
+            started = time.monotonic()  # not _lap(): the picks inside restart that
+            before, missed = picked, 0
+            looks = sweep.stations(self._all_calibrated(), self.step_deg)
+            self.log(f"round {round_}: {len(looks)} stations {self.step_deg:.0f} deg apart in "
+                     f"one motion per look, detector = {self.detector}, picking as it goes")
+            for entry, dyaws in self._passes(looks):
+                ahead = 1 if dyaws[-1] >= dyaws[0] else -1
+                misses_here: dict[int, int] = {}
+                while dyaws:
+                    hit = self._ride(entry, dyaws, on_frame)
+                    if hit is None:
+                        break
+                    look, target = hit
+                    held = self._pick_one(target, refine, back_to=look.pose, force_refine=True)
+                    station = round(look.dyaw / 5)
+                    if held:
+                        picked += 1
+                    else:
+                        missed += 1
+                        misses_here[station] = misses_here.get(station, 0) + 1
+                    # Carry on from here: look again from this station (the grasp
+                    # may have shoved a neighbour, more may be in view, and a miss
+                    # gets one retry -- the cube usually moved and the new look
+                    # says where to), then the stations still ahead.
+                    again = held or misses_here[station] < 2
+                    if not again:
+                        self.log("  missed twice from here; leaving it for the next round")
+                    dyaws = ([look.dyaw] if again else []) + [
+                        d for d in dyaws if ahead * (d - look.dyaw) > 0.5]
+            self.log(f"  [round {round_} took {time.monotonic() - started:.1f} s, "
+                     f"{picked - before} picked up"
+                     + (f", {missed} missed" if missed else "") + "]")
+            if (picked == before and not missed) or round_ == PICKALL_ROUNDS:
+                self.log(f"the ring is done: {picked} picked up in all"
+                         + (f", {missed} missed" if missed else "") + "; going home")
+                self.arm.home(speed_dps=STATION_DPS)
+                return
+
+    def _refine(self, target: detect.Target, force: bool = False) -> detect.Target:
         try:
             look = sweep.best_refine(self.calibrated, target.x, target.y,
                                      self._span(target), self._height(target))
@@ -1096,7 +1280,7 @@ class Session:
             self.log(f"  cannot centre it ({exc}); using the sweep's measurement")
             return target
         pose = self.pose()
-        if pose is not None and (abs(look.pose[1] - pose[1]) <= REFINE_IF_OFF_DEG
+        if not force and pose is not None and (abs(look.pose[1] - pose[1]) <= REFINE_IF_OFF_DEG
                                  and all(abs(look.pose[j] - pose[j]) <= 3
                                          for j in (2, 3, 4, 5))):
             self.log(f"  already looking at it head-on from J1={pose[1]}; no second look needed")
@@ -1117,19 +1301,19 @@ class Session:
     def _job_place(self, x: float, y: float, **_ignored) -> None:
         grasp.place(self.arm, float(x) / 1000, float(y) / 1000,
                     reach_offset_m=self.reach_offset_mm / 1000)
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
+        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
 
     def _job_background(self, **_ignored) -> None:
         looks = sweep.stations(self._all_calibrated(), self.step_deg)
         self.log(f"photographing the empty table from {len(looks)} stations")
         for look in looks:
-            self.arm.move_to(look.pose, speed_dps=STATION_DPS)
+            self.arm.move_to(look.pose, speed_dps=STATION_DPS, repeatable=True)
             self._refresh()
             detect.save_background(self.stream.settled(self.settle_s)[-1],
                                    look.dyaw, look.name)
             self.log(f"  {look.name} dyaw {look.dyaw:+6.1f} -> "
                      f"{detect.background_path(look.dyaw, look.name).name}")
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS)
+        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
         self.log("do not move the board, the lamp or the robot before detecting")
 
 

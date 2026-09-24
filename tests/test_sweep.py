@@ -34,6 +34,9 @@ GRASPABLE = sweep.reachable_grasp_points()
 # table output scaled 1.25x outward from the base, and a different survey pose.
 OUTER_H = np.diag([1.25, 1.25, 1.0]) @ REAL_H
 OUTER_SURVEY = {1: 90, 2: 30, 3: 51, 4: 12, 5: 90, 6: 30}
+# And a nearer-seeing one: the same picture landing 50 mm closer to the base.
+NEAR_H = np.array([[1.0, 0.0, -0.05], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]) @ REAL_H
+NEAR_SURVEY = {1: 90, 2: 75, 3: 11, 4: 0, 5: 90, 6: 30}
 
 
 def _clipped(x, y, edges, label="blob"):
@@ -95,6 +98,21 @@ def test_a_near_edge_clip_or_an_unclipped_target_gives_nothing():
     got = sweep.hints(look, [_clipped(0.13, 0.0, {"bottom"}), whole],
                       [(REAL_H, REAL_SURVEY, "primary")])
     assert got == []
+
+
+def test_a_near_edge_clip_hints_at_the_nearer_look_when_there_is_one():
+    """The white cube 11 cm straight ahead (2026-09-22): cut off at the primary's
+    near edge at every station, graspable since the J3 floor went to 0, and
+    listed by nobody. With a near look calibrated, that clip points at it."""
+    assert sweep.nearest_of(NEAR_H) < sweep.nearest_of(REAL_H) - 0.04
+    look = _station(0.0)
+    target = _clipped(0.125, 0.01, {"bottom"})
+    got = sweep.hints(look, [target], [(REAL_H, REAL_SURVEY, "primary"),
+                                       (OUTER_H, OUTER_SURVEY, "outer"),
+                                       (NEAR_H, NEAR_SURVEY, "near")])
+    assert len(got) == 1 and got[0].look.name == "near"
+    assert all(got[0].look.pose[j] == NEAR_SURVEY[j] for j in (2, 3, 4, 5, 6))
+    assert "near edge" in got[0].why and "sees nearer" in got[0].why
 
 
 def test_hints_never_point_back_at_the_station_that_saw_them():
@@ -260,14 +278,18 @@ def test_one_look_alone_covers_only_a_corner_of_the_workspace():
     """The problem this module exists to solve, pinned as a number."""
     only = [sweep.Look(0.0, REAL_SURVEY, REAL_H)]
     fraction, _missed = sweep.coverage(only, GRASPABLE)
-    assert 0.08 < fraction < 0.17, f"one pose can measure {fraction:.1%}"
+    # 5.9 % since J2 may go below zero (2026-09-23): the envelope grew to 262 mm
+    assert 0.05 < fraction < 0.17, f"one pose can measure {fraction:.1%}"
 
 
 def test_the_ring_multiplies_what_one_look_can_measure():
     one, _ = sweep.coverage([sweep.Look(0.0, REAL_SURVEY, REAL_H)], GRASPABLE)
     many, _ = sweep.coverage(sweep.ring(REAL_SURVEY, REAL_H), GRASPABLE)
     assert many > 4 * one, f"{one:.1%} -> {many:.1%} is not worth the sweep"
-    assert many > 0.45   # 47 % since the J2 floor went to 5 (reach 238 mm)
+    # 40 % since the back-tilted grasp pitches (nearest point 90 mm, a band the
+    # primary ring cannot see and the near look covers); 46 % before them.
+    # 30.5 % since the J2 floor went to -14: a 238..262 mm rim no look sees yet.
+    assert many > 0.29
 
 
 def test_the_ring_fixes_bearing_and_leaves_radius_alone():
@@ -281,8 +303,17 @@ def test_the_ring_fixes_bearing_and_leaves_radius_alone():
     looks = sweep.ring(REAL_SURVEY, REAL_H)
     _fraction, missed = sweep.coverage(looks, GRASPABLE)
     assert len(missed), "if this ever covers everything, tighten the claim"
+    # The sweep spans cfg.SWEEP_SPAN_DEG (160): the wedge past +-80 deg is
+    # graspable (J1 goes to 180) but never looked at, by choice (2026-09-22).
+    bearings = np.degrees(np.arctan2(missed[:, 1], missed[:, 0]))
+    missed = missed[np.abs(bearings) <= sweep.cfg.SWEEP_SPAN_DEG / 2 - 2]
     radii = np.hypot(missed[:, 0], missed[:, 1])
-    assert radii.min() > 0.180, "the blind spot must be the outer rim, not a wedge"
+    # Two rims, never a wedge. The J3 floor of 0 (2026-09-22) added a band at
+    # 122..129 mm the arm can grasp but no station sees: the primary look's
+    # near edge is 129 mm, and nothing at survey height looks nearer.
+    inner, outer = radii[radii < 0.150], radii[radii >= 0.150]
+    assert len(outer) and outer.min() > 0.180, "the far blind spot must be the outer rim"
+    assert (inner < 0.135).all(), "the near blind spot must hug the primary near edge"
 
     # And inside the band it does cover, EVERY bearing must work -- that is the
     # whole point of the ring, and the thing the old single look could not do.
@@ -543,7 +574,9 @@ def test_the_graspable_envelope_is_an_annulus_we_can_state():
     """Numbers quoted in the module docstring."""
     radii = np.hypot(GRASPABLE[:, 0], GRASPABLE[:, 1])
     bearings = np.degrees(np.arctan2(GRASPABLE[:, 1], GRASPABLE[:, 0]))
-    assert radii.min() == pytest.approx(0.131, abs=0.006)
-    assert radii.max() == pytest.approx(0.238, abs=0.006)   # 0.210 with the old J2 floor of 15
+    # 0.131 with the J3 floor at 10, 0.122 at 0, 0.090 with pitches to 190
+    assert radii.min() == pytest.approx(0.090, abs=0.006)
+    # 0.210 with the old J2 floor of 15, 0.238 with 5
+    assert radii.max() == pytest.approx(0.262, abs=0.006)
     assert bearings.min() == pytest.approx(-90, abs=2)   # -80 until J1's ceiling went to 180
     assert bearings.max() == pytest.approx(80, abs=2)

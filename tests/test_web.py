@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from roboarm import camera, detect
+from roboarm import camera, detect, grasp
 from roboarm import config as cfg
 from roboarm import kinematics as kin
 from roboarm.web import server, session, sim
@@ -312,7 +312,10 @@ def test_sweep_lists_what_is_on_the_table(url):
     assert job["status"] == "done", job
     s = get(url, "/api/state")
     labels = [(t["graspable"], t["x_mm"], t["y_mm"]) for t in s["sweep"]["targets"]]
-    assert any(ok and abs(x - 160) < 3 and abs(y - 20) < 3 for ok, x, y in labels)
+    # 5 mm, not 3: the frames come from a camera that is turning, with the yaw
+    # read before and after each (a degree or so, 3 mm at 160 mm); a pick
+    # re-looks from a standstill before it aims.
+    assert any(ok and abs(x - 160) < 5 and abs(y - 20) < 5 for ok, x, y in labels)
     assert any(not ok for ok, _x, _y in labels)
     assert s["arm"]["pose"]["2"] == sim.REAL_SURVEY[2], "returns to the survey pose"
     lines = " ".join(x["text"] for x in get(url, "/api/log?since=0")["lines"])
@@ -375,9 +378,9 @@ def test_the_pose_is_tracked_while_a_job_holds_the_arm(sess, url):
 
 
 def at_drop_pose(block) -> bool:
-    """Under cfg.DROP_POSE's fingertips, give or take the simulator's reach shortfall."""
-    x, y, _z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_OPEN})
-    return abs(block.x - x) < 0.012 and abs(block.y - y) < 0.012
+    """Where drops land -- under cfg.DROP_POSE's fingertips or up to
+    cfg.DROP_SPREAD_M further out -- give or take the simulator's reach shortfall."""
+    return grasp.from_drop_line(block.x, block.y) < 0.012
 
 
 def test_pick_and_drop_moves_the_block(world, url):
@@ -405,17 +408,23 @@ def test_what_lies_at_the_drop_spot_is_never_a_target():
     assert session.Session._plannable(on_table)
 
 
-def test_clear_the_table_sweeps_everything_and_sweeps_again(world, url):
-    """Full sweep, pick what can be picked, full sweep again, stop when it finds
-    nothing left: the 40 mm block is dropped, the 16 mm one is too thin and stays,
-    and the last thing in the log is the empty sweep, not a pick."""
+def test_clear_the_table_picks_as_it_goes_and_walks_the_ring_again(world, url):
+    """Walk the ring, pick at the station that sees something and come back to
+    it, walk again, stop when a round picks nothing: the 40 mm block is dropped,
+    the 16 mm one is too thin and stays, the pick returns to the station rather
+    than to survey, and the last thing in the log is the empty round."""
     post(url, "/api/mode", {"mode": "auto"})
     post(url, "/api/auto/start", {"job": "pickall"})
     job = finished(url, timeout=60)
     assert job["status"] == "done", job
     lines = [x["text"] for x in get(url, "/api/log?since=0")["lines"]]
-    assert sum("round " in x for x in lines) == 2
-    assert any("found nothing left" in x for x in lines)
+    assert sum(x.startswith("round ") for x in lines) == 1   # one ride, no confirming one
+    assert any("return to the station" in x for x in lines)
+    assert not any("return to survey" in x for x in lines)
+    assert "the ring is done" in lines[-2] and "1 picked up" in lines[-2]
+    assert lines[-1].startswith("pickall: done")
+    pose = get(url, "/api/state")["arm"]["pose"]
+    assert pose["2"] == cfg.HOME_POSE[2] and pose["3"] == cfg.HOME_POSE[3], "ends at home"
     moved = [b for b in world.blocks if at_drop_pose(b) and not b.held]
     assert [b.size for b in moved] == [0.040]
     assert all(not b.held for b in world.blocks)

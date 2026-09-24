@@ -5,6 +5,7 @@ part worth catching in a test. The moving itself is covered by test_arm_safety.p
 """
 
 import math
+from dataclasses import replace
 
 import cv2
 import numpy as np
@@ -771,3 +772,110 @@ def test_a_tag_measures_the_objects_height_and_so_a_cubes_width():
     assert cube.width_m == pytest.approx(cube.height_m)
     flat = detect.markers(frame, MM_PER_PIXEL, tag_m=0.026, nadir=NADIR)[0]
     assert flat.height_m is None and flat.width_m == pytest.approx(0.026, abs=0.001)
+
+
+# ------------------------------------------------- top faces that are not square --
+# The depth rung outlines an object's TOP FACE. Read as a square it lost the
+# length of anything longer than wide, and with it which way is narrow: a
+# 30 x 30 x 60 block lying flat (2026-09-24) was taken along its 60 mm nine times.
+
+def block_top(x, y, width, length, yaw_deg, height, nadir=NADIR, lens_m=LENS_M):
+    """The top face of a block `length` along heading `yaw_deg`, `width` across
+    and `height` tall, as it lands on the table plane: magnified about the nadir."""
+    yaw = math.radians(yaw_deg)
+    spin = np.array([[math.cos(yaw), -math.sin(yaw)], [math.sin(yaw), math.cos(yaw)]])
+    a, c = length / 2, width / 2
+    base = np.array([[x, y]]) + np.array([[-a, -c], [a, -c], [a, c], [-a, c]]) @ spin.T
+    grown = lens_m / (lens_m - height)
+    return np.asarray(nadir) + (base - np.asarray(nadir)) * grown
+
+
+def top_target(outline):
+    quad, _width, height, _agreement = detect.range_block(
+        outline, NADIR, LENS_M, outline_is_top=True, rectangular=True)
+    return detect._target_from_quad(quad, "raised", height_m=height)
+
+
+def _heading_diff(a, b):
+    """Difference of two closing lines, which repeat every 180 degrees."""
+    return (a - b + 90) % 180 - 90
+
+
+@pytest.mark.parametrize("yaw", [0, 20, 45, 70, 110, 160])
+def test_a_bar_lying_down_keeps_its_length_and_its_narrow_way(yaw):
+    target = top_target(block_top(0.30, 0.20, 0.030, 0.060, yaw, 0.030))
+    assert target.width_m == pytest.approx(0.030, abs=0.001)
+    assert target.length_m == pytest.approx(0.060, abs=0.0015)
+    assert target.height_m == pytest.approx(0.030, abs=0.001)
+    assert (target.x, target.y) == pytest.approx((0.30, 0.20), abs=0.0015)
+    # angle_deg is the heading of the SHORT axis: across the bar
+    assert abs(_heading_diff(target.angle_deg, yaw + 90)) < 1.0
+
+
+def test_a_cube_top_is_still_a_cube():
+    target = top_target(block_top(0.30, 0.20, 0.030, 0.030, 25, 0.030))
+    assert target.width_m == pytest.approx(0.030, abs=0.001)
+    assert target.length_m == pytest.approx(0.030, abs=0.001)
+
+
+def test_the_fingers_close_across_the_bar_not_along_it():
+    # measured where the synthetic view is, then moved where the arm can reach it
+    target = replace(top_target(block_top(0.30, 0.20, 0.030, 0.060, 30, 0.030)),
+                     x=0.170, y=-0.050)
+    step = grasp.plan(target, reach_offset_m=0.0)
+    across = kin.roll_for(target.angle_deg, step.grasp[1])
+    along = kin.roll_for(target.angle_deg + 90, step.grasp[1])
+    assert step.roll == across != along
+
+
+# ------------------------------------------------------------ spread drops --
+# Each drop lets go up to cfg.DROP_SPREAD_M further out than cfg.DROP_POSE, so the
+# cubes spread along a line instead of landing on each other (2026-09-24).
+
+def _tip(pose):
+    return kin.forward({**pose, cfg.GRIPPER_ID: cfg.GRIPPER_CLOSED})
+
+
+def test_no_spread_is_the_drop_pose_itself():
+    assert grasp.drop_pose(0.0) == cfg.DROP_POSE
+
+
+@pytest.mark.parametrize("extra", [0.010, 0.030, 0.050, 0.080, 0.100])
+def test_a_spread_drop_is_further_out_along_the_same_line_at_the_same_height(extra):
+    pose = grasp.drop_pose(extra)
+    assert cfg.GRIPPER_ID not in pose, "a closing command would squeeze what it holds"
+    x0, y0, z0 = _tip(cfg.DROP_POSE)
+    x, y, z = _tip(pose)
+    assert math.hypot(x, y) - math.hypot(x0, y0) == pytest.approx(extra, abs=0.004)
+    assert math.atan2(y, x) == pytest.approx(math.atan2(y0, x0), abs=math.radians(1.5))
+    assert z == pytest.approx(z0, abs=0.004)
+    assert cfg.mast_clearance(pose) > cfg.MIN_MAST_CLEARANCE_M
+
+
+class _Recorder:
+    def __init__(self):
+        self.moves = []
+
+    def move_to(self, targets, speed_dps=40.0, settle=True, repeatable=False):
+        self.moves.append(dict(targets))
+
+    def set_gripper(self, angle, speed_dps=40.0):
+        self.moves.append({cfg.GRIPPER_ID: angle})
+
+
+def test_drop_goes_a_random_distance_out_and_opens(monkeypatch):
+    monkeypatch.setattr(grasp.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(grasp.random, "uniform", lambda lo, hi: hi)
+    arm = _Recorder()
+    grasp.drop(arm, verbose=False)
+    assert arm.moves == [grasp.drop_pose(cfg.DROP_SPREAD_M), {cfg.GRIPPER_ID: cfg.GRIPPER_OPEN}]
+
+
+def test_the_drop_zone_is_the_whole_line_widened():
+    x0, y0, _z = kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_OPEN})
+    r = math.hypot(x0, y0)
+    out = lambda d: (x0 * (r + d) / r, y0 * (r + d) / r)
+    assert grasp.from_drop_line(x0, y0) == pytest.approx(0.0, abs=1e-9)
+    assert grasp.from_drop_line(*out(cfg.DROP_SPREAD_M)) == pytest.approx(0.0, abs=1e-9)
+    assert grasp.from_drop_line(*out(cfg.DROP_SPREAD_M + 0.050)) == pytest.approx(0.050, abs=1e-6)
+    assert grasp.from_drop_line(*out(-0.030)) == pytest.approx(0.030, abs=1e-6)

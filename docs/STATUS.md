@@ -1,3 +1,310 @@
+# Status, 2026-09-24 (the wrist camera is now a Logitech C930e)
+
+The user replaced the stock Sonix wrist camera with a Logitech Webcam C930e.
+Lab WiFi (robot .210). Branch `drop-pose`, uncommitted at the end, on top of the
+09-22/23 work that was already uncommitted.
+
+## The old camera is kept, one file away
+
+`ROBOARM_CAMERA` (`sonix` | `c930e`, default `c930e`) keys everything
+camera-specific: picture size and V4L2 settings, lens distortion, lens position,
+reach offset, the depth engine, and `data/cameras/<name>/` for the calibration
+and empty-table photos. The Sonix's calibration was copied to
+`data/cameras/sonix/` on the robot BEFORE anything was refitted, and into git as
+`cameras/sonix/table_homography.json`. Going back: `cp cameras/sonix.env .env`,
+recreate bridge and vision, `ROBOARM_CAMERA=sonix` on the laptop
+(`cameras/README.md`). The test suite is pinned to the Sonix (`tests/conftest.py`,
+its fixtures are that camera's data); `tests/test_cameras.py` checks the switch.
+
+## The C930e
+
+* Mounted on arm_link4 (does not roll with J5), looking along the tool; the
+  user's ruler: 85 mm from J4, 50 mm off the axis on top of the arm. Fitted from
+  23 board views the optical centre is 39 mm off (50 is presumably the body),
+  3 mm sideways -- `_LENS` uses 85 / 39 / 0.
+* Its 4:3 sizes are crops. Measured at the survey pose: 640x480 sees 228 x
+  172 mm, every 16:9 size 305 x 171, the whole 3:2 sensor 303 x 204 but only at
+  1 fps uncompressed. So 848x480 MJPG (widest usable view, same px/mm as the
+  640x480 the pipeline was built at). Continuous autofocus hunts on a plain
+  table, so focus is fixed at 45 (sharpest from the survey pose), set on every
+  open because the camera keeps it only until unplugged.
+* Lens distortion undone on capture: a one-view homography was 1.4 mm mean /
+  3.1 mm worst off, 0.8 / 0.95 undistorted. Focal length is not pinned by views
+  that all look down (416 or 501 by model) -- do not read heights off it.
+* Depth rung: new ONNX exported at 518x910 (throwaway `uv run --with torch`
+  env on the laptop, weights from its HF cache), engine built with trtexec in the
+  vision container, 54 MB. `depth.py` reads its input size from the engine and
+  picks the engine by `ROBOARM_CAMERA` (compose passes it to vision).
+
+## Three things found on the way, all fixed
+
+1. **The board had moved 11 mm** to the robot's right since the Sonix was
+   calibrated (paper off and on, or the robot nudged). Found by fingertip probes
+   on five board corners and by the circle the lens draws round J1; after moving
+   `BOARD_Y0` -185.5 -> -196.5 mm a +-60 deg yaw arc puts the J1 axis at
+   (-0.3, +0.6) mm, i.e. on the robot's origin. Forward was right.
+2. **Look poses were not repeatable.** The heavier camera leaves J2..J4 up to
+   two degrees short of a command, on whichever side they came from (J3 read 22
+   from below, 24 from above, same command), and the saved pose was the
+   READBACK, so re-commanding it put the arm lower still: the homography was
+   7..22 mm out on revisits. Now `calibrate_table.py` saves the COMMAND, and
+   `Arm.move_to(repeatable=True)` -- used for every look pose in the session and
+   the calibrate tool -- goes 4 deg past the goal on J2..J4 and comes down onto
+   it. Nudging by the shortfall (tried first) fights the deadband and does not
+   converge. Revisits from home, from a yawed station and from below: 0.5..1.2 mm
+   mean, 1.8 mm worst (one case 3.4).
+3. **Pooling yaws in a fit adds J1's error**: 11 mm worst pooled, ~1 mm from
+   one yaw. The C930e sees 5..9 markers per frame, so every look is fitted at
+   yaw 0 only now. Fits: primary 0.9 mm, outer 0.7, near 0.8 (worst corner).
+
+## Live, with the paper back and five cubes
+
+Sweep: 21 stations in 46 s, the five cubes listed and nothing else plannable.
+One-click pick held (26 mm cube at 131/-33, re-look 2.4 mm from the sweep).
+CLEAR THE TABLE: three more held (landed 2.2 / 1.6 / 8.5 mm from the aim), the
+fourth -- 26 mm cube at 188/+69, 197 mm out -- closed on nothing twice with the
+5 mm reach offset (6 mm, capped). Hovering the tips over the camera's estimate
+showed the camera right to a few mm; the fingertip probes had shown the tips now
+landing 4..8 mm FURTHER than their readback. Offset 0: held first time, passes
+14.3 -> 4.2 -> 2.2 mm. So `REACH_OFFSET_M` is per camera: Sonix 5, C930e 0 --
+one cube's worth of evidence; watch the grips and tune on the panel.
+
+## Later: the 30 x 30 x 60 block (two 30 mm cubes glued), lying flat
+
+CLEAR THE TABLE took it at the tenth attempt, pushing it 20..30 mm each time.
+Two faults, both in detection:
+
+1. **Tops were read as squares.** `range_block` took the short side of the
+   depth rung's top face, solved the cube relation and returned a square, so
+   the grasp (which closes across the narrow way, and treats a square as
+   either way round) closed along the 60 mm half the time -- 5 mm to spare
+   either side of the 70 mm opening. Now the depth rung's outlines are read
+   as RECTANGLES (`detect._range_top_face`): the short side sets the height
+   (a bar lying down is as tall as it is narrow), both sides shrink by the
+   same magnification. Box-only detectors keep the square reading.
+2. **The depth rung cut the block's top to a sliver.** Its edge threshold is
+   8 MADs of the map's gradient; on a clear table that is 0.013, under the
+   slope the model draws across a top face (~0.03), so the whole top was
+   "edge" but for a 57 px strip -- missed from one look, 11 mm wide from the
+   next. A plain floor at 0.05 fixed that frame and lost every cube in a busy
+   one (robot parts in view stretch the normalisation; rims fell under 0.05).
+   So `raised_regions` now runs a second pass at the floor, and a coarse
+   region replaces the fine regions inside it only when there is at most one
+   -- it mends slivers and finds tops the fine pass missed, never merges.
+   Over 63 of the day's frames: nothing lost, 11 frames gained whole objects
+   the old pass missed or cut (checked by eye), the block whole in every view.
+
+Live after both: the block measured 26 mm wide, the fingers turned across it
+(+78 deg, J5 105), held first time; a cube held too. The other two attempts
+went into the DROP TRAY -- dropped cubes, and the blue block lying half out of
+it -- at 92 and 108 mm from the drop point, just outside `DROP_ZONE_M` (80 mm).
+
+## Open
+
+* The drop tray's contents are targets beyond 80 mm of the drop point; widen
+  `session.DROP_ZONE_M` (to ~120 mm) or end the ring short of the tray -- the
+  user's call, it takes a piece of the right-hand workspace with it.
+* The reach passes now swing +-8 mm (short, over, short) where they used to
+  converge -- the same deadband. A repeatable approach inside `_reach_to` would
+  probably fix it; not done, grasp moves are untouched.
+* The CH340 dropped off USB once mid-session (bridge's serial thread died,
+  every servo read empty, stale battery). Cable nudged while the table was set,
+  or the hub: the C930e draws more than the Sonix on the same USB 2 hub and its
+  own port logged a reset earlier. Restart the bridge if it recurs; watch it.
+
+---
+
+# Status, 2026-09-22 ("clear the table" picks as it goes; the tagged cube nobody could see)
+
+Hotspot again (robot 172.20.78.81, laptop .150); the robot had rebooted, bridge
+and vision restarted over paramiko. Branch `drop-pose`, uncommitted at the end.
+
+## Morning: the round-by-round CLEAR THE TABLE, 330 s, "failed" on an empty table
+
+Four cubes. Round 1 listed 4 raised, held 3; the white cube missed after a
+side-station re-look (J1 71, refined 10 mm, passes 17.6 / 7.3 / 7.9, landed
+6.6 mm off and 31 mm up, closed on nothing -- the 2026-09-21 signature). Round
+2 re-found it 19 mm away and held it. Round 3 found a tagged cube at 163/+23
+that rounds 1 and 2 had walked past, held it -- and the job then said FAILED
+at the 3-round cap without a confirming sweep, table empty. Each full sweep
+cost 56..65 s, most of it looking at nothing.
+
+## Afternoon: pick as you go (user's design)
+
+`_job_pickall` now walks the ring and at a station that shows something
+plannable picks the surest, drops, comes BACK TO THAT STATION (2..4 s, was 3.4
+to survey) and looks again; moves on when the station is empty; a miss gets one
+retry from the same station (the failed grasp moves the cube, the new look says
+where); a round that picks nothing ends the job. No hints in the ring walk:
+every bearing gets both looks anyway, and the first live run chained six to
+eight hint looks off the neural rung's edge junk ("server room", "clip art")
+between two regular stations, all empty. Live, with cubes being fed in during
+the run: 6 listed, 6 held (residuals 1.0..6.0 mm), done in 336 s over two
+rounds; an empty round is ~65 s. `PICKALL_ROUNDS` still caps at 3 with the
+message "is someone adding to the table?". 285 tests, ruff clean.
+
+## Why the small tagged cube was missed for two rounds
+
+Round 3's J1=90 primary frame shows it whole, bottom right. Three rungs, three
+reasons: the depth model drew it (bright plateau) but its region ran into the
+frame border and `raised_regions` dropped it as cut off; the neural rung saw it
+clipped; the tag rung decoded the tag but read it as 21.8 mm through the
+homography -- SMALLER than the 26 mm `OBJECT_TAG_M` -- so height None, and
+the unlift about a wrong size put it at 124/0 instead of ~163/+23. Two things
+behind that: the tag printed on the small cube is not 26 mm (about 23 by the
+picture; measure it, and consider a size per tag id), and the primary look's
+homography (8 points, worst residual 0.5 mm, near-affine) under-reads near
+the bottom of its frame. Gate change anyway: a tag that measured ITSELF raised
+(`detect.TAG_RAISED_M`, 10 mm) is kept even when depth has nothing under it.
+
+## Later: one motion per look ("stable movement"), and three panes side by side
+
+The user: the station-by-station move, stop, settle, look is jerky; keep the
+arm moving. `Arm.glide()` starts an interpolated move on a thread of its own
+and returns at once; `read()` answers meanwhile (every SDK call now goes
+through one serial lock, `Arm._io`), `moving()` says whether it is still
+going, `hold()` or any `move_to()` stops it where it is. The bridge allows
+`glide` and `moving`; `SimArm` has the same, stepping one degree per 10 ms
+with time_scale 0, and `SimStream` renders a zero-settle frame on demand so
+the simulated frame is never staler than the robot's (60 ms). In the session,
+`_ride()` drives to a pass's first station, glides to its last at `SCAN_DPS`
+(12 deg/s) and, as each station's yaw goes by, takes the next frame, reads
+the yaw before and after it and hands the frame to the detector with a look
+at the mean yaw. The full sweep and "clear the table" ride; every other pass
+runs backwards so the outer look starts where the primary ended; the one-
+click SEARCH still steps station to station (nearest first, hints). A target
+seen from the moving camera always gets a standstill re-look before the pick
+(`force_refine`). Live: the full sweep took 43.5 s for 16 stations (was
+56..65), primary pass 16 s, outer pass 16 s, read yaws within 2 deg of the
+nominal stations, four objects listed. Scan accuracy: about a degree of yaw
+(3 mm at 160 mm; test tolerance widened to 5 mm), far inside the 20 mm merge.
+`SCAN_DPS` is the knob: faster smears the rolling exposure, untested above 12.
+
+CLEAR THE TABLE with the ride, live: three reachable cubes, three held
+(landed 4.0 / 4.1 / 1.3 mm from the aim), done in 169.7 s -- round 1 with
+the picks 128 s, the empty confirming round 38 s (was ~65). The standstill
+re-look moved the ride's estimates by 1.9..7.9 mm. A tagged cube at 215/+92
+was listed as unreachable and left, correctly.
+
+The page: camera, "how it sees" and the controls are three columns now
+(`.videos { display: contents }`); under 1400 px the two pictures stack again,
+under 1000 px everything does. 287 tests, ruff clean.
+
+## J3 floor 10 -> 0 (user: more range)
+
+The 10 was a margin from the servo end like J2's old 15; the SDK discards
+anything below 0, so 0 is the end of it. Nearest grasp point 132 -> 122 mm,
+grasp grid +6 %, reach 238 mm and ring coverage (46 %) unchanged. The new
+122..129 mm band is grasped but not SEEN: the primary look's near edge is
+129 mm, so the ring's blind spot is now two rims (test re-pinned). Bridge
+recreated with it. The user then drove J3 to 0 by hand (J2 107 at the time).
+J4's floor went 10 -> 0 next, same reason: no change to the grasp envelope
+at all (J4 only aims the tool). Bridge recreated again.
+
+## The near look (third calibrated look), and the tagged cube
+
+The user: the small tagged cube is not detected, nor a small cube 11 cm
+straight ahead. The sweep log says otherwise for the tag: listed every time as
+tag 3 at 213/+91, 232 mm out, REFUSED because its grasp point (239 mm) is past
+the 238 mm reach -- it needs to come 3 cm nearer (and its tag is probably not
+26 mm; the user is asked to measure it). The white cube straight ahead was the
+real gap: at ~125 mm it is graspable since the J3 floor went to 0, but the
+primary look's picture starts at 129 mm, so every station saw it cut off at
+the near edge and nothing listed it.
+
+Fix: a NEAR look. Searched fingertip targets 20..150 mm out, 40..230 up, tool
+150..180, inside the limits and clear of the mast, ranked by how near the
+picture's near edge lands with the lens 150 mm up or more; only possible
+now that J3 goes to 0. Chosen: 110 out / 110 up, tool straight down -> J2 74,
+J3 11, J4 0, lens 236 mm up, nadir 110, 163 mm from the mast. Live frame from
+there: the white cube whole, the base plate's edge at the bottom. Fitted with
+the board (bridge stopped): `calibrate_table.py --look near
+--yaws=-20,-10,0,10,20`, 40 corners, worst residual 6.5 mm, board seen
+59..170 mm forward (predicted 56..166). Verify drove the fingertip to the
+corner at 157/+31 (model 151/+29); the near corners the verify would have
+picked first are inside the 122 mm nearest grasp point, so it now skips to
+the nearest reachable one. `--look {primary,outer,near}` replaces `--outer`
+(kept as an alias). `sweep.hints` now sends a near-edge clip to the nearer
+look (`nearest_of`, the mirror of `reach_of`); 24 stations per sweep; the
+ride does three passes. 288 tests. Bands from the fitted matrices: primary
+110..218, outer 133..266, near 59..179 mm.
+
+## With the near look: the sweep, the back-tilted pitches, and depth over tags
+
+Sweep with three looks (paper and cubes back): 62 s, the white cube listed
+for the first time, at 107/-7 by the near look -- and refused: the nearest
+grasp point was 122 mm. What stops a nearer grasp is not J3 any more but the
+pitch list: straight down needs J3 negative, 140..175 needs J2 negative,
+while pitch 190 (the tool leaning 10 deg BACK toward the base) reaches
+107 mm at J2 23 / J3 19 / J4 34 with 222 mm of mast clearance. So
+`kin.GRASP_PITCHES` gained 185 and 190, tried last: nearest grasp point
+90 mm, +16 % grasp points; not 195 or beyond (74 mm, then 23 mm) because
+nothing models the base plate, whose edge is ~60 mm out. Pins re-set (one
+look 7 %, primary ring 40 %, annulus 90..238).
+
+CLEAR THE TABLE with all of it: 5 held, done in 289 s -- the white cube at
+107 mm picked from the near look in one reach pass, 2.0 mm off. The one miss
+was the tagged cube: the tag rung placed it at 181/-60, closed on nothing,
+and the next look at the same station listed depth's outline at 156/-52 --
+25 mm nearer -- which picked. The tag on that cube is not the 26 mm the rung
+assumes (still to be measured), and a mis-sized tag mis-lifts. So in auto,
+where depth drew a top face within 40 mm of a tag, DEPTH now places and
+sizes the object and the tag only names it (`detect.everything`, test added).
+
+## Evening: four wishes and the rim test
+
+* SWEEP_SPAN_DEG = 160: stations J1 15..165 (7 per look, 21 in all); the
+  J1 180 station only ever saw the pile. J1 still reaches 180 for the drop.
+* With the cube held the trip to the drop pose runs at 60 deg/s
+  (grasp.TRANSIT_DPS), and so does the empty-handed return (RETURN_DPS).
+* Passes go nearest look first: near, primary, outer, alternating direction.
+* A round that picks nothing ends at HOME, not survey.
+
+The rim test (user placed rotated cubes at 214 mm, right and left of
+centre). The sweep listed both from the outer look only, each 7..10 deg off
+its station's centre. Picked by index with a re-look: the right one's
+centred reading was 11 mm from the sweep's (10 deg off centre), the left
+one's 3 mm (7 deg); both held. So the outer look's off-centre reading is
+biased sideways-outward, and the centred re-look corrects it. The reach
+passes cannot see any of this: they compare the joint readback with the
+aim, not with the cube. Where the miss the user described can still happen
+is the one-click search, which used to skip the re-look within 8 deg of
+centred -- at the rim that is ~9 mm. REFINE_IF_OFF_DEG 8 -> 3.
+
+## Late: one round, 140 deg, 16 deg/s, no stops around the drop
+
+User, after stopping a run in its confirming round: one round only; the scan
+a little faster; and the lift, the trip to the drop and the return as one
+motion. So: PICKALL_ROUNDS 1 (the job ends "the ring is done: N picked up;
+going home"); SWEEP_SPAN_DEG 140 (J1 20..160, 7 stations per look, 21);
+SCAN_DPS 16; `Arm.move_to(settle=False)` skips the quarter-second pause and
+the readback, used by the lift (now at TRANSIT_DPS 60), the trip to the drop
+pose and the way back; drop() waits 0.1 s before opening and 0.15 s after,
+and no longer reads the gripper for its log line. Bridge recreated for the
+arm change.
+
+Live CLEAR THE TABLE with all of it: two rim cubes, both held (3.9 and
+2.6 mm from the aim), whole job 96.7 s -- three passes in about 33 s, a
+pick-drop-return cycle about 20 s, home at the end.
+
+After the user's robot reboot (bridge and vision restarted, panel reconnected
+with /api/arm/connect): five cubes, five held first try, 172 s, home at the
+end. Pick-drop-return cycles 17..20 s; the drop 3.5 s, the return 1.1..1.7 s.
+One re-look found nothing within 30 mm and used the sweep's estimate; it
+still held (6.5 mm from the aim).
+
+## Grip on the left
+
+The user saw one left-side cube taken off-centre with the arm turned. Every
+left-side pick today (+77..+88 mm) went through a side re-look at J1 68..74
+with the wrist rolled; all held. Next: a pick test on the left with refine off
+to separate the re-look's estimate from the wrist roll.
+
+Where things were left: arm at survey, torque on, 11.6 V; six cubes in the
+pile at the drop spot; panel on :8091 in manual.
+
+---
+
 # Status, 2026-09-21 evening (the depth rung: Depth Anything V2 Small as a gate)
 
 Branch `drop-pose`, commits after the afternoon's: the "clear the table" job

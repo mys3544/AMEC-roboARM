@@ -12,15 +12,52 @@ import threading
 import time
 
 import cv2
+import numpy as np
 
 from roboarm import config as cfg
 
-# The wrist camera runs about 8 fps and auto-exposes over the first second or so.
-SETTLE_FRAMES = 10
+# The camera auto-exposes over the first second or so after it is opened. Counted in
+# time, not frames: the Sonix ran ~7 fps and the C930e runs 30.
+SETTLE_S = 1.2
 
 
 class CameraError(RuntimeError):
     """The camera gave us nothing usable."""
+
+
+def open_capture(device: int, size: tuple[int, int] | None = cfg.WRIST_CAM_SIZE):
+    """VideoCapture on `device` at `size`, with the fitted camera's settings applied
+    (cfg.WRIST_CAM_PROPS: the C930e's focus is fixed, see there)."""
+    capture = cv2.VideoCapture(device, cv2.CAP_V4L2)
+    props = dict(cfg.WRIST_CAM_PROPS)
+    if "CAP_PROP_FOURCC" in props:  # before the size: the sizes on offer depend on it
+        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*props.pop("CAP_PROP_FOURCC")))
+    if size:
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
+    for name, value in props.items():
+        capture.set(getattr(cv2, name), value)
+    return capture
+
+
+class Undistort:
+    """Takes cfg.WRIST_CAM_LENS's distortion out of a frame; frames of another size
+    (or with no lens model) pass through untouched. The maps are built once.
+    Same pixel scale out as in: the corners lose a few pixels, and the one-pixel
+    sliver the middle of the top edge would be short of is filled from the edge
+    rather than left black, which the depth rung would take for a step."""
+
+    def __init__(self):
+        self._maps = None
+        if cfg.WRIST_CAM_LENS is not None:
+            K, dist = (np.array(v, np.float64) for v in cfg.WRIST_CAM_LENS)
+            self._maps = cv2.initUndistortRectifyMap(K, dist, None, K, cfg.WRIST_CAM_SIZE,
+                                                     cv2.CV_16SC2)
+
+    def __call__(self, frame):
+        if self._maps is None or frame.shape[1::-1] != cfg.WRIST_CAM_SIZE:
+            return frame
+        return cv2.remap(frame, *self._maps, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
 class Stream:
@@ -42,7 +79,7 @@ class Stream:
 
     def __init__(self, device: int | None = None, size: tuple[int, int] | None = None):
         self.device = cfg.WRIST_CAM if device is None else device
-        self.size = size
+        self.size = size or cfg.WRIST_CAM_SIZE
         self._frame = None
         self._seq = 0
         self._cond = threading.Condition()
@@ -65,14 +102,11 @@ class Stream:
             self._thread = None
 
     def _open(self):
-        capture = cv2.VideoCapture(self.device, cv2.CAP_V4L2)
-        if self.size:
-            capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.size[0])
-            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.size[1])
-        return capture
+        return open_capture(self.device, self.size)
 
     def _run(self) -> None:
         capture = self._open()
+        undistort = Undistort()
         failures = 0
         try:
             while not self._stop.is_set():
@@ -93,7 +127,7 @@ class Stream:
                     continue
                 failures = 0
                 self.error = None
-                self.publish(frame)
+                self.publish(undistort(frame))
         finally:
             capture.release()
 
@@ -153,13 +187,18 @@ class Stream:
 def grab(count: int = 1, device: int | None = None) -> list:
     """Return `count` frames, after discarding the ones taken while exposure settles."""
     index = cfg.WRIST_CAM if device is None else device
-    capture = cv2.VideoCapture(index, cv2.CAP_V4L2)
+    capture = open_capture(index)
+    undistort = Undistort()
     frames = []
     try:
-        for taken in range(SETTLE_FRAMES + count):
+        settled = time.monotonic() + SETTLE_S
+        # A dead device fails every read at once; bound the attempts, not the time.
+        for _attempt in range(200 + count):
             ok, frame = capture.read()
-            if ok and taken >= SETTLE_FRAMES:
-                frames.append(frame)
+            if ok and time.monotonic() >= settled:
+                frames.append(undistort(frame))
+                if len(frames) == count:
+                    break
     finally:
         capture.release()
     if len(frames) < count:

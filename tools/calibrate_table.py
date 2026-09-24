@@ -3,8 +3,15 @@
 
     ... calibrate_table.py                 # fit and save the PRIMARY look
     ... calibrate_table.py --verify        # drive the fingertip to a board corner
-    ... calibrate_table.py --outer         # fit the OUTER look as well
-    ... calibrate_table.py --outer --verify
+    ... calibrate_table.py --look outer    # fit the OUTER look as well (--outer works too)
+    ... calibrate_table.py --look near --yaws=-20,-10,0,10,20   # the NEAR look
+    ... calibrate_table.py --look outer --verify
+
+THREE LOOKS since 2026-09-22: the NEAR look sees the band the primary's near
+edge (129 mm) cuts off, which the arm can grasp in since J3's floor went to 0
+(nearest grasp point 122 mm). Its fingertip target is 110 mm out and 110 mm up
+with the tool straight down: lens 236 mm up over a nadir 110 mm out, seeing
+about 56..166 mm by the model, J2 75 / J3 11 / J4 0, 163 mm clear of the mast.
 
 TWO LOOKS, AND WHY. Yawing the base rotates a calibrated look for free -- the table
 is invariant under a rotation about J1, so roboarm/sweep.py turns one calibration
@@ -74,6 +81,16 @@ OUTER_LIFT = 0.125
 # every look it finds, so the name is only for humans and for re-fitting in place.
 OUTER_NAME = "outer"
 
+# The NEAR look, 2026-09-22 (see the module docstring). Searched the same way as
+# the outer: fingertip targets 20..150 mm out, 40..230 mm up, tool 150..180 deg,
+# inside the safe limits and clear of the mast, ranked by how near the picture's
+# near edge lands with the lens at least 150 mm up. 100/110 sees 42..151 mm but
+# sits at J3 = 1; 110/110 straight down is the next and keeps J3 at 11.
+NEAR_FWD = 0.110
+NEAR_LIFT = 0.110
+NEAR_NAME = "near"
+LOOKS = ("primary", OUTER_NAME, NEAR_NAME)
+
 
 def survey_pose() -> dict[int, int]:
     """The pose the homography is fitted from. Its exact height does not matter --
@@ -96,6 +113,19 @@ def outer_pose() -> dict[int, int]:
     return pose
 
 
+def near_pose() -> dict[int, int]:
+    """The third look, close in and straight down. Solved with the tool at 180
+    (down) rather than solve()'s pitch search, so the picture is as square to
+    the table as the arm can hold it; the closed tool length, as above."""
+    pose = kin.inverse(NEAR_FWD, 0.0, -cfg.TABLE_BELOW_PLATE + NEAR_LIFT, 180.0)
+    pose[6] = cfg.GRIPPER_OPEN
+    return pose
+
+
+def look_pose(name: str) -> dict[int, int]:
+    return {"primary": survey_pose, OUTER_NAME: outer_pose, NEAR_NAME: near_pose}[name]()
+
+
 def _spun(points: np.ndarray, degrees: float) -> np.ndarray:
     """Table points turned about the base by `degrees` (+ = left)."""
     turn = math.radians(degrees)
@@ -103,7 +133,7 @@ def _spun(points: np.ndarray, degrees: float) -> np.ndarray:
     return np.asarray(points, dtype=float).reshape(-1, 2) @ spin.T
 
 
-def do_fit(arm: Arm, outer: bool = False, yaws: tuple[float, ...] = (0.0,)) -> int:
+def do_fit(arm: Arm, look: str = "primary", yaws: tuple[float, ...] = (0.0,)) -> int:
     """Fit one look. With several `yaws` the look is fitted from the board seen at
     each of those base yaws, pooled.
 
@@ -119,12 +149,13 @@ def do_fit(arm: Arm, outer: bool = False, yaws: tuple[float, ...] = (0.0,)) -> i
     unyawed look and pooled: one fit, points spread across the whole width of
     the picture, and a residual that now also measures J1's repeatability.
     """
-    pose = outer_pose() if outer else survey_pose()
+    pose = look_pose(look)
+    print(f"the {look} look: pose {pose}")
     reached = None
     pooled_px, pooled_tb = [], []
     for index, yaw in enumerate(yaws):
         at = sweep.pose_at(pose, yaw)
-        here = arm.move_to(at, speed_dps=15)
+        here = arm.move_to(at, speed_dps=15, repeatable=True)
         if yaw == 0.0:
             reached = here
         time.sleep(1.5 if index == 0 else 0.5)
@@ -135,7 +166,14 @@ def do_fit(arm: Arm, outer: bool = False, yaws: tuple[float, ...] = (0.0,)) -> i
             pooled_px.append(pixels)
             pooled_tb.append(_spun(table, -yaw))
     if reached is None:
-        reached = arm.move_to(pose, speed_dps=15)
+        reached = arm.move_to(pose, speed_dps=15, repeatable=True)
+    # SAVED IS THE COMMAND, not the readback: the sweep drives to the saved pose,
+    # and what the arm repeats is a command. With the C930e on the wrist (2026-09-24)
+    # the arm settles a degree or two short of it -- commanded J2 56 / J3 24, read
+    # back 54 / 22 -- so re-commanding the readback put the arm lower still, and the
+    # homography was 7..10 mm out there. The Sonix, lighter, read back within a
+    # degree, which is why its files hold readbacks and got away with it.
+    print(f"commanded {pose}, read back {reached}; saving the command")
     pixels = np.concatenate(pooled_px) if pooled_px else np.empty((0, 2))
     table = np.concatenate(pooled_tb) if pooled_tb else np.empty((0, 2))
     print(f"{len(pixels)} marker corners in all")
@@ -146,15 +184,14 @@ def do_fit(arm: Arm, outer: bool = False, yaws: tuple[float, ...] = (0.0,)) -> i
 
     matrix, worst, n = ws.fit_points(pixels, table)
     frames = camera.grab(1)
-    if outer:
+    if look != "primary":
         # Appended beside the primary rather than replacing it: the primary is the
         # only look validated end to end to 2 mm, and sweep.best_refine() gives it
         # first refusal for exactly that reason.
-        ws.add_look(OUTER_NAME, matrix, reached, worst, n)
+        ws.add_look(look, matrix, pose, worst, n)
     else:
-        ws.save(matrix, reached, worst, n)
-    print(f"fitted the {OUTER_NAME if outer else 'primary'} look on {n} points, "
-          f"worst residual {worst * 1000:.1f} mm")
+        ws.save(matrix, pose, worst, n)
+    print(f"fitted the {look} look on {n} points, worst residual {worst * 1000:.1f} mm")
     print(f"board area seen: {table[:, 0].min() * 1000:.0f}..{table[:, 0].max() * 1000:.0f} mm "
           f"forward, {table[:, 1].min() * 1000:+.0f}..{table[:, 1].max() * 1000:+.0f} mm left")
 
@@ -168,18 +205,17 @@ def do_fit(arm: Arm, outer: bool = False, yaws: tuple[float, ...] = (0.0,)) -> i
     return 0
 
 
-def do_verify(arm: Arm, outer: bool = False) -> int:
+def do_verify(arm: Arm, look: str = "primary") -> int:
     looks = ws.load_all()
-    if outer:
-        chosen = [look for look in looks if look[2] == OUTER_NAME]
+    if look != "primary":
+        chosen = [entry for entry in looks if entry[2] == look]
         if not chosen:
-            print(f"no {OUTER_NAME!r} look saved yet -- run --outer first",
-                  file=sys.stderr)
+            print(f"no {look!r} look saved yet -- run --look {look} first", file=sys.stderr)
             return 1
         matrix, saved_pose, _name = chosen[0]
     else:
         matrix, saved_pose, _name = looks[0]
-    arm.move_to({int(k): v for k, v in saved_pose.items()}, speed_dps=15)
+    arm.move_to({int(k): v for k, v in saved_pose.items()}, speed_dps=15, repeatable=True)
     time.sleep(1.5)
     frames = camera.grab(6)
     frame = frames[-1]
@@ -189,18 +225,25 @@ def do_verify(arm: Arm, outer: bool = False) -> int:
         print("no corners visible", file=sys.stderr)
         return 1
 
-    # Pick the corner nearest the image centre: most reliable, least distorted.
+    # Pick the corner nearest the image centre that the arm can touch: the
+    # centre is the most reliable, least distorted part of the picture, but the
+    # near look's centre (about 120 mm out) is inside the nearest grasp point.
     centre = np.array([frame.shape[1] / 2, frame.shape[0] / 2])
-    pick = int(np.argmin(np.linalg.norm(pixels - centre, axis=1)))
-    target = ws.apply(matrix, [pixels[pick]])[0]
-    print(f"corner at pixel ({pixels[pick][0]:.0f}, {pixels[pick][1]:.0f})")
-    print(f"  -> table {target[0] * 1000:.0f} mm forward, {target[1] * 1000:+.0f} mm left")
-
     z = -cfg.TABLE_BELOW_PLATE + 0.004  # just clear of the paper
-    try:
-        pose, pitch = kin.solve(float(target[0]), float(target[1]), z)
-    except kin.Unreachable as exc:
-        print(f"that corner is not reachable: {exc}", file=sys.stderr)
+    pose = pitch = target = None
+    for pick in np.argsort(np.linalg.norm(pixels - centre, axis=1)):
+        candidate = ws.apply(matrix, [pixels[pick]])[0]
+        print(f"corner at pixel ({pixels[pick][0]:.0f}, {pixels[pick][1]:.0f})"
+              f" -> table {candidate[0] * 1000:.0f} mm forward, {candidate[1] * 1000:+.0f} mm left")
+        try:
+            pose, pitch = kin.solve(float(candidate[0]), float(candidate[1]), z)
+        except kin.Unreachable as exc:
+            print(f"  not reachable ({exc}); the next one")
+            continue
+        target = candidate
+        break
+    if target is None:
+        print("no visible corner is reachable", file=sys.stderr)
         return 1
     pose[6] = cfg.GRIPPER_CLOSED  # closed: fingertips on the axis, easy to eyeball
 
@@ -212,27 +255,30 @@ def do_verify(arm: Arm, outer: bool = False) -> int:
           f"{(tip[2] + cfg.TABLE_BELOW_PLATE) * 1000:.0f} mm above the table")
     print("\nHolding 45s. How far is the fingertip from that corner, and which way?")
     time.sleep(45)
-    arm.move_to({int(k): v for k, v in saved_pose.items()}, speed_dps=15)
+    arm.move_to({int(k): v for k, v in saved_pose.items()}, speed_dps=15, repeatable=True)
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--look", choices=LOOKS, default="primary",
+                        help="which look to fit (or verify): primary, outer or near")
     parser.add_argument("--outer", action="store_true",
-                        help="fit (or verify) the second, further-out look")
+                        help="the same as --look outer")
     parser.add_argument("--yaws", default="0",
                         help="comma-separated base yaws (deg, + = left) to pool the fit "
                              "over, e.g. -24,-12,0,12,24 for a look that sees one marker")
     args = parser.parse_args()
+    look = OUTER_NAME if args.outer else args.look
     yaws = tuple(float(v) for v in args.yaws.split(",") if v.strip())
     if 0.0 not in yaws:
         yaws = (0.0,) + yaws
     try:
         with Arm() as arm:
             if args.verify:
-                return do_verify(arm, args.outer)
-            return do_fit(arm, args.outer, yaws)
+                return do_verify(arm, look)
+            return do_fit(arm, look, yaws)
     except (ArmError, camera.CameraError, ValueError, FileNotFoundError) as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)
         return 1

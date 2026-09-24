@@ -39,7 +39,15 @@
   .modeswitch button.on { background: var(--accent); color: #06111f; font-weight: 700; }
   header .spacer { flex: 1; }
 
-  main { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 12px; padding: 12px; min-height: 0; }
+  /* Three panes side by side: the camera, how the detector sees it, the controls.
+     On a narrower window the two pictures stack; narrower still, everything does. */
+  main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 400px; gap: 12px;
+         padding: 12px; min-height: 0; }
+  .videos { display: contents; }
+  @media (max-width: 1400px) {
+    main { grid-template-columns: minmax(0, 1fr) 400px; }
+    .videos { display: grid; grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; min-height: 0; }
+  }
   @media (max-width: 1000px) { main { grid-template-columns: 1fr; overflow: auto; } }
 
   .video { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: flex;
@@ -53,7 +61,6 @@
                     background: rgba(0,0,0,.55); padding: 4px 8px; border-radius: 6px; }
   .video .targets { padding: 8px 10px; border-top: 1px solid var(--line); max-height: 180px; overflow: auto; }
 
-  .videos { display: grid; grid-template-rows: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; min-height: 0; }
   .video.second .frame { min-height: 160px; }
   .video.second .bar b { font-weight: 600; }
   .video.second .bar .hint { font-size: 12px; color: #8c96a3; }
@@ -105,7 +112,7 @@
   <span class="pill" id="jobpill">idle</span>
   <span class="spacer"></span>
   <button class="primary" id="oneclick" title="Auto detector (tags, colour, neural and depth, each cube sized from its own outline; 'object mm' overrides the size if set), automatic mode, then search, refine, pick and drop at the fixed drop pose">▶ PICK &amp; PLACE THE CUBE</button>
-  <button class="primary" id="clearbtn" title="Auto detector, automatic mode, then a FULL sweep, pick and drop everything found, sweep again; stops only when a full sweep finds nothing left">▶ CLEAR THE TABLE</button>
+  <button class="primary" id="clearbtn" title="Auto detector, automatic mode, then walk every station picking and dropping as it goes, coming back to the station after each drop; stops when a round of the ring picks nothing">▶ CLEAR THE TABLE</button>
   <button class="stop" id="stopbtn" title="Interrupts any move and holds the arm (Esc)">■ STOP / HOLD</button>
 </header>
 
@@ -231,7 +238,7 @@
       <div class="row">
         <button class="primary" data-job="sweep">sweep &amp; detect</button>
         <button class="primary" data-job="pick">pick &amp; place</button>
-        <button class="primary" data-job="pickall" title="a FULL sweep, then pick and drop everything it found, then sweep again; stops only when a full sweep finds nothing left">clear the table</button>
+        <button class="primary" data-job="pickall" title="walk every station picking and dropping as it goes, coming back to the station after each drop; stops when a round of the ring picks nothing">clear the table</button>
         <button data-job="survey">go to survey pose</button>
         <button data-job="background" title="clear the table first: photographs the empty table from every station">capture background</button>
       </div>
