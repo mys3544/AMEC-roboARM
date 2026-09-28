@@ -1,8 +1,9 @@
 # Yahboom ROSMASTER M3 Pro
 
 The lab's second robot. It has the same Jetson board as the X3 Plus but different hardware
-around it, so its software lives in this folder and is changed here; `roboarm/` and `tools/`
-at the top of the repo stay the X3 Plus's, and `tools/sync_robot.py` pushes nothing from here.
+around it, so its software lives in this folder and is changed here. It started on 2026-09-28
+as a copy of the X3 Plus software (below); `roboarm/` and `tools/` at the top of the repo stay
+the X3 Plus's, and their `sync_robot.py` pushes nothing from here.
 
 ## The robot
 
@@ -17,6 +18,29 @@ at the top of the repo stay the X3 Plus's, and `tools/sync_robot.py` pushes noth
   (`ros2 launch yahboomcar_ctrl yahboomcar_joy_launch.py`) and a sensor self-check, on ROS 2
   Humble with `ROS_DOMAIN_ID=30` and the workspace `~/yahboomcar_ws`. Restarting the desktop
   (gdm3) or logging out stops them until the session is back; a reboot brings them all up.
+
+## The software, copied from the X3 Plus
+
+`roboarm/`, `tools/`, `tests/`, `vision_service/`, `docker/`, `cameras/` and the project files
+(`pyproject.toml`, `uv.lock`, `compose.yaml`, `.dockerignore`, `.gitignore`) are the X3
+Plus's as of commit 1f94700, byte for byte, except that nothing here points at the X3 Plus:
+`tools/sync_robot.py` pushes to this robot, 192.168.73.66, and the examples in
+`tools/webapp.py` and `tools/hwbridge.py` name it. Left out: the X3's docs and README, and
+`tools/wifi_hop.ps1`, its old WiFi workaround (`tools/open_hotspot.py` is the M3's).
+
+All of it still assumes the X3 Plus's hardware -- the arm and its kinematics, the Rosmaster
+board through Rosmaster_Lib on `/dev/ttyUSB0`, the wrist camera and its calibration -- until
+it is changed here for the M3 Pro.
+
+Work from this folder; it has its own `pyproject.toml` and `uv.lock`, so its own `.venv`:
+
+```bash
+cd m3pro
+uv sync --frozen
+uv run --frozen python -m pytest -q     # `python -m` so that roboarm/ here is imported
+uv run --frozen ruff check roboarm tools tests vision_service
+python tools/sync_robot.py              # system Python (paramiko): push to ~/roboarm on the M3
+```
 
 ## Network: lab WiFi at boot, hotspot off
 
@@ -35,7 +59,7 @@ sudo nmcli connection modify Hotspot connection.autoconnect yes
 
 ## Desktop with or without a monitor
 
-The X3 Plus's setup, installed unchanged: `../tools/display_setup.sh` with
+The X3 Plus's setup, installed unchanged: `tools/display_setup.sh` with
 `20-headless-virtual.conf` and `monitors.xml` next to it, as `install DP-1` (DP-1 is the
 physical port on this carrier too). Copies are on the robot in `~/display_setup`, and
 `bash ~/display_setup/display_setup.sh check` shows what Xorg, Mutter and VNC see.
@@ -50,7 +74,7 @@ Verified 2026-09-28:
 - The first line of `check`, `/sys/class/drm/card1-DP-1` from the kernel, goes stale while X
   runs; trust the Xorg and xrandr lines below it.
 
-## Tools
+## WiFi tools (M3 only)
 
 These were needed while the robot was reachable only on its own hotspot, which has no
 internet: each hops this Windows laptop's WiFi over to ROSMASTER, does its job and comes back
