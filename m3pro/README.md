@@ -1,0 +1,66 @@
+# Yahboom ROSMASTER M3 Pro
+
+The lab's second robot. It has the same Jetson board as the X3 Plus but different hardware
+around it, so its software lives in this folder and is changed here; `roboarm/` and `tools/`
+at the top of the repo stay the X3 Plus's, and `tools/sync_robot.py` pushes nothing from here.
+
+## The robot
+
+- **Board:** Jetson Orin NX Engineering Reference Developer Kit Super, the X3 Plus's carrier.
+  Ubuntu 22.04.5, L4T R36.4.4 (JetPack 6), GNOME 42 on X11, `jetson` logs in automatically.
+- **Network:** IISLab-AMEC at 192.168.73.66 (DHCP; the same address over two reboots so
+  far), with internet. `ssh jetson@192.168.73.66` with the factory password; sudo asks for it.
+- **Hostname** `yahboom`, the same as the X3 Plus: use the address, not `yahboom.local`.
+- **Its own software runs in the desktop session.** `~/.config/autostart` starts the micro-ROS
+  agent on `/dev/myserial` at 2 Mbaud (the base controller; the X3 Plus talks to its board
+  through Rosmaster_Lib on `/dev/ttyUSB0` instead), the joystick controller
+  (`ros2 launch yahboomcar_ctrl yahboomcar_joy_launch.py`) and a sensor self-check, on ROS 2
+  Humble with `ROS_DOMAIN_ID=30` and the workspace `~/yahboomcar_ws`. Restarting the desktop
+  (gdm3) or logging out stops them until the session is back; a reboot brings them all up.
+
+## Network: lab WiFi at boot, hotspot off
+
+Out of the box the robot starts its own hotspot, SSID ROSMASTER at 192.168.8.88, with no
+internet. Since 2026-09-28 it joins IISLab-AMEC at boot instead (`tools/lab_wifi.py`, checked
+with a reboot). The hotspot, NetworkManager connection `Hotspot`, is still configured but not
+started, and it has no password any more (`tools/open_hotspot.py`): turned on again, it is an
+open network. If IISLab-AMEC is unavailable the robot tries its other saved networks
+(MIFI-5BE2, Pi_Hot, ROSMASTER-A1) and otherwise stays offline; then get in over Ethernet, or
+with a screen and keyboard. To start the hotspot at boot again, run on the robot and reboot:
+
+```bash
+sudo nmcli connection modify IISLab-AMEC connection.autoconnect no
+sudo nmcli connection modify Hotspot connection.autoconnect yes
+```
+
+## Desktop with or without a monitor
+
+The X3 Plus's setup, installed unchanged: `../tools/display_setup.sh` with
+`20-headless-virtual.conf` and `monitors.xml` next to it, as `install DP-1` (DP-1 is the
+physical port on this carrier too). Copies are on the robot in `~/display_setup`, and
+`bash ~/display_setup/display_setup.sh check` shows what Xorg, Mutter and VNC see.
+Verified 2026-09-28:
+
+- **No monitor at boot:** a 1920x1080 virtual screen, VNC on 5900 (password) and RDP on 3389
+  from gnome-remote-desktop.
+- **Monitor plugged in while running:** the desktop appears on it, no restart (an HP P244).
+  GNOME keeps the virtual screen's 1920x1080@60 layout until the next boot with the monitor
+  attached, so a monitor whose native mode is not 1080p only gets its own modes then.
+- **Not tried yet:** unplugging while running.
+- The first line of `check`, `/sys/class/drm/card1-DP-1` from the kernel, goes stale while X
+  runs; trust the Xorg and xrandr lines below it.
+
+## Tools
+
+These were needed while the robot was reachable only on its own hotspot, which has no
+internet: each hops this Windows laptop's WiFi over to ROSMASTER, does its job and comes back
+to IISLab-AMEC in one run, and the robot undoes the change by itself unless the laptop
+confirms it can still reach it. Run them with the system Python 3.12 (it has paramiko); the
+SSH password comes from `ROBOARM_SSH_PASSWORD` or is asked for.
+
+- `tools/open_hotspot.py`, robot half `open_hotspot.sh`: takes the password off the hotspot;
+  `--check` only shows it. It also holds the WiFi-hop helpers the other tool uses.
+- `tools/lab_wifi.py`, robot half `lab_wifi.sh`: makes IISLab-AMEC the boot network and stops
+  the hotspot, with the lab passphrase read from this laptop's saved WiFi profile.
+
+On the robot they log to `/var/log/m3pro-open-hotspot.log` and `/var/log/m3pro-lab-wifi.log`.
