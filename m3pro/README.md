@@ -30,7 +30,17 @@ Plus's as of commit 1f94700, byte for byte, except that nothing here points at t
 
 All of it still assumes the X3 Plus's hardware -- the arm and its kinematics, the Rosmaster
 board through Rosmaster_Lib on `/dev/ttyUSB0`, the wrist camera and its calibration -- until
-it is changed here for the M3 Pro.
+it is changed here for the M3 Pro. Two differences are known already:
+
+- **Serial:** on the M3 Pro, `/dev/ttyUSB0` (`/dev/myserial`, a CP210x) is the micro-ROS base
+  board, held by the micro-ROS agent. The copied arm code must not open it until it is
+  rewritten for this robot.
+- **Cameras:** a depth camera (an Orbbec; its ROS 2 driver is in
+  `~/yahboomcar_ws/src/OrbbecSDK_ROS2`) and an RGB camera that differs from the X3 Plus's.
+  Neither was plugged in on 2026-09-28. The camera-specific code is `roboarm/config.py`
+  (`ROBOARM_CAMERA` and the lens geometry), `roboarm/camera.py`, the profiles in `cameras/`,
+  and `vision_service/depth.py`, which estimates depth from one RGB frame and could use the
+  real depth camera instead.
 
 Work from this folder; it has its own `pyproject.toml` and `uv.lock`, so its own `.venv`:
 
