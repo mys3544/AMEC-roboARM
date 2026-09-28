@@ -92,8 +92,8 @@ to IISLab-AMEC in one run, and the robot undoes the change by itself unless the 
 confirms it can still reach it. Run them with the system Python 3.12 (it has paramiko); the
 SSH password comes from `ROBOARM_SSH_PASSWORD` or is asked for.
 
-- `tools/open_hotspot.py`, robot half `open_hotspot.sh`: takes the password off the hotspot;
-  `--check` only shows it. It also holds the WiFi-hop helpers the other tool uses.
+- `tools/open_hotspot.py`, robot half `open_hotspot.sh`: takes the password off the hotspot,
+  and holds the WiFi-hop helpers the other tool uses.
 - `tools/lab_wifi.py`, robot half `lab_wifi.sh`: makes IISLab-AMEC the boot network and stops
   the hotspot, with the lab passphrase read from this laptop's saved WiFi profile.
 

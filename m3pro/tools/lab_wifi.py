@@ -65,12 +65,10 @@ def lab_passphrase() -> str:
 
 def keyfile(passphrase: str) -> str:
     """NetworkManager keyfile for the lab WiFi; switch turns its autoconnect on."""
-    psk = passphrase.replace("\\", "\\\\")
-    psk = "\\s" + psk[1:] if psk.startswith(" ") else psk
     return (f"[connection]\nid={LAB}\nuuid={uuid.uuid5(uuid.NAMESPACE_DNS, LAB)}\ntype=wifi\n"
             "autoconnect=false\n\n"
             f"[wifi]\nmode=infrastructure\nssid={LAB}\ncloned-mac-address=permanent\n\n"
-            f"[wifi-security]\nkey-mgmt=wpa-psk\npsk={psk}\n\n"
+            f"[wifi-security]\nkey-mgmt=wpa-psk\npsk={passphrase}\n\n"
             "[ipv4]\nmethod=auto\nmay-fail=false\n\n"
             "[ipv6]\naddr-gen-mode=stable-privacy\nmethod=auto\n")
 
@@ -147,12 +145,8 @@ def switch_to_lab(keeper: Keeper, password: str, passphrase: str) -> int:
             return 0
         time.sleep(2)
 
-    print(f"no answer from {lab_ip}; the robot puts its hotspot back after {CONFIRM_WAIT} s")
-    time.sleep(max(0.0, started + CONFIRM_WAIT + 30 - time.monotonic()))
-    if reach(keeper, WAYS_IN, time.monotonic() + 90):
-        client = ssh(password)
-        print(last_run(client))
-        client.close()
+    print(f"no answer from {lab_ip}; the robot turns its hotspot back on after "
+          f"{CONFIRM_WAIT} s and logs why in {LOG}")
     return 1
 
 
@@ -164,7 +158,7 @@ def main() -> int:
     try:
         return switch_to_lab(keeper, password, passphrase)
     finally:
-        keeper.hold(None)
+        keeper.profile = None
         if not answers(INTERNET, 3):
             go_home(keeper)
 

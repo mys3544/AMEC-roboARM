@@ -1,7 +1,6 @@
 """Take the password off the Yahboom M3 Pro's own hotspot, so ROSMASTER becomes an open network.
 
-    python m3pro/tools/open_hotspot.py            # remove the password
-    python m3pro/tools/open_hotspot.py --check    # only show it; exit 0 when it is open
+    python m3pro/tools/open_hotspot.py
 
 The M3 Pro is reachable only on its own hotspot (ROSMASTER, 192.168.8.88), which has no
 internet, so anything that itself needs the internet -- Claude Code, for one -- has to do
@@ -23,7 +22,6 @@ Runs with the SYSTEM Python 3.12 (it has paramiko). The SSH password comes from
 ROBOARM_SSH_PASSWORD, or is asked for before the laptop leaves its network.
 """
 
-import argparse
 import ctypes
 import getpass
 import os
@@ -117,35 +115,29 @@ def answers(address: tuple[str, int], timeout: float = 2.0) -> bool:
 
 
 class Keeper(threading.Thread):
-    """Holds the laptop on the profile it is given: Windows drifts back to a network
+    """Holds the laptop on `profile` while it is set: Windows drifts back to a network
     that has internet, and the robot restarts its hotspot in the middle of the job."""
 
     def __init__(self):
         super().__init__(daemon=True)
-        self.lock = threading.Lock()
         self.profile = None
-
-    def hold(self, profile: str | None):
-        with self.lock:   # once this returns, no re-join to the old profile is in flight
-            self.profile = profile
 
     def run(self):
         misses = 0
         while True:
             time.sleep(3)
-            ok = answers((ROBOT, 22))
-            with self.lock:
-                if self.profile is None or ok:
-                    misses = 0
-                elif (misses := misses + 1) >= 3:
-                    wlan_connect(self.profile)
-                    misses = 0
+            profile = self.profile   # read once: the main thread may clear it meanwhile
+            if profile is None or answers((ROBOT, 22)):
+                misses = 0
+            elif (misses := misses + 1) >= 3:
+                wlan_connect(profile)
+                misses = 0
 
 
 def join(keeper: Keeper, way: str, timeout: float) -> bool:
     """Join ROSMASTER one way and wait until the robot's SSH port answers."""
     print(f"joining {SSID} ({way})", flush=True)
-    keeper.hold(PROFILES[way])
+    keeper.profile = PROFILES[way]
     start = time.monotonic()
     rc = wlan_connect(PROFILES[way])
     if rc:
@@ -172,7 +164,7 @@ def reach(keeper: Keeper, ways: list[str], until: float) -> str | None:
 
 
 def go_home(keeper: Keeper) -> bool:
-    keeper.hold(None)
+    keeper.profile = None
     print(f"back to {HOME}", flush=True)
     for _ in range(3):
         wlan_connect(HOME)
@@ -209,14 +201,14 @@ def upload(client: paramiko.SSHClient, local: pathlib.Path, remote: str):
     sftp.close()
 
 
-def open_hotspot(keeper: Keeper, password: str, check_only: bool) -> int:
+def open_hotspot(keeper: Keeper, password: str) -> int:
     way = reach(keeper, ["with passphrase", "open"], time.monotonic() + 120)
     if way is None:
         print(f"{SSID} did not answer: is the robot on and in range?")
         return 1
     client = ssh(password)
     upload(client, SCRIPT, REMOTE)
-    if check_only or way == "open":
+    if way == "open":
         code = as_root(client, password, f"bash {REMOTE} check")
         client.close()
         return code
@@ -229,16 +221,10 @@ def open_hotspot(keeper: Keeper, password: str, check_only: bool) -> int:
     # The robot now restarts its hotspot without a password, which drops this link, and
     # waits CONFIRM_WAIT s for a client to come back on the open network.
     started = time.monotonic()
-    keeper.hold(PROFILES["open"])
-    while answers((ROBOT, 22)):
-        if time.monotonic() - started > 40:
-            print("the hotspot never restarted")
-            client = ssh(password)
-            as_root(client, password, f"tail -n 20 {LOG}")
-            client.close()
-            return 1
+    keeper.profile = PROFILES["open"]
+    while answers((ROBOT, 22)) and time.monotonic() - started < 40:
         time.sleep(1)
-    print(f"the hotspot went down after {time.monotonic() - started:.0f} s", flush=True)
+    print(f"waited {time.monotonic() - started:.0f} s for the hotspot to restart", flush=True)
     if reach(keeper, ["open"], started + CONFIRM_WAIT - 10):
         client = ssh(password)
         client.exec_command(f"touch {CONFIRM}")[1].channel.recv_exit_status()
@@ -248,25 +234,17 @@ def open_hotspot(keeper: Keeper, password: str, check_only: bool) -> int:
         client.close()
         return code
 
-    print(f"could not join {SSID} without a password; the robot puts it back after "
-          f"{CONFIRM_WAIT} s, waiting for that")
-    time.sleep(max(0.0, started + CONFIRM_WAIT + 40 - time.monotonic()))
-    if reach(keeper, ["with passphrase", "open"], time.monotonic() + 90):
-        client = ssh(password)
-        as_root(client, password, f"tail -n 20 {LOG}")
-        client.close()
+    print(f"could not join {SSID} without a password; the robot puts the password back "
+          f"after {CONFIRM_WAIT} s and logs why in {LOG}")
     return 1
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Remove the password from the M3 Pro's hotspot.")
-    parser.add_argument("--check", action="store_true", help="only show how the hotspot is set up")
-    args = parser.parse_args()
     password = os.environ.get("ROBOARM_SSH_PASSWORD") or getpass.getpass(f"{USER}@{ROBOT} password: ")
     keeper = Keeper()
     keeper.start()
     try:
-        return open_hotspot(keeper, password, args.check)
+        return open_hotspot(keeper, password)
     finally:
         go_home(keeper)
 
