@@ -56,6 +56,8 @@ def main() -> int:
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(HOST, username=USER, password=password, look_for_keys=False, timeout=15)
     files = local_files()
+    # run() works inside REMOTE, so it must exist first (the M3 had none until 2026-09-30)
+    client.exec_command(f"mkdir -p {REMOTE}")[1].channel.recv_exit_status()
     _code, out, _err = run(client, "sha256sum " + " ".join(sorted(files)) + " 2>/dev/null",
                            echo=False)
     remote = {}
