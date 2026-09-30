@@ -148,6 +148,12 @@ class M3Card extends Card {
       this.act(on ? `auto loop started${stepwise ? ', stop and go' : ''}` : 'auto loop stopped',
         call(this.robot, 'api/auto', stepwise ? { on, step: 0.5 } : { on }));
     };
+    this.surveyButton = $('.survey', controls);
+    this.surveyButton.onclick = () => {
+      const stepwise = $('.stepwise input', controls).checked;
+      this.act(`survey started${stepwise ? ', stop and go' : ''}`, call(this.robot, 'api/auto',
+        stepwise ? { on: true, plan: 'survey', step: 0.5 } : { on: true, plan: 'survey' }));
+    };
     this.goButton = $('.go', controls);
     this.goButton.onclick = () =>
       this.act('auto loop goes on', call(this.robot, 'api/auto', { resume: true }));
@@ -216,7 +222,9 @@ class M3Card extends Card {
     });
     this.autoButton.classList.toggle('on', s.auto !== null);
     this.autoButton.textContent = s.auto
-      ? `Auto: point ${s.auto[0] + 1} of ${s.auto[1]} (click to stop)` : 'Auto: loop the arena';
+      ? `Auto ${s.plan}: ${s.plan === 'survey' ? 'station' : 'point'} ${s.auto[0] + 1} of ${s.auto[1]} (click to stop)`
+      : 'Auto: loop the arena';
+    this.surveyButton.hidden = s.auto !== null;
     const f = s.fence;
     $('.facts', this.el).textContent = [
       `pose     ${s.pose ? `x ${s.pose[0].toFixed(2)}  y ${s.pose[1].toFixed(2)}  ${s.pose[2].toFixed(0)} deg` : 'none yet'}`,
@@ -225,6 +233,7 @@ class M3Card extends Card {
         `     lidar ${s.scan_age_s !== null && s.scan_age_s < 0.5 ? 'ok' : 'STALE'}` +
         `     battery ${s.battery_v ?? '-'} V`,
       `fence    ${f ? `${f.size_m[0].toFixed(3)} x ${f.size_m[1].toFixed(3)} m${f.complete ? '' : ' (a wall not seen yet)'}, ${f.blobs} landmarks` : 'not fitted yet'}`,
+      ...(s.plan === 'survey' ? [`station  ${s.recording ? 'standing: the sharp frames' : 'on the way'}`] : []),
     ].join('\n');
   }
 }
@@ -277,8 +286,20 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
     this.el = $('#cloud-card').content.firstElementChild.cloneNode(true);
     this.scene = $('.scene', this.el);
     this.pick = $('.pick', this.el);
-    this.viewer = import('./cloud.js').then(m => m.viewer($('canvas', this.el)));   // WebGL only when shown
+    this.print = $('.print', this.el);
+    this.clouds = [];
+    this.facts = { scan: [], floor: '' };
+    this.viewer = import('./cloud.js').then(m => m.viewer($('.gl', this.el)));   // WebGL only when shown
     this.viewer.catch(e => this.fail(e));
+    this.shown = [...this.el.querySelectorAll('[data-show]')];   // 3D, or the floor print
+    this.shown.forEach(b => {
+      b.onclick = () => {
+        this.shown.forEach(c => c.classList.toggle('on', c === b));
+        this.el.classList.toggle('floor', b.dataset.show === 'floor');
+        store.set('console.cloud.show', b.dataset.show);
+      };
+    });
+    this.shown.find(b => b.dataset.show === store.get('console.cloud.show', '3d'))?.click();
     $('.popout', this.el).onclick = () => window.open('/?solo=cloud', 'cloud', 'width=1100,height=860');
     $('.home', this.el).onclick = () => this.viewer.then(v => v.reset());
     const colours = [...this.el.querySelectorAll('[data-colour]')];
@@ -312,7 +333,7 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
 
   async list() {
     try {
-      const clouds = await (await fetch('/clouds.json')).json();
+      const clouds = this.clouds = await (await fetch('/clouds.json')).json();
       this.pick.replaceChildren(...clouds.map(c =>
         new Option(`${c.name}, ${c.written}, ${(c.bytes / 1e6).toFixed(1)} MB`, c.name)));
       if (!clouds.length) {
@@ -331,6 +352,7 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
     store.set('console.cloud', name);
     this.pick.querySelector('option[value=""]')?.remove();   // a file opened from this computer
     const token = this.token = {};   // a later choice wins over a slower earlier one
+    this.setPrint(this.clouds.find(c => c.name === name)?.floor);
     this.message(`loading ${name}...`);
     try {
       const reply = await fetch(`/clouds/${encodeURIComponent(name)}`);
@@ -349,6 +371,7 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
     const option = new Option(`${file.name} (this computer)`, '', true, true);
     option.disabled = true;
     this.pick.prepend(option);
+    this.setPrint(null);
     this.message(`reading ${file.name}...`);
     try {
       const buffer = await file.arrayBuffer();
@@ -363,14 +386,51 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
     const { count, size } = (await this.viewer).load(buffer);
     this.message('');
     $('.note', this.el).textContent = `${count.toLocaleString('en')} points`;
-    $('.facts', this.el).textContent = [
+    this.facts.scan = [
       `scan     ${name}`,
       `points   ${count.toLocaleString('en')}, ${(buffer.byteLength / 1e6).toFixed(1)} MB, ` +
         `on screen in ${Math.round(performance.now() - t0)} ms`,
       `extent   ${size.map(v => v.toFixed(2)).join(' x ')} m  (x y z, 1st to 99th percentile)`,
-    ].join('\n');
+    ];
+    this.writeFacts();
     log(`3D scan: ${name}, ${count.toLocaleString('en')} points`);
   }
+
+  setPrint(file) {
+    // The floor print exported with the scan (1 cm a pixel, the map's x to the right), turned a
+    // quarter to the left when it stands upright, so that it lies as the 3D view starts: the
+    // long side across, the same way round.
+    this.printFile = file;
+    const floorButton = this.shown.find(b => b.dataset.show === 'floor');
+    floorButton.disabled = !file;
+    floorButton.title = file ? '' : 'no floor print with this scan';
+    if (!file && this.el.classList.contains('floor')) this.shown[0].click();
+    this.print.width = this.print.height = 0;
+    this.facts.floor = `floor    ${file ? `${file}, loading` : 'no print with this scan'}`;
+    this.writeFacts();
+    if (!file) return;
+    const image = new Image();
+    image.onload = () => {
+      if (file !== this.printFile) return;   // another scan chosen meanwhile
+      const turn = image.height > image.width;
+      this.print.width = turn ? image.height : image.width;
+      this.print.height = turn ? image.width : image.height;
+      const ctx = this.print.getContext('2d');
+      if (turn) { ctx.translate(0, this.print.height); ctx.rotate(-Math.PI / 2); }
+      ctx.drawImage(image, 0, 0);
+      this.facts.floor = `floor    ${file}, ${(image.width / 100).toFixed(2)} x ` +
+        `${(image.height / 100).toFixed(2)} m at 1 cm a pixel${turn ? ' (shown turned a quarter left)' : ''}`;
+      this.writeFacts();
+    };
+    image.onerror = () => {
+      if (file !== this.printFile) return;
+      this.facts.floor = `floor    ${file} did not load`;
+      this.writeFacts();
+    };
+    image.src = `/clouds/${encodeURIComponent(file)}`;
+  }
+
+  writeFacts() { $('.facts', this.el).textContent = [...this.facts.scan, this.facts.floor].join('\n'); }
 
   message(text) { $('.nosignal', this.el).textContent = text; }
 

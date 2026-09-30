@@ -157,6 +157,7 @@ export function viewer(canvas) {
     gl.clearColor(0.055, 0.067, 0.086, 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     if (!count || !w || !h) return;
+    if (!cam) return api.reset();   // loaded while hidden: home, now that the picture has a size
     const { target, az, el, dist } = cam;
     const eye = [target[0] + dist * Math.cos(el) * Math.cos(az), target[1] + dist * Math.cos(el) * Math.sin(az),
       target[2] + dist * Math.sin(el)];
@@ -254,6 +255,7 @@ export function viewer(canvas) {
     },
     reset() {   // back home, at the distance that fits the scan into the picture as it is shaped now
       if (!home) return;
+      if (!canvas.clientWidth || !canvas.clientHeight) { cam = null; return; }   // hidden: later
       const t = 2 * Math.tan(fov / 2), aspect = canvas.clientWidth / canvas.clientHeight || 1;
       // 1.45: room for the walls, and the near side is drawn larger than the far one
       const dist = 1.45 * Math.max(home.deep * Math.sin(home.el) / t, home.across / (t * aspect));

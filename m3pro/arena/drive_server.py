@@ -6,7 +6,8 @@
 The ROS side of the drive page: it feeds drive_core.Driver -- the page's logic, its safety
 limits and its web API -- with /scan, /map, /battery and the map -> base_footprint pose, and
 publishes its commands on /cmd_vel. It owns /cmd_vel only while it commands, so the gamepad
-works whenever it is idle.
+works whenever it is idle. RTAB-Map is not paused while a survey moves: it lost its map that
+way (2026-09-30); the export picks the frames taken standing instead.
 """
 
 import math

@@ -11,7 +11,8 @@ The page (index.html, console.js, console.css) talks to each robot's own web API
 through here as /robot/<id>/<path> -- the X3's panel sends no CORS headers, and one origin keeps
 the page simple; camera frames and maps come straight from the robots, which images may. The
 3D view gets the M3's exported scans from this laptop: /clouds.json lists the PLY files in
-m3pro/out/arena/rtab (where `arena_map.py rtab-export` puts them), /clouds/<name> is one. The
+m3pro/out/arena/rtab (where `arena_map.py rtab-export` puts them), each with its floor print if
+there is one, and /clouds/<name> is one of those files (.ply or .png). The
 console listens on localhost only: it is this laptop's (and a microphone needs localhost).
 Standard library only.
 """
@@ -40,6 +41,7 @@ FAKES = [   # --fake starts these; robots.fake.json points at them
 ]
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".json": "application/json"}
+CLOUD_TYPES = {".ply": "application/octet-stream", ".png": "image/png"}   # scans, floor prints
 GET_TIMEOUT, POST_TIMEOUT = 3, 30   # s; a POST may move an arm before it answers
 
 
@@ -80,10 +82,10 @@ def make_handler(robots, clouds=CLOUDS):
 
         def cloud(self, name):
             file = (clouds / name).resolve()
-            if file.parent != clouds.resolve() or file.suffix != ".ply" or not file.is_file():
+            if file.parent != clouds.resolve() or file.suffix not in CLOUD_TYPES or not file.is_file():
                 return self.error(404, "not found")
             self.send_response(200)   # streamed: a full-size export is tens of MB
-            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Type", CLOUD_TYPES[file.suffix])
             self.send_header("Content-Length", str(file.stat().st_size))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -119,11 +121,15 @@ def make_handler(robots, clouds=CLOUDS):
 
 
 def list_clouds(folder):
-    """The PLY files in the folder, newest first: name, size and when each was written."""
+    """The PLY files in the folder, newest first: name, size, when each was written, and the
+    floor print exported with it (NAME_arena.ply -> NAME_floor.png), or None."""
     files = sorted(folder.glob("*.ply"), key=lambda f: f.stat().st_mtime, reverse=True)
+    prints = [f.with_name(f.name.removesuffix("_arena.ply").removesuffix(".ply") + "_floor.png")
+              for f in files]
     return [{"name": f.name, "bytes": f.stat().st_size,
-             "written": time.strftime("%Y-%m-%d %H:%M", time.localtime(f.stat().st_mtime))}
-            for f in files]
+             "written": time.strftime("%Y-%m-%d %H:%M", time.localtime(f.stat().st_mtime)),
+             "floor": floor.name if floor.is_file() else None}
+            for f, floor in zip(files, prints)]
 
 
 class Server(ThreadingHTTPServer):

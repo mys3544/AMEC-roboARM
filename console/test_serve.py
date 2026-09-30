@@ -1,6 +1,6 @@
 """console/serve.py against a pretend robot: JSON passes through both ways, an unreachable
 robot is a 502 with a reason, and nothing outside console/ is served; of the 3D scans, only the
-PLY files in their own folder.
+PLY files and floor prints in their own folder.
 
     python -m pytest console
 """
@@ -77,21 +77,26 @@ def test_the_console_passes_json_through_and_serves_only_its_own_files():
     assert fetch(f"{base}/../README.md")[0] == 404
 
 
-def test_the_clouds_are_the_ply_files_in_their_folder_and_nothing_else(tmp_path):
+def test_the_clouds_are_the_scans_and_floor_prints_in_their_folder_and_nothing_else(tmp_path):
     clouds = tmp_path / "rtab"
     (clouds / "sub").mkdir(parents=True)
     (clouds / "arena_arena.ply").write_bytes(b"ply " + bytes(range(256)) * 400)
     (clouds / "arena_floor.png").write_bytes(b"png")
+    (clouds / "arena_camera_poses.txt").write_bytes(b"poses")
+    (clouds / "old.ply").write_bytes(b"ply ")   # a scan without a floor print
     (clouds / "sub" / "deeper.ply").write_bytes(b"ply ")
     (tmp_path / "outside.ply").write_bytes(b"ply ")
     port = start(serve.Server(("127.0.0.1", 0), serve.make_handler([], clouds)))
     base = f"http://127.0.0.1:{port}"
 
-    listed = json.loads(fetch(f"{base}/clouds.json")[1])
-    assert [c["name"] for c in listed] == ["arena_arena.ply"] and listed[0]["bytes"] == 4 + 256 * 400
+    listed = {c["name"]: c for c in json.loads(fetch(f"{base}/clouds.json")[1])}
+    assert sorted(listed) == ["arena_arena.ply", "old.ply"]
+    assert listed["arena_arena.ply"]["bytes"] == 4 + 256 * 400
+    assert listed["arena_arena.ply"]["floor"] == "arena_floor.png" and listed["old.ply"]["floor"] is None
     status, body = fetch(f"{base}/clouds/arena_arena.ply")
     assert status == 200 and body == (clouds / "arena_arena.ply").read_bytes()
-    assert fetch(f"{base}/clouds/arena_floor.png")[0] == 404        # PLY only
+    assert fetch(f"{base}/clouds/arena_floor.png") == (200, b"png")
+    assert fetch(f"{base}/clouds/arena_camera_poses.txt")[0] == 404   # scans and prints only
     assert fetch(f"{base}/clouds/sub/deeper.ply")[0] == 404         # that folder only
     assert fetch(f"{base}/clouds/..%2Foutside.ply")[0] == 404
     assert fetch(f"{base}/clouds/nothing.ply")[0] == 404

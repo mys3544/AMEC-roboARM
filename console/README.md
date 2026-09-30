@@ -28,14 +28,17 @@ then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fak
   one from the list, or open or drop any `.ply`. Drag turns, right-drag or Shift-drag moves,
   the wheel (or a pinch) zooms, a double-click or "reset view" goes back to the view from
   above. Camera colour or height colour (0 to 45 cm above the floor, blue to red), and the point
-  size (a 7 MB export, 463k points, is on screen in 0.1-0.2 s).
+  size (a 7 MB export, 463k points, is on screen in 0.1-0.2 s). "Floor print" shows the
+  export's floor print instead (`NAME_floor.png`: the floor from above, 1 cm a pixel), turned a
+  quarter when it stands upright so that it lies as the 3D view starts, the same way round.
 - **Pop out** opens one robot, or the 3D scan, alone in its own window (`/?solo=m3`,
   `/?solo=cloud`), e.g. for a second monitor; the layout is remembered in the browser.
 
 How it is built: `serve.py` (standard library) serves the page and passes JSON through as
 `/robot/<id>/<path>` -- the X3's panel sends no CORS headers; camera streams and maps come
 straight from the robots. The scans come from `serve.py` too: `/clouds.json` lists the PLY
-files in the export folder and `/clouds/<name>` is one (that folder and `.ply` only).
+files in the export folder, each with its floor print, and `/clouds/<name>` is one of those
+(that folder, `.ply` and `.png` only).
 `cloud.js` draws them with WebGL2 and no library (binary little-endian or ASCII PLY, x y z
 and red green blue; other properties skipped), loaded only when the 3D view opens. No
 framework, no build step. It listens on localhost only (IPv4 and IPv6: on Windows `localhost`

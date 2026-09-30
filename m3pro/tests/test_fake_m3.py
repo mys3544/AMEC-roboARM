@@ -1,7 +1,9 @@
 """arena/fake_m3.py on the saved arena_v2 map: the lidar sees the fence where the fence fit puts
 it, a drive command moves the pretend robot -- by hand right up to a wall (no distance limit),
-where the simulation's chassis stops it -- and the loop stops and goes."""
+where the simulation's chassis stops it -- the loop stops and goes, and the survey stands
+still whenever the map records."""
 
+import itertools
 import math
 import pathlib
 import sys
@@ -58,3 +60,34 @@ def test_stop_and_go_pauses_every_step_until_told_to_go_on():
     assert robot.core.resume() is None
     run(robot, 3)
     assert not robot.core.state()["paused"] and np.linalg.norm(np.array(robot.pose()[:2]) - here) > 0.1
+
+
+class Clock:
+    t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_the_survey_stands_still_while_the_map_records():
+    robot = fake_m3.FakeM3(ARENA / "maps" / "arena_v4.yaml", seed=0)
+    clock = robot.core.clock = Clock()
+    robot.core.set_scan(robot.scan())
+    events = []
+    robot.core.on_record = lambda on: events.append((on, robot.pose()))
+    assert robot.core.start_auto(plan="survey") is None
+    assert events == [(False, robot.pose())] and robot.core.state()["plan"] == "survey"
+    for k in range(int(60 / 0.05)):   # a minute: the first stations
+        if k % 3 == 0:
+            robot.core.set_scan(robot.scan())
+        robot.core.tick()
+        robot.step(0.05)
+        clock.t += 0.05
+    assert robot.core.auto is not None and robot.core.auto["i"] >= 6 and robot.core.auto["skips"] == 0
+    for (on, p), (off, q) in itertools.pairwise(events[1:]):
+        if on and not off:   # recording: the robot did not move
+            assert math.hypot(q[0] - p[0], q[1] - p[1]) < 1e-6 and abs(q[2] - p[2]) < 1e-6
+    assert sum(on for on, _p in events) >= 6
+    robot.core.stop()
+    robot.core.tick()
+    assert robot.core.recording   # a survey stopped: the map records as usual again

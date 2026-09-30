@@ -18,9 +18,12 @@ loop.
                             (refused in bench mode, as is the loop)
     POST /api/stop
     POST /api/auto          {"on": true | false}; {"on": true, "step": 0.5} stops and goes: it
-                            pauses after every 0.5 m until {"resume": true}
+                            pauses after every 0.5 m until {"resume": true};
+                            {"on": true, "plan": "survey"}: the survey for a 3D scan
 """
 
+import heapq
+import itertools
 import json
 import math
 import pathlib
@@ -44,6 +47,26 @@ WALL_CLEAR = 0.30       # and the walls this far, m (0.42 left no room between a
                         # the wall, and the planner zig-zagged: 93 points)
 STUCK = 4.0                                       # s blocked before a loop point is given up
 BENCH = "bench mode: motion off (arena_slam.launch.py motion:=false)"
+# The survey for a 3D scan (camera tilted down): stations with a heading; at each the robot
+# stands SETTLE s (the arm stops swaying), then still until DWELL s: the frames taken then are
+# the sharp ones -- frames taken moving carry the board clock's 55-75 ms lag as blur. The map
+# records all along (paused while moving, RTAB-Map lost its map, 2026-09-30); the export picks
+# the standing frames by their odometry speed. It moves between stations faster than the loop,
+# and sideways.
+SURVEY_STEP, SURVEY_V = 0.35, 0.12   # m at most between stations on the way; m/s
+# What the camera sees from a station, on the floor (the DCW2 35 deg down on the arm, 0.385 m up,
+# 0.11 m ahead of the robot's centre; its depth 91 x 62 deg, kept to 1.2 m): from CAM_NEAR to
+# CAM_FAR ahead of the camera, CAM_HALF either side. The survey picks its views by this.
+CAM_AHEAD, CAM_NEAR, CAM_FAR, CAM_HALF = 0.11, 0.17, 1.14, math.radians(45)
+SURVEY_CLEAR = 0.45     # m the survey keeps from the walls and the landmarks' edges: nothing
+                        # nearer than hypot(STOP_AT, HALF_PATH) = 0.41 can stop it, and at 0.45
+                        # the slow-down leaves it moving -- passing between a landmark and a
+                        # wall with 0.33 either side, any leg angled a little towards the wall
+                        # put the wall in the lidar stop (2026-09-30). Corners behind landmarks
+                        # near a wall are then out of reach: the camera looks into them.
+SETTLE, DWELL = 0.5, 1.8   # s at a station: standing settled from SETTLE to DWELL, 1.3 s --
+                           # RTAB-Map takes a frame about once a second (DetectionRate 1 Hz)
+AT, AT_YAW = 0.04, math.radians(5)                # arrived: within 4 cm and 5 degrees
 
 
 def limit(vx, vy, wz, scan_xy):
@@ -114,6 +137,177 @@ def detour(route, blobs, length, width, start):
     return out[1:]
 
 
+def free_space(blobs, length, width, start, res=0.04):
+    """Where the survey may put the robot's centre (arena frame, cells of `res`): SURVEY_CLEAR
+    from the walls and from each blob's edge -- (centre, radius) pairs -- and reachable from
+    `start` (or, from outside, from the free cell nearest it) without leaving that space.
+    Returns (free, res)."""
+    a = (np.arange(math.ceil(length / res)) + 0.5) * res
+    b = (np.arange(math.ceil(width / res)) + 0.5) * res
+    A, B = np.meshgrid(a, b, indexing="ij")
+    free = ((A >= SURVEY_CLEAR - 1e-9) & (A <= length - SURVEY_CLEAR + 1e-9)
+            & (B >= SURVEY_CLEAR - 1e-9) & (B <= width - SURVEY_CLEAR + 1e-9))
+    for c, r in blobs:
+        free &= np.hypot(A - c[0], B - c[1]) >= r + SURVEY_CLEAR - 1e-9
+    cells = np.argwhere(free)
+    if not len(cells):
+        return free, res
+    seed = tuple(cells[np.argmin(np.hypot(*((cells + 0.5) * res - np.asarray(start)).T))])
+    reach, todo = np.zeros_like(free), [seed]
+    reach[seed] = True
+    while todo:   # flood fill, 8 neighbours
+        c = todo.pop()
+        for da, db in itertools.product((-1, 0, 1), repeat=2):
+            n = (c[0] + da, c[1] + db)
+            if 0 <= n[0] < free.shape[0] and 0 <= n[1] < free.shape[1] and free[n] and not reach[n]:
+                reach[n] = True
+                todo.append(n)
+    return reach, res
+
+
+def free_path(free, res, p, q):
+    """The shortest way from p to q (m) through free cells -- A* on the grid, then cut short
+    wherever a straight line stays free -- as the points to drive through, ending at q; None
+    when q is not free or cannot be reached from p. A p outside the free space first goes
+    straight to the nearest free cell."""
+    def cell(pt):
+        return (min(max(int(pt[0] / res), 0), free.shape[0] - 1),
+                min(max(int(pt[1] / res), 0), free.shape[1] - 1))
+
+    def centre(c):
+        return np.array([(c[0] + 0.5) * res, (c[1] + 0.5) * res])
+
+    def clear(u, v):   # the straight line from u to v (m) through free cells only
+        n = max(1, int(np.linalg.norm(v - u) / (res / 2)))
+        return all(free[cell(u + (v - u) * k / n)] for k in range(n + 1))
+
+    goal = cell(q)
+    if not free[goal]:
+        return None
+    lead = []
+    s = cell(p)
+    if not free[s]:
+        cells = np.argwhere(free)
+        s = tuple(cells[np.argmin(np.hypot(*(cells * res + res / 2 - np.asarray(p)).T))])
+        lead = [centre(s)]
+    came, cost, todo = {s: None}, {s: 0.0}, [(0.0, s)]
+    while todo:
+        _f, c = heapq.heappop(todo)
+        if c == goal:
+            break
+        for da, db in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+            n = (c[0] + da, c[1] + db)
+            if not (0 <= n[0] < free.shape[0] and 0 <= n[1] < free.shape[1]) or not free[n]:
+                continue
+            g = cost[c] + math.hypot(da, db)
+            if g < cost.get(n, math.inf):
+                cost[n], came[n] = g, c
+                heapq.heappush(todo, (g + math.hypot(goal[0] - n[0], goal[1] - n[1]), n))
+    if goal not in came:
+        return None
+    cells = [goal]
+    while came[cells[-1]] is not None:
+        cells.append(came[cells[-1]])
+    points = [centre(c) for c in cells[::-1]][1:-1] + [np.asarray(q, float)]
+    out, here = [], lead[-1] if lead else np.asarray(p, float)
+    i = 0
+    while i < len(points):   # the farthest point still in a straight line, then from there on
+        j = len(points) - 1
+        while j > i and not clear(here, points[j]):
+            j -= 1
+        out.append(points[j])
+        here, i = points[j], j + 1
+    return lead + out
+
+
+def seen_by(views, targets, blobs):
+    """How well each view (a, b, heading) sees each target point (a, b) on the floor: 1 up to
+    0.6 m from the camera, falling to 0.4 at CAM_FAR, 0 outside the view or behind a landmark
+    (they stand taller than the camera sees over). Returns (quality, bearing), views x targets:
+    bearing = the direction the target is seen from, for telling sides apart."""
+    views = np.asarray(views, float)
+    cam = views[:, :2] + CAM_AHEAD * np.stack([np.cos(views[:, 2]), np.sin(views[:, 2])], axis=1)
+    d = targets[None, :, :] - cam[:, None, :]
+    dist = np.hypot(d[..., 0], d[..., 1])
+    bearing = np.arctan2(d[..., 1], d[..., 0])
+    off = np.abs((bearing - views[:, 2:3] + np.pi) % (2 * np.pi) - np.pi)
+    quality = np.where((off < CAM_HALF) & (dist > CAM_NEAR) & (dist < CAM_FAR),
+                       np.clip(1 - 0.6 * (dist - 0.6) / (CAM_FAR - 0.6), 0.4, 1.0), 0.0)
+    for c, r in blobs:   # hidden: the line of sight passes the landmark, the target beyond it
+        c = np.asarray(c, float)
+        to_c = c - cam
+        t = np.clip(np.einsum("vtk,vk->vt", d, to_c) / np.maximum(dist ** 2, 1e-9), 0, 1)
+        gap = np.hypot(*(cam[:, None, :] + t[..., None] * d - c).transpose(2, 0, 1))
+        quality[(gap < r) & (dist > np.hypot(*to_c.T)[:, None])] = 0.0
+    return quality, bearing
+
+
+def survey(blobs, length, width, start):
+    """Stations (a, b, heading) in the arena frame, from `start`, for a 3D scan with the camera
+    looking down ahead. The views are chosen for what they see (seen_by): from every reachable
+    place (free_space, 12 cm apart) in 8 headings, greedily the view that adds most -- floor not
+    yet seen, or seen only from another side, closer counting more; the landmarks' faces, once
+    each -- until nothing adds much: every patch of floor the camera can reach is seen, most of
+    it from two sides, and pockets out of reach are looked into from their edge. Then a tour
+    through the views, nearest next, by free paths, with a station every SURVEY_STEP on the way
+    (facing the next view: its frames overlap for the stitching)."""
+    free, res = free_space(blobs, length, width, start)
+    places = [((i + 0.5) * res, (j + 0.5) * res) for i, j in np.argwhere(free) if i % 3 == 0 and j % 3 == 0]
+    if not places:
+        return []
+    heads = np.arange(8) * math.pi / 4
+    views = np.array([(a, b, h) for a, b in places for h in heads])
+    step = 0.05
+    A, B = np.meshgrid((np.arange(int(length / step)) + 0.5) * step,
+                       (np.arange(int(width / step)) + 0.5) * step, indexing="ij")
+    floor = np.ones_like(A, bool)
+    for c, r in blobs:
+        floor &= np.hypot(A - c[0], B - c[1]) > r + 0.02
+    rims = [np.asarray(c, float) + (r + 0.02) * np.array([math.cos(t), math.sin(t)])
+            for c, r in blobs for t in np.linspace(0, 2 * math.pi, 16, endpoint=False)]
+    targets = np.concatenate([np.stack([A[floor], B[floor]], axis=1), np.reshape(rims, (-1, 2))])
+    rim_of = np.concatenate([np.full(floor.sum(), -1),
+                             np.repeat(np.arange(len(blobs)), 16)]) if blobs else np.full(floor.sum(), -1)
+    quality, bearing = seen_by(views, targets, blobs)
+    for k, (c, _r) in enumerate(blobs):   # a landmark's face is seen only from its own side
+        on = rim_of == k
+        outward = targets[on] - np.asarray(c, float)
+        cam = views[:, :2] + CAM_AHEAD * np.stack([np.cos(views[:, 2]), np.sin(views[:, 2])], axis=1)
+        facing = np.einsum("vtk,tk->vt", cam[:, None, :] - targets[None, on], outward) > 0
+        quality[:, on] *= facing
+    side = ((bearing + math.pi / 4) // (math.pi / 2)).astype(int) % 4   # which of 4 sides
+    need = np.where(rim_of < 0, 2, 1)                                    # floor from 2 sides
+    got = np.zeros((len(targets), 4), bool)
+    chosen = []
+    while True:
+        fresh = ~got[np.arange(len(targets))[None, :], side] & (got.sum(axis=1) < need)[None, :]
+        gain = (quality * fresh).sum(axis=1)
+        k = int(np.argmax(gain))
+        if gain[k] < 3.0:   # adds less than about three patches of floor: enough
+            break
+        chosen.append(tuple(views[k]))
+        hit = quality[k] >= 0.4
+        got[np.flatnonzero(hit), side[k, hit]] = True
+    # the tour: nearest next (a turn counted as 0.2 m a radian), by free paths
+    out, here, yaw = [], np.asarray(start, float), None
+    left = list(chosen)
+    while left:
+        v = min(left, key=lambda v, here=here, yaw=yaw: math.hypot(v[0] - here[0], v[1] - here[1])
+                + (0.0 if yaw is None else 0.2 * abs((v[2] - yaw + math.pi) % (2 * math.pi) - math.pi)))
+        left.remove(v)
+        points = free_path(free, res, here, np.array(v[:2]))
+        if points is None:
+            continue
+        for q in points:
+            n = max(1, math.ceil(np.linalg.norm(q - here) / SURVEY_STEP))
+            out.extend((*(here + (q - here) * j / n), v[2]) for j in range(1, n + 1))
+            here = q
+        if not out or not np.allclose(out[-1][:2], v[:2]):
+            out.append(v)
+        yaw = v[2]
+    return out
+
+
 class Driver:
     """What the page does, fed by a robot: `pose()` gives (x, y, yaw) in the map frame or None,
     `send(vx, vy, wz)` commands the base once; call set_scan / set_map as they come, set
@@ -133,6 +327,16 @@ class Driver:
         self.auto = None                 # the loop: waypoints, index, heading, blocked_since
         self.mode, self.note = "idle", "" if motion else BENCH
         self.cmd, self.nearest, self.moving = (0.0, 0.0, 0.0), math.inf, False
+        # on_record(on): told when the camera's frames are the sharp ones -- during a survey
+        # only while the robot stands settled at a station; otherwise always (`recording` in
+        # the state). Nothing pauses the map with it any more (drive_server.py)
+        self.on_record, self.recording = None, True
+
+    def record(self, on):
+        if on != self.recording:
+            self.recording = on
+            if self.on_record is not None:
+                self.on_record(on)
 
     # --- inputs -------------------------------------------------------------------------------
 
@@ -180,11 +384,12 @@ class Driver:
         with self.lock:
             self.auto, self.manual_time, self.note = None, -math.inf, note
 
-    def start_auto(self, step=None):
+    def start_auto(self, step=None, plan="loop"):
         """Plan the loop: 45 cm inside the fitted fence, from the corner nearest the robot, round
-        and back, then once along the middle, clear of the blobs (the landmarks). With `step`
-        (m), stop and go: pause after every `step` of travel until resume() -- for a robot on
-        a charging cable, which someone moves while it waits."""
+        and back, then once along the middle, clear of the blobs (the landmarks). Or, with plan
+        "survey", the stations of survey() for a 3D scan, each held DWELL s, the map recording
+        only while it stands. With `step` (m), stop and go: pause after every `step` of travel
+        until resume() -- for a robot on a charging cable, which someone moves while it waits."""
         if not self.motion:
             return BENCH
         m, result = self.fit()
@@ -193,6 +398,8 @@ class Driver:
             return "no map or no pose yet"
         if result is None:
             return "no fence fit yet: drive by hand until two facing walls are in the map"
+        if plan not in ("loop", "survey"):
+            return f"no plan {plan!r}: loop or survey"
         o = np.array(result["arena_frame"]["origin_map"])
         ex = np.array(result["arena_frame"]["x_axis_map"])
         ey = fence_fit.rot90(ex)
@@ -207,16 +414,24 @@ class Driver:
         if np.linalg.norm(middle[0] - route[-1]) > np.linalg.norm(middle[1] - route[-1]):
             middle.reverse()
         blobs = [(b["arena_xy_m"], max(b["size_cm"]) / 200) for b in result["blobs"]]
-        route = [o + p[0] * ex + p[1] * ey
-                 for p in detour(route + middle, blobs, length, width, here)]
+        if plan == "loop":
+            waypoints = [tuple(float(v) for v in o + p[0] * ex + p[1] * ey)
+                         for p in detour(route + middle, blobs, length, width, here)]
+        else:   # headings turned from the arena frame into the map's
+            turn = math.atan2(ex[1], ex[0])
+            waypoints = [(*(float(v) for v in o + a * ex + b * ey), h + turn)
+                         for a, b, h in survey(blobs, length, width, here)]
         step = None if step is None else min(max(float(step), 0.1), 5.0)
         with self.lock:
             self.manual_time = -math.inf
-            self.auto = {"waypoints": [(float(p[0]), float(p[1])) for p in route], "i": 0,
-                         "heading": pose[2], "blocked_since": None, "skips": 0,
+            self.auto = {"plan": plan, "waypoints": waypoints, "i": 0,
+                         "heading": pose[2], "blocked_since": None, "skips": 0, "arrived": None,
                          "step": step, "travelled": 0.0, "from": pose[:2], "paused": False}
-            self.note = f"auto: {len(route)} points" + (f", pausing every {step:.2f} m"
-                                                        if step else "")
+            self.note = (f"auto: {plan}, {len(waypoints)}"
+                         f" {'points' if plan == 'loop' else 'stations'}"
+                         + (f", pausing every {step:.2f} m" if step else ""))
+        if plan == "survey":
+            self.record(False)
         return None
 
     def resume(self):
@@ -247,6 +462,8 @@ class Driver:
             want, mode = self.auto_step(auto), "auto"
         if want is None:
             mode = "paused" if auto is not None and auto["paused"] and manual is None else "idle"
+        if mode != "auto" or self.auto is None:   # the survey over, however: record as usual
+            self.record(True)
         self.mode = mode
         if want is None:
             if self.moving:   # a few zeros, then the base is the gamepad's again
@@ -264,13 +481,14 @@ class Driver:
         else:
             vx, vy, wz, self.nearest = limit(*want, scan)
         if mode == "auto":
-            self.watch_blocked(auto, want, (vx, vy), now)
+            self.watch_blocked(auto, want, (vx, vy, wz), now)
         self.send(vx, vy, wz)
         self.cmd, self.moving = (vx, vy, wz), True
 
     def auto_step(self, auto):
-        """The loop's next command: straight at the next point at AUTO_V, keeping the heading
-        it started with (the base is omnidirectional). None when the loop is done, or paused."""
+        """The next command: straight at the next point at AUTO_V -- keeping the heading the
+        loop started with (the base is omnidirectional), or turning to a survey station's own
+        and standing there DWELL s. None when done, or paused."""
         if auto["paused"]:
             return None
         pose = self.pose()
@@ -288,23 +506,46 @@ class Driver:
                 return None
         while True:
             if auto["i"] >= len(auto["waypoints"]):
-                self.stop("auto: loop done")
+                self.stop(f"auto: {auto.get('plan', 'loop')} done")
                 return None
-            dx, dy = auto["waypoints"][auto["i"]][0] - x, auto["waypoints"][auto["i"]][1] - y
+            point = auto["waypoints"][auto["i"]]
+            dx, dy = point[0] - x, point[1] - y
             dist = math.hypot(dx, dy)
-            if dist > 0.05:
+            station = len(point) > 2
+            aim = point[2] if station else auto["heading"]
+            turn = math.atan2(math.sin(aim - yaw), math.cos(aim - yaw))
+            if not station:
+                if dist > 0.05:
+                    break
+            elif dist > AT or abs(turn) > AT_YAW:
+                auto["arrived"] = None
                 break
+            else:   # at a station: stand, then let the map record, then on to the next
+                now = self.clock()
+                if auto.get("arrived") is None:
+                    auto["arrived"] = now
+                if now - auto["arrived"] < DWELL:
+                    self.record(now - auto["arrived"] >= SETTLE)
+                    return (0.0, 0.0, 0.0)
+                self.record(False)
+                auto["arrived"] = None
             auto["i"] += 1
             auto["blocked_since"], auto["skips"] = None, 0
-        speed = min(AUTO_V, 0.8 * dist)
+        top = SURVEY_V if station else AUTO_V
+        speed = min(top, 0.8 * dist) if dist > (AT / 2 if station else 0.0) else 0.0
         c, s = math.cos(yaw), math.sin(yaw)
-        turn = math.atan2(math.sin(auto["heading"] - yaw), math.cos(auto["heading"] - yaw))
-        return (speed * (c * dx + s * dy) / dist, speed * (-s * dx + c * dy) / dist,
-                max(-0.3, min(0.3, turn)))
+        spin = max(-0.4, min(0.4, 1.2 * turn)) if station else max(-0.3, min(0.3, turn))
+        if speed == 0.0:
+            return (0.0, 0.0, spin)
+        return (speed * (c * dx + s * dy) / dist, speed * (-s * dx + c * dy) / dist, spin)
 
     def watch_blocked(self, auto, want, got, now):
-        """Give a loop point up after STUCK s held still by the lidar; stop after two in a row."""
-        if math.hypot(*want[:2]) < 0.01 or math.hypot(*got) > 0.005:
+        """Give a point up after STUCK s held still by the lidar -- a move, or a station's turn
+        on the spot; stop after two in a row."""
+        moving = math.hypot(*want[:2]) >= 0.01
+        blocked = (math.hypot(*got[:2]) <= 0.005 if moving
+                   else abs(want[2]) >= 0.01 and got[2] == 0.0)
+        if not blocked:
             auto["blocked_since"] = None
         elif auto["blocked_since"] is None:
             auto["blocked_since"] = now
@@ -319,7 +560,7 @@ class Driver:
                   f" {self.nearest:.2f} m", flush=True)
             auto["i"] += 1
             auto["skips"] += 1
-            auto["blocked_since"] = None
+            auto["blocked_since"], auto["arrived"] = None, None
             if auto["skips"] >= 2:
                 self.stop("auto stopped: blocked twice in a row -- drive it by hand")
 
@@ -338,6 +579,8 @@ class Driver:
             "nearest_ahead_m": None if math.isinf(self.nearest) else round(self.nearest, 2),
             "scan_age_s": round(scan_age, 2) if math.isfinite(scan_age) else None,
             "auto": None if auto is None else [auto["i"], len(auto["waypoints"])],
+            "plan": None if auto is None else auto.get("plan", "loop"),
+            "recording": self.recording,
             "paused": auto is not None and auto["paused"],
             "fence": None if result is None else {"size_m": result["fence"]["size_m"],
                                                   "complete": result["fence"]["complete"],
@@ -354,10 +597,16 @@ class Driver:
         with self.lock:
             scan, auto = self.scan_xy, self.auto
         if auto is not None:
-            pts = [P(p) for p in auto["waypoints"]]
+            pts = [P(p[:2]) for p in auto["waypoints"]]
             cv2.polylines(img, [np.array(pts, np.int32)], False, (200, 120, 0), 1)
-            for i, p in enumerate(pts):
-                cv2.circle(img, p, 4, (200, 0, 200) if i == auto["i"] else (200, 120, 0), -1)
+            for i, (p, w) in enumerate(zip(pts, auto["waypoints"])):
+                colour = (200, 0, 200) if i == auto["i"] else (200, 120, 0)
+                if len(w) > 2:   # a station: a short tick the way the camera will look
+                    tip = (w[0] + 0.08 * math.cos(w[2]), w[1] + 0.08 * math.sin(w[2]))
+                    cv2.circle(img, p, 2, colour, -1)
+                    cv2.line(img, p, P(tip), colour, 1)
+                else:
+                    cv2.circle(img, p, 4, colour, -1)
         if pose is not None:
             x, y, yaw = pose
             c, s = math.cos(yaw), math.sin(yaw)
@@ -421,7 +670,7 @@ def serve(driver, port, host="0.0.0.0"):
                 if body.get("resume"):
                     error = driver.resume()
                 elif body.get("on"):
-                    error = driver.start_auto(body.get("step"))
+                    error = driver.start_auto(body.get("step"), body.get("plan", "loop"))
                 else:
                     error = driver.stop()
             else:

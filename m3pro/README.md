@@ -118,6 +118,28 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
   above the fence (35 cm): that is the room seen over it -- in the first scan, something up to
   1.1 m tall standing against one wall, 6.9k points. `arena_map.py rtab-crop [N]` crops the
   kept export (or try N) again and fetches it, without stitching again.
+- **The survey, for a better 3D scan** ("Auto: survey for a 3D scan" on the drive page and in
+  the console): the camera tilted down (`arena_map.py arm survey`, `[90, 120, 30, 0, 90, 0]`:
+  34.9 deg down, 0.358 m up, measured; in the mapping pose half the view is the room over the
+  fence). `drive_core.survey()` picks the views -- from every place 45 cm clear of the walls and
+  landmarks (nothing nearer can trip the lidar stop), 8 headings each -- by what the camera
+  would see of the floor and the landmarks' faces, until the floor is seen, most of it from two
+  sides; then a tour through them. The robot stands still 1.8 s at each station: the frames
+  taken then are sharp -- frames taken moving carry the board clock's lag. On `arena_v4`: ~70
+  stations, ~12 m, 98.6 % of the floor in view (the first scan: the camera never closer than
+  0.66 m). Steps: charge, cable out, `arm survey`, `start mapper:=rtabmap
+  camera:=0.114,0,Z,0,PITCH` (Z, PITCH from `camcheck`; an existing `rtab/arena.db` is renamed
+  first, not deleted), `camlock` (the exposure; the DCW2 does not report its white balance),
+  the survey, stop RTAB-Map with SIGINT, `rtab-export NAME`.
+  **First runs, 2026-09-30:** 74 stations in 6 min 12 s, nothing blocked. The cloud: 99.8 % of
+  the floor (scan 1: 93.1 %), the print's lines single and the arrows readable, the flat floor
+  21.5 mm thick (10-90 % of the heights per 2 cm cell; scan 1: 23.7), the walls thicker (8-14
+  cm: the camera sees them only at the top of its view). Built from the standing frames alone
+  (358 of 573, told by their odometry speed): the floor 12.5 mm thick, the walls back to 6-11
+  cm, but patchy -- one or two frames a station. Pausing RTAB-Map while moving (so that it
+  takes standing frames only) lost its map within 27 stations -- doubled walls, the robot held
+  at a wall by the lidar stop: it records all along. New: the ceiling lights glare on the mat
+  in the downward view.
 - **The maps to use:** `arena_v4` -- the live run loop4 replayed with today's defaults
   (bias-corrected merged scan, EKF 7 Hz, 20 cm between key scans): 3.200 x 2.785 m, every wall
   seen, the three landmarks; an image and YAML only, no pose graph. `arena_v3` -- the whole

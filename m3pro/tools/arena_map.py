@@ -11,7 +11,10 @@
     python tools/arena_map.py arm mapping  # the arm to Yahboom's RTAB-Map pose (or "j1,...,j6")
     python tools/arena_map.py start mapper:=rtabmap   # the coloured 3D arena, RTAB-Map
     python tools/arena_map.py camcheck     # is the camera where the launch says? (the floor)
-    python tools/arena_map.py rtab-export  # the 3D cloud, the floor print, heights -> out/arena/rtab
+    python tools/arena_map.py camlock      # the camera's exposure and white balance held as
+                                           # they are now: one colour across a whole scan
+    python tools/arena_map.py rtab-export [NAME]   # the 3D cloud, the floor print, heights ->
+                                           # out/arena/rtab; NAME: another database in ~/arena/rtab
     python tools/arena_map.py rtab-crop [N]   # the kept export (or try N) cropped again, fetched
     python tools/arena_map.py calib NAME   # the two lidars' mounting, from its standing start
     python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings, compare
@@ -70,7 +73,7 @@ def running(client):
 
 def start(client, args=()):
     """Start the stack; `args` are arena_slam.launch.py arguments, e.g. motion:=false."""
-    if any(not re.fullmatch(r"[a-z_]+:=[\w./;=-]*", a) for a in args):
+    if any(not re.fullmatch(r"[a-z_]+:=[\w./;=,-]*", a) for a in args):   # camera:=x,y,z,yaw,pitch
         print(f"launch arguments look like name:=value: {args}")
         return 2
     if running(client):
@@ -83,7 +86,13 @@ def start(client, args=()):
         return 1
     sh(client, f"mkdir -p {REMOTE}/logs {REMOTE}/snaps {REMOTE}/maps")
     upload(client)
-    log = f"{REMOTE}/logs/slam_{time.strftime('%Y%m%d_%H%M%S')}.log"
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    if "mapper:=rtabmap" in args:   # the launch starts RTAB-Map with --delete_db_on_start
+        _c, text = sh(client, f"test -f {REMOTE}/rtab/arena.db && mv {REMOTE}/rtab/arena.db"
+                              f" {REMOTE}/rtab/arena_{stamp}.db && echo kept")
+        if "kept" in text:
+            print(f"the last scan's database kept as rtab/arena_{stamp}.db")
+    log = f"{REMOTE}/logs/slam_{stamp}.log"
     # setsid: the launch leads its own process group, whose id `stop` signals. Nothing may go
     # in front of it on this line: `a && b &` backgrounds a subshell, whose pid is not the group's
     # and which keeps the SSH channel open.
@@ -222,7 +231,11 @@ def record(client, name, step=None):
 
 
 ARM_POSES = {   # joint1..joint6 in degrees
-    "mapping": (90, 180, 5, 0, 90, 0),   # Yahboom's for RTAB-Map: the camera level, ~38 cm up
+    "mapping": (90, 180, 5, 0, 90, 0),   # Yahboom's for RTAB-Map: the camera level, ~35-38 cm up
+    # the survey's: the camera 34.9 deg down, 0.358 m up (camcheck, 2026-09-30); the print fills
+    # the view with the fence's foot along its top edge; the URDF says 30 deg -- the real arm sits
+    # 3-5 deg lower in every pose tried
+    "survey": (90, 120, 30, 0, 90, 0),
 }
 
 
@@ -247,8 +260,41 @@ def camcheck(client):
     return 0
 
 
+def camlock(client):
+    """Hold the colour camera's exposure (and white balance, where the camera tells it) at what
+    auto has settled on -- the Orbbec driver's services -- so that the print keeps one colour
+    across a scan. The DCW2 does not report its white balance ("Property is not supported"):
+    that stays on auto. Starting the camera again (the stack) gives auto back."""
+    get, put, switch = ("orbbec_camera_msgs/srv/GetInt32", "orbbec_camera_msgs/srv/SetInt32",
+                        "std_srvs/srv/SetBool")
+
+    def call(name, kind, arg="{}"):
+        _c, text = sh(client, f"{ROS} && timeout 20 ros2 service call /camera/{name} {kind}"
+                              f" '{arg}' | grep Response", timeout=60)
+        return text.strip() or "no answer"
+
+    held = []
+    for what, auto, value in (("exposure", "set_color_auto_exposure", "color_exposure"),
+                              ("white balance", "set_auto_white_balance", "white_balance")):
+        now = call(f"get_{value}", get)
+        found = re.search(r"data=(-?\d+), success=True", now)
+        if not found:
+            print(f"{what}: left on auto -- the camera does not tell it ({now})")
+            continue
+        print(f"{what}: auto off {call(auto, switch, '{data: false}')}")
+        print(f"{what}: held at {found[1]} {call(f'set_{value}', put, f'{{data: {found[1]}}}')}")
+        held.append(f"{what} {found[1]}")
+    print("held: " + (", ".join(held) or "nothing"))
+    return 0 if held else 1
+
+
 RESTITCH = "--Reg/Strategy 0"   # visual: the camera's frames agree with their own odometry
 EXPORT = "--max_range 1.5 --noise_radius 0.03 --noise_k 5"   # the DaBai's near, sharp depth
+
+
+def export_dir(name):
+    """Where the exports of rtab/NAME.db go on the robot (the first scan's: rtab/export)."""
+    return f"{REMOTE}/rtab/export" if name == "arena" else f"{REMOTE}/rtab/export_{name}"
 
 
 def rtab_export(client, name="arena", tries=3):
@@ -260,7 +306,7 @@ def rtab_export(client, name="arena", tries=3):
     samples at random and one try can smear a corner, so it is done `tries` times and the one
     whose fence walls come out thinnest (the worst wall) is kept."""
     upload(client)
-    db, out = f"{REMOTE}/rtab/{name}.db", f"{REMOTE}/rtab/export"
+    db, out = f"{REMOTE}/rtab/{name}.db", export_dir(name)
     scores = {}
     for k in range(1, tries + 1):
         run = f"{out}/try{k}"
@@ -289,7 +335,7 @@ def rtab_crop(client, k=None, name="arena"):
     """The kept export (or try N) cropped to the arena again -- ortho.py only, on the full cloud
     rtabmap-export left on the robot, no stitching -- and fetched: for a change to the crop."""
     upload(client)
-    out = f"{REMOTE}/rtab/export"
+    out = export_dir(name)
     k = k or sh(client, f"cat {out}/kept")[1].strip()
     if not str(k).isdigit():
         print(f"no kept export in {out} (rtab-export records it): name the try, rtab-crop N")
@@ -459,13 +505,16 @@ def stop(client):
 
 def main():
     commands = {"start": start, "status": status, "snap": snap, "drive": drive, "stop": stop,
-                "resume": resume, "camcheck": camcheck, "rtab-export": rtab_export}
+                "resume": resume, "camcheck": camcheck, "camlock": camlock,
+                "rtab-export": rtab_export}
     if len(sys.argv) == 3 and sys.argv[1] == "arm":
         return arm(connect(), sys.argv[2])
     if len(sys.argv) == 5 and sys.argv[1] == "record" and sys.argv[3] == "--step":
         return record(connect(), sys.argv[2], float(sys.argv[4]))
     if len(sys.argv) == 3 and sys.argv[1] in ("save", "record", "calib"):
         return {"save": save, "record": record, "calib": calib}[sys.argv[1]](connect(), sys.argv[2])
+    if len(sys.argv) == 3 and sys.argv[1] == "rtab-export":
+        return rtab_export(connect(), sys.argv[2])
     if len(sys.argv) in (2, 3) and sys.argv[1] == "rtab-crop":
         return rtab_crop(connect(), *(int(k) for k in sys.argv[2:]))
     if len(sys.argv) >= 3 and sys.argv[1] == "tune":

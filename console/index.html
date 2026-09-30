@@ -58,6 +58,7 @@
       </div>
       <label class="speed">speed <input type="range" min="20" max="100" value="60"> <output>60 %</output></label>
       <button class="auto">Auto: loop the arena</button>
+      <button class="survey" title="stations chosen to see the whole floor, standing still at each: for a 3D scan">Auto: survey for a 3D scan</button>
       <label class="stepwise"><input type="checkbox"> stop and go: pause every 0.5 m</label>
       <button class="go" hidden>Continue (cable moved, arena clear)</button>
     </div>
@@ -83,12 +84,16 @@
       <label class="file" title="or drop a .ply on the picture">open a .ply&hellip;<input type="file" accept=".ply" hidden></label>
       <button class="popout" title="the 3D scan alone, in its own window">pop out</button>
     </header>
-    <div class="scene"><canvas></canvas><span class="nosignal">loading&hellip;</span></div>
+    <div class="scene"><canvas class="gl"></canvas><canvas class="print"></canvas><span class="nosignal">loading&hellip;</span></div>
     <div class="cloud-controls">
-      <span class="choice colour"><button data-colour="camera" class="on">camera colour</button><button data-colour="height">height</button></span>
-      <label class="speed">points <input type="range" min="1" max="6" step="0.5" value="3"> <output>3 px</output></label>
-      <button class="home" title="or double-click the picture">reset view</button>
-      <span class="how">drag turns &middot; right-drag or <kbd>Shift</kbd>-drag moves &middot; wheel or pinch zooms</span>
+      <span class="choice shown"><button data-show="3d" class="on">3D</button><button data-show="floor">floor print</button></span>
+      <span class="three">
+        <span class="choice colour"><button data-colour="camera" class="on">camera colour</button><button data-colour="height">height</button></span>
+        <label class="speed">points <input type="range" min="1" max="6" step="0.5" value="3"> <output>3 px</output></label>
+        <button class="home" title="or double-click the picture">reset view</button>
+        <span class="how">drag turns &middot; right-drag or <kbd>Shift</kbd>-drag moves &middot; wheel or pinch zooms</span>
+      </span>
+      <span class="how flat">the floor from above, 1 cm a pixel, turned to lie as the 3D view starts</span>
     </div>
     <pre class="facts"></pre>
   </article>

@@ -130,3 +130,32 @@ def test_the_loop_needs_a_fresh_scan_driving_by_hand_does_not():
     driver.drive({"vx": 1.0})
     driver.tick()
     assert sent[-1] == (ds.MAX_V, 0.0, 0.0)
+
+
+def test_the_survey_keeps_its_distance_and_sees_the_floor_and_the_landmarks():
+    length, width = 3.2, 2.8   # the arena as arena_v4 has it: two landmarks 0.6-0.8 m off a wall
+    blobs = [((2.39, 0.76), 0.11), ((2.39, 1.95), 0.15), ((0.82, 1.94), 0.11)]
+    stations = ds.survey(blobs, length, width, (1.6, 1.4))
+    assert 30 < len(stations) < 120
+    route = np.array([s[:2] for s in stations])
+    for p, q in itertools.pairwise(np.vstack([(1.6, 1.4), route])):   # every leg, not only stops
+        for t in np.linspace(0, 1, 20):
+            x, y = p + t * (q - p)
+            assert min(x, length - x, y, width - y) >= ds.SURVEY_CLEAR - 0.03
+            for c, r in blobs:
+                assert math.hypot(x - c[0], y - c[1]) - r >= ds.SURVEY_CLEAR - 0.03
+    step = 0.05
+    A, B = np.meshgrid((np.arange(64) + 0.5) * step, (np.arange(56) + 0.5) * step, indexing="ij")
+    floor = np.ones_like(A, bool)
+    for c, r in blobs:
+        floor &= np.hypot(A - c[0], B - c[1]) > r + 0.02
+    quality, _ = ds.seen_by(stations, np.stack([A[floor], B[floor]], axis=1), blobs)
+    assert (quality.max(axis=0) > 0).mean() > 0.97   # the floor, corners behind landmarks too
+    for c, r in blobs:   # and most of each landmark's face, from its own side
+        rim = np.array([(c[0] + (r + 0.02) * math.cos(t), c[1] + (r + 0.02) * math.sin(t))
+                        for t in np.linspace(0, 2 * math.pi, 16, endpoint=False)])
+        quality, _ = ds.seen_by(stations, rim, blobs)
+        cams = np.array([(a + ds.CAM_AHEAD * math.cos(h), b + ds.CAM_AHEAD * math.sin(h))
+                         for a, b, h in stations])
+        facing = np.einsum("vtk,tk->vt", cams[:, None, :] - rim[None], rim - np.array(c)) > 0
+        assert ((quality * facing) > 0).any(axis=0).mean() >= 0.75
