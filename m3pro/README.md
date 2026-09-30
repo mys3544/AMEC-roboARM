@@ -86,6 +86,10 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
   drives a slow loop 45 cm inside the fitted fence, around the landmarks. Both are held to
   0.15 m/s and stop 35 cm short of anything the lidars see in their path. The gamepad works
   whenever the page is not commanding.
+- **Bench mode:** `python tools/arena_map.py start motion:=false` -- everything is shown, every
+  command to move is refused (the page and the console grey their controls). Use it whenever
+  the robot is on a table: the lidars see obstacles, not the table's edge. The gamepad still
+  drives.
 - **The fence fit** (`fence_fit.py`) checks every map against the fence's 3.2 x 2.8 m: side
   lengths, corner angles, how straight and how much of each wall is seen, and the blobs inside
   (the landmarks) in an arena frame with its origin at a fence corner.

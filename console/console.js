@@ -202,8 +202,11 @@ class M3Card extends Card {
       this.offline();
       return;
     }
-    this.setPill(s.mode, s.mode !== 'idle');
+    this.setPill(s.motion === false ? 'bench' : s.mode, s.mode !== 'idle');
     $('.note', this.el).textContent = s.note || '';
+    $('.controls', this.el).querySelectorAll('button').forEach(b => {
+      b.disabled = s.motion === false && !b.classList.contains('halt');   // bench: nothing moves
+    });
     this.autoButton.classList.toggle('on', s.auto !== null);
     this.autoButton.textContent = s.auto
       ? `Auto: point ${s.auto[0] + 1} of ${s.auto[1]} (click to stop)` : 'Auto: loop the arena';

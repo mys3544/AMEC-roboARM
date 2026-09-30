@@ -7,6 +7,8 @@ Arguments -- the same file maps live and replays a recorded run (replay.sh), so 
 a recording is what runs on the robot. The defaults are what tuning on 2026-09-30 chose (the
 map within 1 cm of the fence all through a replay; Yahboom's settings: 2 cm too big, growing):
     sim:=true          use the recording's clock; no drive page
+    motion:=false      bench mode: the drive page shows everything and refuses to move (on a
+                       table the lidars cannot see the edge)
     ekf_hz:=N          the odometry filter's rate (30; Yahboom's is 7)
     ekf_predict:=true  the filter stamps odom -> base_footprint at the current time, predicted,
                        not at its last measurement -- a scan newer than that waits for a
@@ -33,7 +35,7 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULTS = {"sim": "false", "ekf_hz": "30", "ekf_predict": "false", "scans": "lidars",
+DEFAULTS = {"sim": "false", "motion": "true", "ekf_hz": "30", "ekf_predict": "false", "scans": "lidars",
             "lidars": os.path.join(HERE, "lidars.yaml"),
             "slam": os.path.join(HERE, "slam_params.yaml"), "slam_set": ""}
 
@@ -86,7 +88,8 @@ def nodes(context):
                                        "-p", f"use_sim_time:={arg['sim']}"],
                                   output="screen"))
     if not sim:   # the browser page for driving it by hand or on a loop, http://<robot>:8095/
-        out.append(ExecuteProcess(cmd=["python3", os.path.join(HERE, "drive_server.py")],
+        bench = [] if arg["motion"] == "true" else ["--no-motion"]
+        out.append(ExecuteProcess(cmd=["python3", os.path.join(HERE, "drive_server.py"), *bench],
                                   output="screen"))
     return out
 

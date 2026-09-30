@@ -9,9 +9,11 @@ scan from the last 0.5 s. A manual command lapses 0.4 s after the page stops rep
 closed tab stops the robot, and a hand on the controls ends the loop.
 
     GET  /                  the drive page (drive.html)
-    GET  /api/state         mode, pose, command, nearest return ahead, battery, loop, fence
+    GET  /api/state         mode, pose, command, nearest return ahead, battery, loop, fence,
+                            motion (false in bench mode)
     GET  /api/map.png       the map with the fence fit, the robot, its scan and the loop
     POST /api/drive         {"vx", "vy", "wz"}: -1..1 of full speed, repeated while held
+                            (refused in bench mode, as is the loop)
     POST /api/stop
     POST /api/auto          {"on": true | false}
 """
@@ -37,6 +39,7 @@ BLOB_MARGIN = 0.33      # the loop keeps a blob's edge this far from the robot's
                         # beyond HALF_PATH passing by, so a landmark never blocks the loop
 WALL_CLEAR = 0.30                                 # and the walls this far, m
 STUCK = 4.0                                       # s blocked before a loop point is given up
+BENCH = "bench mode: motion off (arena_slam.launch.py motion:=false)"
 
 
 def limit(vx, vy, wz, scan_xy):
@@ -112,8 +115,11 @@ class Driver:
     `send(vx, vy, wz)` commands the base once; call set_scan / set_map as they come, set
     `battery`, and tick() at 20 Hz."""
 
-    def __init__(self, pose, send, clock=time.monotonic):
+    def __init__(self, pose, send, clock=time.monotonic, motion=True):
         self.pose, self.send, self.clock = pose, send, clock
+        # motion=False: bench mode -- everything shown, every command to move refused (on a
+        # table the lidars cannot see the edge; the 35 cm stop is for obstacles, not drops)
+        self.motion = motion
         self.lock = threading.Lock()
         self.scan_xy, self.scan_time = None, -math.inf
         self.map = None                  # (grid as map_saver writes it, resolution, origin)
@@ -121,7 +127,7 @@ class Driver:
         self.battery = None
         self.manual, self.manual_time = (0.0, 0.0, 0.0), -math.inf
         self.auto = None                 # the loop: waypoints, index, heading, blocked_since
-        self.mode, self.note = "idle", ""
+        self.mode, self.note = "idle", "" if motion else BENCH
         self.cmd, self.nearest, self.moving = (0.0, 0.0, 0.0), math.inf, False
 
     # --- inputs -------------------------------------------------------------------------------
@@ -155,6 +161,10 @@ class Driver:
     # --- commands from the page ---------------------------------------------------------------
 
     def drive(self, body):
+        """A manual command (-1..1 of full speed); an error message instead in bench mode."""
+        if not self.motion:
+            return BENCH
+
         def unit(key):
             return max(-1.0, min(1.0, float(body.get(key, 0.0))))
         with self.lock:
@@ -169,6 +179,8 @@ class Driver:
     def start_auto(self):
         """Plan the loop: 45 cm inside the fitted fence, from the corner nearest the robot, round
         and back, then once along the middle, clear of the blobs (the landmarks)."""
+        if not self.motion:
+            return BENCH
         m, result = self.fit()
         pose = self.pose()
         if m is None or pose is None:
@@ -273,7 +285,7 @@ class Driver:
         with self.lock:
             auto, scan_age = self.auto, self.clock() - self.scan_time
         return {
-            "mode": self.mode, "note": self.note, "battery_v": self.battery,
+            "mode": self.mode, "note": self.note, "battery_v": self.battery, "motion": self.motion,
             "pose": None if pose is None else [round(pose[0], 3), round(pose[1], 3),
                                                round(math.degrees(pose[2]), 1)],
             "cmd": [round(v, 3) for v in self.cmd],
@@ -355,7 +367,7 @@ def serve(driver, port, host="0.0.0.0"):
             body = json.loads(self.rfile.read(size) or b"{}")
             path, error = self.path.split("?")[0], None
             if path == "/api/drive":
-                driver.drive(body)
+                error = driver.drive(body)
             elif path == "/api/stop":
                 driver.stop()
             elif path == "/api/auto":

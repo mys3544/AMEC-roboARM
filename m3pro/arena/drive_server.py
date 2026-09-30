@@ -1,6 +1,7 @@
 """Drive the M3 Pro from a browser while it maps -- by hand, or on a slow loop round the arena.
 
     http://192.168.73.66:8095/     (started with the mapping stack by arena_slam.launch.py)
+    python3 drive_server.py [--no-motion]    (--no-motion: bench mode, nothing moves)
 
 The ROS side of the drive page: it feeds drive_core.Driver -- the page's logic, its safety
 limits and its web API -- with /scan, /map, /battery and the map -> base_footprint pose, and
@@ -9,6 +10,7 @@ works whenever it is idle.
 """
 
 import math
+import sys
 import threading
 
 import drive_core
@@ -28,12 +30,12 @@ PORT = 8095
 
 
 class RosDriver(Node):
-    def __init__(self):
+    def __init__(self, motion=True):
         super().__init__("arena_drive")
         self.pub = self.create_publisher(Twist, "/cmd_vel", 10)
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self)
-        self.core = drive_core.Driver(self.pose, self.send)
+        self.core = drive_core.Driver(self.pose, self.send, motion=motion)
         self.create_subscription(LaserScan, "/scan", self.on_scan, qos_profile_sensor_data)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL,
                              reliability=ReliabilityPolicy.RELIABLE)
@@ -77,9 +79,10 @@ class RosDriver(Node):
 def main():
     # Our own Ctrl-C handling, so the last thing published is a zero while ROS is still up.
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
-    node = RosDriver()
+    node = RosDriver(motion="--no-motion" not in sys.argv)
     threading.Thread(target=drive_core.serve, args=(node.core, PORT), daemon=True).start()
-    node.get_logger().info(f"drive page on port {PORT}")
+    node.get_logger().info(f"drive page on port {PORT}"
+                           + ("" if node.core.motion else f" -- {drive_core.BENCH}"))
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

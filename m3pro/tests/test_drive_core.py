@@ -93,6 +93,16 @@ def test_a_command_lapses_without_repeats_and_stop_stops_at_once():
     assert len(sent) == count   # idle: nothing sent, the base is the gamepad's
 
 
+def test_bench_mode_refuses_to_move():
+    clock, sent = Clock(), []
+    driver = ds.Driver(lambda: (0.0, 0.0, 0.0), lambda *v: sent.append(v), clock, motion=False)
+    driver.set_scan(wall_ahead(2.0))
+    assert driver.drive({"vx": 1.0}) == ds.BENCH
+    assert driver.start_auto() == ds.BENCH
+    driver.tick()
+    assert sent == [] and driver.mode == "idle" and driver.state()["motion"] is False
+
+
 def test_no_motion_without_a_fresh_scan():
     clock, sent = Clock(), []
     driver = ds.Driver(lambda: (0.0, 0.0, 0.0), lambda *v: sent.append(v), clock)

@@ -1,6 +1,7 @@
 """Map the arena with the M3 Pro: start slam_toolbox, look at the map as it grows, save it.
 
-    python tools/arena_map.py start        # upload arena/, start the mapping stack on the robot
+    python tools/arena_map.py start [motion:=false ...]   # upload arena/, start the stack
+                                           # (launch arguments; motion:=false = bench mode)
     python tools/arena_map.py snap         # the map so far + the fence fit -> out/arena/
     python tools/arena_map.py save NAME    # map + fence fit -> arena/maps/, pose graph on the robot
     python tools/arena_map.py drive        # restart only the drive page (new code), map kept
@@ -22,6 +23,7 @@ import getpass
 import json
 import os
 import pathlib
+import re
 import shlex
 import sys
 import time
@@ -59,7 +61,11 @@ def running(client):
     return code == 0
 
 
-def start(client):
+def start(client, args=()):
+    """Start the stack; `args` are arena_slam.launch.py arguments, e.g. motion:=false."""
+    if any(not re.fullmatch(r"[a-z_]+:=[\w./;=-]*", a) for a in args):
+        print(f"launch arguments look like name:=value: {args}")
+        return 2
     if running(client):
         print("already mapping; `status` shows it, `stop` ends it")
         return 1
@@ -74,8 +80,8 @@ def start(client):
     # setsid: the launch leads its own process group, whose id `stop` signals. Nothing may go
     # in front of it on this line: `a && b &` backgrounds a subshell, whose pid is not the group's
     # and which keeps the SSH channel open.
-    sh(client, f"setsid nohup bash -c '{ROS} && exec ros2 launch {REMOTE}/arena_slam.launch.py'"
-               f" > {log} 2>&1 < /dev/null & echo $! > {PGID}")
+    sh(client, f"setsid nohup bash -c '{ROS} && exec ros2 launch {REMOTE}/arena_slam.launch.py"
+               f" {' '.join(args)}' > {log} 2>&1 < /dev/null & echo $! > {PGID}")
     print(f"started; log {log}; waiting 12 s for the stack")
     time.sleep(12)
     return status(client)
@@ -329,6 +335,8 @@ def main():
         return {"save": save, "record": record, "calib": calib}[sys.argv[1]](connect(), sys.argv[2])
     if len(sys.argv) >= 3 and sys.argv[1] == "tune":
         return tune(connect(), sys.argv[2], sys.argv[3:])
+    if len(sys.argv) >= 2 and sys.argv[1] == "start":
+        return start(connect(), sys.argv[2:])
     if len(sys.argv) != 2 or sys.argv[1] not in commands:
         print(__doc__)
         return 2
