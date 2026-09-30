@@ -17,6 +17,8 @@ import numpy as np
 
 TYPES = {"float": "f4", "float32": "f4", "double": "f8", "uchar": "u1", "uint8": "u1",
          "int": "i4", "uint": "u4", "short": "i2", "ushort": "u2"}
+WALL_BAND = 0.05   # m either side of a fitted wall line: the wall, as thick as the stitching has it
+FENCE_TOP = 0.35   # m above the floor: the fence is 30 cm (31 in the cloud), the landmarks less
 
 
 def read_ply(path):
@@ -58,6 +60,23 @@ def write_ply(path, xyz, rgb):
         f.write(data.tobytes())
 
 
+def crop(xyz, fence, floor_z):
+    """Which points are the arena's: those inside the fitted fence or on its walls (within
+    WALL_BAND of a wall line), and of those on the walls only what is no higher than the fence.
+    The camera also saw the room over the fence -- beyond the walls, and standing right against
+    them, inside the band kept for the walls' thickness: on 2026-09-30 something 1.1 m tall
+    against one wall, 6.5k points, all of them beyond the wall line. Inside the fence any height
+    stays (a robot, a taller landmark). Returns (keep, over): over = on a wall, above the fence."""
+    o = np.array(fence["arena_frame"]["origin_map"])
+    ex = np.array(fence["arena_frame"]["x_axis_map"])
+    length, width = fence["fence"]["size_m"]
+    a, b = (xyz[:, :2] - o) @ ex, (xyz[:, :2] - o) @ fence_fit.rot90(ex)
+    inside = np.minimum.reduce([a, length - a, b, width - b])   # m in from the nearest wall line
+    near = inside > -WALL_BAND
+    over = near & (inside < WALL_BAND) & (xyz[:, 2] - floor_z > FENCE_TOP)
+    return near & ~over, over
+
+
 def main():
     xyz, rgb = read_ply(sys.argv[1])
     out = sys.argv[2]
@@ -68,12 +87,8 @@ def main():
     # the arena (the camera also saw the room over the fence).
     band = (xyz[:, 2] - floor_z > 0.05) & (xyz[:, 2] - floor_z < 0.25)
     fence = fence_fit.fit_points(xyz[band, :2])
-    o = np.array(fence["arena_frame"]["origin_map"])
-    ex = np.array(fence["arena_frame"]["x_axis_map"])
-    length, width = fence["fence"]["size_m"]
-    a, b = (xyz[:, :2] - o) @ ex, (xyz[:, :2] - o) @ fence_fit.rot90(ex)
-    arena = (a > -0.05) & (a < length + 0.05) & (b > -0.05) & (b < width + 0.05)
-    xyz, rgb = xyz[arena], rgb[arena]
+    keep, over = crop(xyz, fence, floor_z)
+    xyz, rgb = xyz[keep], rgb[keep]
     write_ply(f"{out}_arena.ply", xyz, rgb)
 
     res = 0.01
@@ -103,7 +118,8 @@ def main():
     view[top.reshape(h, w) < 0] = 0
     cv2.imwrite(f"{out}_heights.png", view)
     f = fence["fence"]
-    print(f"{len(xyz)} points in the arena, floor at z = {floor_z:+.3f} m, {on_floor.sum()} on it;"
+    print(f"{len(xyz)} points in the arena ({over.sum()} over the fence dropped), floor at"
+          f" z = {floor_z:+.3f} m, {on_floor.sum()} on it;"
           f" {w} x {h} px at 1 cm -> {out}_floor.png, {out}_heights.png, {out}_arena.ply")
     print(f"SCORE fence {f['size_m'][0]:.3f} x {f['size_m'][1]:.3f} m"
           f" (off {f['error_cm'][0]:+.1f} / {f['error_cm'][1]:+.1f} cm), walls thick"

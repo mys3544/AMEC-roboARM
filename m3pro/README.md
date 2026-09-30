@@ -113,7 +113,11 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
   above and a height view in `out/arena/rtab/`. Stop RTAB-Map with SIGINT and let it save its
   database before exporting. First scan, 2026-09-30: the lidar-stitched export put the fence's
   walls 14-16 cm thick and blurred the print; re-stitched visually, 9-11 cm, the print's lines
-  single, the fence 3.215 x 2.817 m. `arena_v4` stays the reference map.
+  single, the fence 3.215 x 2.817 m. `arena_v4` stays the reference map. The crop
+  (`ortho.py`) keeps 5 cm either side of each wall for the walls' thickness, but nothing there
+  above the fence (35 cm): that is the room seen over it -- in the first scan, something up to
+  1.1 m tall standing against one wall, 6.9k points. `arena_map.py rtab-crop [N]` crops the
+  kept export (or try N) again and fetches it, without stitching again.
 - **The maps to use:** `arena_v4` -- the live run loop4 replayed with today's defaults
   (bias-corrected merged scan, EKF 7 Hz, 20 cm between key scans): 3.200 x 2.785 m, every wall
   seen, the three landmarks; an image and YAML only, no pose graph. `arena_v3` -- the whole

@@ -12,6 +12,7 @@
     python tools/arena_map.py start mapper:=rtabmap   # the coloured 3D arena, RTAB-Map
     python tools/arena_map.py camcheck     # is the camera where the launch says? (the floor)
     python tools/arena_map.py rtab-export  # the 3D cloud, the floor print, heights -> out/arena/rtab
+    python tools/arena_map.py rtab-crop [N]   # the kept export (or try N) cropped again, fetched
     python tools/arena_map.py calib NAME   # the two lidars' mounting, from its standing start
     python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings, compare
     python tools/arena_map.py status
@@ -280,12 +281,33 @@ def rtab_export(client, name="arena", tries=3):
         return 1
     best = min(scores, key=scores.get)
     print(f"kept try {best} (worst wall {scores[best]:.1f} cm)")
+    sh(client, f"echo {best} > {out}/kept")   # for rtab-crop
+    return fetch_export(client, f"{out}/try{best}", name)
+
+
+def rtab_crop(client, k=None, name="arena"):
+    """The kept export (or try N) cropped to the arena again -- ortho.py only, on the full cloud
+    rtabmap-export left on the robot, no stitching -- and fetched: for a change to the crop."""
+    upload(client)
+    out = f"{REMOTE}/rtab/export"
+    k = k or sh(client, f"cat {out}/kept")[1].strip()
+    if not str(k).isdigit():
+        print(f"no kept export in {out} (rtab-export records it): name the try, rtab-crop N")
+        return 1
+    run = f"{out}/try{k}"
+    code, text = sh(client, f"python3 {REMOTE}/ortho.py {run}/{name}_cloud.ply {run}/{name}",
+                    timeout=300)
+    print(f"try {k}: {text.strip()}")
+    return fetch_export(client, run, name) if code == 0 else 1
+
+
+def fetch_export(client, run, name):
     dest = HERE / "out" / "arena" / "rtab"
     dest.mkdir(parents=True, exist_ok=True)
     sftp = client.open_sftp()
     for suffix in ("_arena.ply", "_floor.png", "_heights.png", "_camera_poses.txt"):
         try:
-            sftp.get(f"{out}/try{best}/{name}{suffix}", str(dest / f"{name}{suffix}"))
+            sftp.get(f"{run}/{name}{suffix}", str(dest / f"{name}{suffix}"))
         except OSError as e:
             print(f"no {name}{suffix}: {e}")
     print(f"-> {dest}")
@@ -444,6 +466,8 @@ def main():
         return record(connect(), sys.argv[2], float(sys.argv[4]))
     if len(sys.argv) == 3 and sys.argv[1] in ("save", "record", "calib"):
         return {"save": save, "record": record, "calib": calib}[sys.argv[1]](connect(), sys.argv[2])
+    if len(sys.argv) in (2, 3) and sys.argv[1] == "rtab-crop":
+        return rtab_crop(connect(), *(int(k) for k in sys.argv[2:]))
     if len(sys.argv) >= 3 and sys.argv[1] == "tune":
         return tune(connect(), sys.argv[2], sys.argv[3:])
     if len(sys.argv) >= 2 and sys.argv[1] == "start":
