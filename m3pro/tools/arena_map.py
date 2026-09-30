@@ -5,7 +5,9 @@
     python tools/arena_map.py snap         # the map so far + the fence fit -> out/arena/
     python tools/arena_map.py save NAME    # map + fence fit -> arena/maps/, pose graph on the robot
     python tools/arena_map.py drive        # restart only the drive page (new code), map kept
-    python tools/arena_map.py record NAME  # a replayable log of one auto loop, for tuning
+    python tools/arena_map.py record NAME [--step 0.5]   # a replayable log of one auto loop,
+                                           # for tuning; --step: stop and go, pausing every 0.5 m
+    python tools/arena_map.py resume       # go on after a stop-and-go pause
     python tools/arena_map.py calib NAME   # the two lidars' mounting, from its standing start
     python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings, compare
     python tools/arena_map.py status
@@ -155,10 +157,12 @@ def save(client, name):
 RAW = "/scan0 /scan1 /odom_raw /imu/data_raw"   # what a replay feeds the stack
 
 
-def record(client, name):
+def record(client, name, step=None):
     """A replayable log for tuning, ~/arena/bags/NAME: 20 s standing (the lidars' mounting is
     calibrated from it), the auto loop, 10 s standing. The raw topics, plus what the live stack
-    made of them (/scan, /odom, /tf) for comparison."""
+    made of them (/scan, /odom, /tf) for comparison. With `step` (m) the loop stops and goes:
+    it pauses after every `step` until `resume` (or Continue on the page / in the console) --
+    for a robot on its charging cable, which someone moves at each pause."""
     bag = f"{REMOTE}/bags/{name}"
     if not running(client):
         print("not mapping: `start` first (the loop is planned on the live map)")
@@ -169,22 +173,38 @@ def record(client, name):
     sh(client, f"mkdir -p {REMOTE}/bags; setsid nohup bash -c '{ROS} && exec ros2 bag record"
                f" -o {bag} {RAW} /cmd_vel /battery /scan /odom /tf /tf_static'"
                f" > {REMOTE}/logs/bag_{name}.log 2>&1 < /dev/null & echo $! > {REMOTE}/bag.pgid")
-    print("recording; standing still for 20 s")
+    print("recording; standing still for 20 s", flush=True)
     time.sleep(20)
+    state = json.loads(sh(client, "curl -s -m 5 localhost:8095/api/state")[1])
+    if not (state["fence"] or {}).get("complete"):
+        # slam_toolbox takes a scan only after 10 cm or 8.6 deg of travel, so a robot that
+        # has only stood has one lidar's one scan in its map -- too little for the loop's plan.
+        print("the map sees too little of the fence yet: turning in place (~110 deg)", flush=True)
+        sh(client, "for i in $(seq 60); do curl -s -m 1 -o /dev/null -X POST -H"
+                   " 'Content-Type: application/json' -d '{\"wz\": 0.5}' localhost:8095/api/drive;"
+                   " sleep 0.1; done", timeout=60)
+        time.sleep(3)
+    body = json.dumps({"on": True} if step is None else {"on": True, "step": step})
     _c, text = sh(client, "curl -s -m 5 -X POST -H 'Content-Type: application/json'"
-                          " -d '{\"on\": true}' localhost:8095/api/auto")
-    print(f"auto loop: {text}")
+                          f" -d '{body}' localhost:8095/api/auto")
+    print(f"auto loop: {text}", flush=True)
     try:
-        started = time.monotonic()
-        while time.monotonic() - started < 480:
+        started, was_paused = time.monotonic(), False
+        # stop and go waits for people at every pause: an hour, not eight minutes
+        while time.monotonic() - started < (480 if step is None else 3600):
             time.sleep(10)
             state = json.loads(sh(client, "curl -s -m 5 localhost:8095/api/state")[1])
+            if state.get("paused") and was_paused:
+                continue   # still waiting: nothing new to say
+            was_paused = bool(state.get("paused"))
             # the live map's fence as the robot drives: does it grow?
             save_map(client, f"{REMOTE}/snaps/rec")
             fence = json.loads(sh(client, f"cat {REMOTE}/snaps/rec_fit.json")[1])["fence"]
             print(f"  {time.monotonic() - started:4.0f} s {state['mode']} {state['auto']}"
                   f" fence {fence['size_m'][0]:.3f} x {fence['size_m'][1]:.3f}"
-                  f" thick {[w['thick_cm'] for w in fence['walls']]} {state['note']}")
+                  f" thick {[w['thick_cm'] for w in fence['walls']]} {state['note']}", flush=True)
+            if was_paused:
+                print("  PAUSED -- waiting for `arena_map.py resume` (or Continue)", flush=True)
             if state["mode"] == "idle" and state["auto"] is None:
                 break
         print("standing still for 10 s")
@@ -196,10 +216,20 @@ def record(client, name):
     return 0
 
 
+def resume(client):
+    """Go on after a stop-and-go pause."""
+    _c, text = sh(client, "curl -s -m 5 -X POST -H 'Content-Type: application/json'"
+                          " -d '{\"resume\": true}' localhost:8095/api/auto")
+    print(text)
+    return 0 if json.loads(text or "{}").get("ok") else 1
+
+
 CONFIGS = {   # what `tune` tries by default: arena_slam.launch.py arguments
-    "live": [],                                   # what `start` runs now
-    "yahboom": ["scans:=merged", "ekf_hz:=7"],    # Yahboom's scan merge and EKF rate
-    "merged30": ["scans:=merged"],
+    "default": [],                                              # what `start` runs now
+    "yahboom": ["scans:=merged", "bias:=false", "ekf_hz:=7"],   # Yahboom's merge, raw scans
+    "merged_raw": ["scans:=merged", "bias:=false"],
+    "merged_bias": ["scans:=merged", "bias:=true"],
+    "lidars": ["scans:=lidars"],
 }
 
 
@@ -330,7 +360,10 @@ def stop(client):
 
 
 def main():
-    commands = {"start": start, "status": status, "snap": snap, "drive": drive, "stop": stop}
+    commands = {"start": start, "status": status, "snap": snap, "drive": drive, "stop": stop,
+                "resume": resume}
+    if len(sys.argv) == 5 and sys.argv[1] == "record" and sys.argv[3] == "--step":
+        return record(connect(), sys.argv[2], float(sys.argv[4]))
     if len(sys.argv) == 3 and sys.argv[1] in ("save", "record", "calib"):
         return {"save": save, "record": record, "calib": calib}[sys.argv[1]](connect(), sys.argv[2])
     if len(sys.argv) >= 3 and sys.argv[1] == "tune":

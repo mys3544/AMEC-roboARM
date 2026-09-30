@@ -4,17 +4,21 @@ the drive page (drive_server.py) to move the robot while it maps.
     ros2 launch ~/arena/arena_slam.launch.py [name:=value ...]   (tools/arena_map.py start)
 
 Arguments -- the same file maps live and replays a recorded run (replay.sh), so what is tuned on
-a recording is what runs on the robot. The defaults are what tuning on 2026-09-30 chose (the
-map within 1 cm of the fence all through a replay; Yahboom's settings: 2 cm too big, growing):
+a recording is what runs on the robot. The defaults are what tuning on 2026-09-30 chose, on the
+live run loop4 replayed: Yahboom's merge of the two lidars with each one's range bias taken off,
+Yahboom's EKF rate, and slam_params.yaml's 20 cm between key scans -- the fence 3.200 x 2.785 m
+at the end, its long side moving 0.6 cm over the loop (Yahboom's settings: +1.9 cm, +1.1):
     sim:=true          use the recording's clock; no drive page
     motion:=false      bench mode: the drive page shows everything and refuses to move (on a
                        table the lidars cannot see the edge)
-    ekf_hz:=N          the odometry filter's rate (30; Yahboom's is 7)
+    ekf_hz:=N          the odometry filter's rate (7, Yahboom's; 30 let the map grow more)
     ekf_predict:=true  the filter stamps odom -> base_footprint at the current time, predicted,
                        not at its last measurement -- a scan newer than that waits for a
                        transform, and slam_toolbox drops it when the next scan comes
     scans:=lidars      slam_toolbox takes each lidar's own scan (scan_relay.py, which also takes
-                       off each lidar's range bias); scans:=merged, the merged /scan instead
+                       off each lidar's range bias); scans:=merged, the merged /scan instead.
+                       Live, lidars drops nearly every scan (scan_relay.py says why)
+    bias:=false        merge the lidars' raw scans (Yahboom's), not the bias-corrected ones
     lidars:=FILE       where the lidars sit and their range biases (lidars.yaml)
     slam:=FILE         slam_toolbox's settings (slam_params.yaml)
     slam_set:="k=v;k=v"  some of them overridden, e.g. "resolution=0.01" (scan_queue_size=10
@@ -35,7 +39,8 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULTS = {"sim": "false", "motion": "true", "ekf_hz": "30", "ekf_predict": "false", "scans": "lidars",
+DEFAULTS = {"sim": "false", "motion": "true", "ekf_hz": "7", "ekf_predict": "false",
+            "scans": "merged", "bias": "true",
             "lidars": os.path.join(HERE, "lidars.yaml"),
             "slam": os.path.join(HERE, "slam_params.yaml"), "slam_set": ""}
 
@@ -50,7 +55,7 @@ def static_tf(parent, child, x=0.0, y=0.0, z=0.0, yaw_deg=0.0):
 
 def nodes(context):
     arg = {k: LaunchConfiguration(k).perform(context) for k in DEFAULTS}
-    sim = arg["sim"] == "true"
+    sim, bias = arg["sim"] == "true", arg["bias"] == "true"
     clock = {"use_sim_time": sim}
     with open(arg["lidars"]) as f:
         lidars = yaml.safe_load(f)
@@ -68,10 +73,11 @@ def nodes(context):
              parameters=[ekf_yaml, {**clock, "frequency": float(arg["ekf_hz"]),
                                     "predict_to_current_time": arg["ekf_predict"] == "true"}],
              remappings=[("/odometry/filtered", "/odom")]),
-        # /scan0 + /scan1 -> /scan_multi in base_link
+        # /scan0 + /scan1 (or with bias, scan_relay.py's /scan0_c + /scan1_c) -> /scan_multi
         Node(package="ira_laser_tools", executable="laserscan_multi_merger",
              name="laserscan_multi_merger",
-             parameters=[os.path.join(HERE, "merge_params.yaml"), clock]),
+             parameters=[os.path.join(HERE, "merge_params.yaml"), clock,
+                         {"laserscan_topics": "/scan0_c /scan1_c"} if bias else {}]),
         # /scan_multi -> /scan, returns under 0.18 m (the chassis) blanked
         Node(package="yahboom_laser_filter", executable="laser_filter_node",
              name="laser_filter_node",
@@ -82,7 +88,7 @@ def nodes(context):
                          slam_set],
              output="screen"),
     ]
-    if arg["scans"] == "lidars":
+    if arg["scans"] == "lidars" or bias:
         out.append(ExecuteProcess(cmd=["python3", os.path.join(HERE, "scan_relay.py"),
                                        arg["lidars"], "--ros-args",
                                        "-p", f"use_sim_time:={arg['sim']}"],

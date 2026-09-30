@@ -93,6 +93,21 @@ def test_a_command_lapses_without_repeats_and_stop_stops_at_once():
     assert len(sent) == count   # idle: nothing sent, the base is the gamepad's
 
 
+def test_the_loop_keeps_its_distance_but_driving_by_hand_does_not():
+    clock, sent = Clock(), []
+    driver = ds.Driver(lambda: (0.0, 0.0, 0.0), lambda *v: sent.append(v), clock)
+    driver.set_scan(wall_ahead(0.30))   # something 30 cm ahead
+    driver.drive({"vx": 1.0})
+    driver.tick()
+    assert sent[-1] == (ds.MAX_V, 0.0, 0.0) and driver.nearest == 0.30   # by hand: shown only
+    driver.stop()
+    driver.tick()
+    driver.auto = {"waypoints": [(2.0, 0.0)], "i": 0, "heading": 0.0, "blocked_since": None,
+                   "skips": 0, "step": None, "travelled": 0.0, "from": (0.0, 0.0), "paused": False}
+    driver.tick()
+    assert driver.mode == "auto" and sent[-1][:2] == (0.0, 0.0)   # the loop stops short
+
+
 def test_bench_mode_refuses_to_move():
     clock, sent = Clock(), []
     driver = ds.Driver(lambda: (0.0, 0.0, 0.0), lambda *v: sent.append(v), clock, motion=False)
@@ -103,11 +118,15 @@ def test_bench_mode_refuses_to_move():
     assert sent == [] and driver.mode == "idle" and driver.state()["motion"] is False
 
 
-def test_no_motion_without_a_fresh_scan():
+def test_the_loop_needs_a_fresh_scan_driving_by_hand_does_not():
     clock, sent = Clock(), []
     driver = ds.Driver(lambda: (0.0, 0.0, 0.0), lambda *v: sent.append(v), clock)
     driver.set_scan(wall_ahead(2.0))
     clock.t += ds.SCAN_STALE + 0.01
-    driver.drive({"vx": 1.0})
+    driver.auto = {"waypoints": [(2.0, 0.0)], "i": 0, "heading": 0.0, "blocked_since": None,
+                   "skips": 0, "step": None, "travelled": 0.0, "from": (0.0, 0.0), "paused": False}
     driver.tick()
     assert sent[-1] == (0.0, 0.0, 0.0) and "no lidar" in driver.note
+    driver.drive({"vx": 1.0})
+    driver.tick()
+    assert sent[-1] == (ds.MAX_V, 0.0, 0.0)

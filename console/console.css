@@ -75,6 +75,9 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .turn { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .turn button { touch-action: none; }
 .speed { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+.stepwise { color: var(--muted); font-size: 13px; }
+.go { background: #d99a1e; border-color: #d99a1e; color: #fff; font-weight: 600; }
+.pill.paused { background: #d99a1e; color: #fff; }
 .speed input { flex: 1; }
 
 /* X3: jobs */

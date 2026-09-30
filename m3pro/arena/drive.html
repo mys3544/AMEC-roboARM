@@ -17,6 +17,8 @@
   h1 { font-size: 17px; margin: 0; }
   #mode { font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--key); }
   #mode.manual, #mode.auto { background: var(--accent); color: #fff; }
+  #mode.paused { background: #d99a1e; color: #fff; }
+  #go { padding: 10px; background: #d99a1e; border-color: #d99a1e; color: #fff; font-weight: 600; }
   #note { color: var(--muted); }
   main { display: flex; gap: 16px; padding: 0 16px 16px; flex-wrap: wrap; align-items: flex-start; }
   #mapbox { flex: 1 1 520px; min-width: 0; background: var(--panel); border: 1px solid var(--line);
@@ -70,9 +72,13 @@
     </div>
     <label>speed <input id="speed" type="range" min="20" max="100" value="60"> <span id="pct">60 %</span></label>
     <button id="auto">Auto: loop the arena</button>
+    <label><input type="checkbox" id="stepwise"> stop and go: pause every
+      <input id="step" type="number" value="0.5" min="0.1" max="5" step="0.1" style="width: 4em"> m</label>
+    <button id="go" hidden>Continue (cable moved, arena clear)</button>
     <p class="help">Hold to move, let go to stop. Keys: <kbd>W</kbd><kbd>S</kbd> forward/back,
       <kbd>A</kbd><kbd>D</kbd> sideways, <kbd>Q</kbd><kbd>E</kbd> turn, <kbd>Space</kbd> stop.
-      Full speed is 0.15 m/s; the robot refuses to move towards anything nearer than 35 cm.</p>
+      Full speed is 0.15 m/s. Driving by hand has no distance limit: you judge how close.
+      The auto loop stops 35 cm short of anything in its path.</p>
     <pre id="info">connecting&hellip;</pre>
   </section>
 </main>
@@ -124,7 +130,11 @@ $('halt').onclick = stopAll;
 $('speed').oninput = () => { $('pct').textContent = $('speed').value + ' %'; };
 $('auto').onclick = async () => {
   const on = !$('auto').classList.contains('on');
-  const r = await post('/api/auto', { on });
+  const r = await post('/api/auto', on && $('stepwise').checked ? { on, step: +$('step').value } : { on });
+  if (!r.ok) $('note').textContent = r.error;
+};
+$('go').onclick = async () => {
+  const r = await post('/api/auto', { resume: true });
   if (!r.ok) $('note').textContent = r.error;
 };
 
@@ -147,6 +157,7 @@ async function poll() {
     $('mode').className = s.mode;
     $('note').textContent = s.note || '';
     $('auto').classList.toggle('on', s.auto !== null);
+    $('go').hidden = !s.paused;
     $('auto').textContent = s.auto ? `Auto: point ${s.auto[0] + 1} of ${s.auto[1]} (click to stop)` : 'Auto: loop the arena';
     const f = s.fence;
     $('info').textContent = [

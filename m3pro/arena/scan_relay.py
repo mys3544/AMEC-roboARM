@@ -1,11 +1,14 @@
-"""Both lidars' scans on one topic, /scan_lidars, each in its own frame and at its own time, for
-slam_toolbox (it keeps one sensor per frame_id). The merged /scan re-samples the two lidars into
-one scan from the robot's centre and fuses scans taken up to 140 ms apart as if they were one --
-while the robot moves, that puts the same wall in two places. Each lidar's range bias (from
-lidars.yaml, measured by lidar_calib.py) comes off every range, and returns within 0.18 m of the
-robot's centre (the chassis) are blanked, as Yahboom's filter does for /scan.
+"""Each lidar's scan with its range bias (from lidars.yaml, measured by lidar_calib.py) taken off
+every range, and returns within 0.18 m of the robot's centre (the chassis) blanked, as Yahboom's
+filter does for /scan -- published two ways:
 
-    python3 scan_relay.py LIDARS_YAML      (arena_slam.launch.py scans:=lidars starts it)
+- /scan0_c and /scan1_c, one per lidar: what the merger merges into /scan with bias:=true;
+- /scan_lidars, both on one topic, each in its own frame and at its own time, for slam_toolbox
+  with scans:=lidars (it keeps one sensor per frame_id). Live, that drops nearly every scan: the
+  robot board stamps them 55-75 ms ahead of the Jetson's clock, the odometry transform is never
+  there yet, and a scan every 70 ms pushes the waiting one out of slam_toolbox's queue.
+
+    python3 scan_relay.py LIDARS_YAML      (arena_slam.launch.py starts it)
 """
 
 import math
@@ -39,12 +42,14 @@ class Relay(Node):
     def __init__(self, bias):
         super().__init__("scan_relay")
         self.bias = bias   # {frame_id: m}
-        self.pub = self.create_publisher(LaserScan, "/scan_lidars", 20)
+        self.both = self.create_publisher(LaserScan, "/scan_lidars", 20)
         self.tf = Buffer()
         self.tf_listener = TransformListener(self.tf, self)
         self.mounts = {}
         for topic in ("/scan0", "/scan1"):
-            self.create_subscription(LaserScan, topic, self.relay, qos_profile_sensor_data)
+            one = self.create_publisher(LaserScan, f"{topic}_c", qos_profile_sensor_data)
+            self.create_subscription(LaserScan, topic, lambda scan, one=one: self.relay(scan, one),
+                                     qos_profile_sensor_data)
 
     def mount(self, frame):
         """The lidar's (x, y, yaw) in base_link, from the static transforms."""
@@ -55,7 +60,7 @@ class Relay(Node):
             self.mounts[frame] = (t.transform.translation.x, t.transform.translation.y, yaw)
         return self.mounts[frame]
 
-    def relay(self, scan):
+    def relay(self, scan, one):
         frame = scan.header.frame_id
         try:
             mount = self.mount(frame)
@@ -63,7 +68,8 @@ class Relay(Node):
             return
         scan.ranges = corrected(scan.ranges, scan.angle_min, scan.angle_increment, mount,
                                 self.bias.get(frame, 0.0))
-        self.pub.publish(scan)
+        one.publish(scan)
+        self.both.publish(scan)
 
 
 def main():

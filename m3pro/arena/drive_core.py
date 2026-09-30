@@ -2,11 +2,13 @@
 map, battery and pose; fake_m3.py feeds it a simulated robot's. It turns the page's commands --
 by hand, or a slow loop round the arena -- into velocity commands through `send(vx, vy, wz)`.
 
-Both modes are held to the same limits: at most 0.15 m/s and 0.6 rad/s; no motion towards a
-lidar return in the robot's path (22 cm either side of its centre line) nearer than 0.35 m from
-its centre, slowing from 0.6 m; no turning with anything within 0.25 m; nothing at all without a
-scan from the last 0.5 s. A manual command lapses 0.4 s after the page stops repeating it, so a
-closed tab stops the robot, and a hand on the controls ends the loop.
+Both modes are held to at most 0.15 m/s and 0.6 rad/s. The loop also to the distance limits: no
+motion towards a lidar return in the robot's path (22 cm either side of its centre line) nearer
+than 0.35 m from its centre, slowing from 0.6 m; no turning with anything within 0.25 m; nothing
+at all without a scan from the last 0.5 s. Manual driving has no distance limits -- whoever
+drives judges how close (the user's call, 2026-09-30) -- but a manual command lapses 0.4 s after
+the page stops repeating it, so a closed tab stops the robot, and a hand on the controls ends the
+loop.
 
     GET  /                  the drive page (drive.html)
     GET  /api/state         mode, pose, command, nearest return ahead, battery, loop, fence,
@@ -15,7 +17,8 @@ closed tab stops the robot, and a hand on the controls ends the loop.
     POST /api/drive         {"vx", "vy", "wz"}: -1..1 of full speed, repeated while held
                             (refused in bench mode, as is the loop)
     POST /api/stop
-    POST /api/auto          {"on": true | false}
+    POST /api/auto          {"on": true | false}; {"on": true, "step": 0.5} stops and goes: it
+                            pauses after every 0.5 m until {"resume": true}
 """
 
 import json
@@ -37,7 +40,8 @@ DEADMAN, SCAN_STALE = 0.4, 0.5                    # s
 INSET = 0.45                                      # the loop's distance from the walls, m
 BLOB_MARGIN = 0.33      # the loop keeps a blob's edge this far from the robot's centre, m:
                         # beyond HALF_PATH passing by, so a landmark never blocks the loop
-WALL_CLEAR = 0.30                                 # and the walls this far, m
+WALL_CLEAR = 0.30       # and the walls this far, m (0.42 left no room between a landmark and
+                        # the wall, and the planner zig-zagged: 93 points)
 STUCK = 4.0                                       # s blocked before a loop point is given up
 BENCH = "bench mode: motion off (arena_slam.launch.py motion:=false)"
 
@@ -176,9 +180,11 @@ class Driver:
         with self.lock:
             self.auto, self.manual_time, self.note = None, -math.inf, note
 
-    def start_auto(self):
+    def start_auto(self, step=None):
         """Plan the loop: 45 cm inside the fitted fence, from the corner nearest the robot, round
-        and back, then once along the middle, clear of the blobs (the landmarks)."""
+        and back, then once along the middle, clear of the blobs (the landmarks). With `step`
+        (m), stop and go: pause after every `step` of travel until resume() -- for a robot on
+        a charging cable, which someone moves while it waits."""
         if not self.motion:
             return BENCH
         m, result = self.fit()
@@ -203,11 +209,27 @@ class Driver:
         blobs = [(b["arena_xy_m"], max(b["size_cm"]) / 200) for b in result["blobs"]]
         route = [o + p[0] * ex + p[1] * ey
                  for p in detour(route + middle, blobs, length, width, here)]
+        step = None if step is None else min(max(float(step), 0.1), 5.0)
         with self.lock:
             self.manual_time = -math.inf
             self.auto = {"waypoints": [(float(p[0]), float(p[1])) for p in route], "i": 0,
-                         "heading": pose[2], "blocked_since": None, "skips": 0}
-            self.note = f"auto: {len(route)} points"
+                         "heading": pose[2], "blocked_since": None, "skips": 0,
+                         "step": step, "travelled": 0.0, "from": pose[:2], "paused": False}
+            self.note = f"auto: {len(route)} points" + (f", pausing every {step:.2f} m"
+                                                        if step else "")
+        return None
+
+    def resume(self):
+        """Go on after a stop-and-go pause (the cable moved, the arena clear again)."""
+        with self.lock:
+            auto = self.auto
+        if auto is None or not auto["paused"]:
+            return "nothing to continue: the loop is not paused"
+        pose = self.pose()
+        if pose is not None:
+            auto["from"] = pose[:2]
+        auto["travelled"], auto["blocked_since"], auto["paused"] = 0.0, None, False
+        self.note = f"auto: going on from point {auto['i'] + 1} of {len(auto['waypoints'])}"
         return None
 
     # --- the control loop, 20 Hz ----------------------------------------------------------------
@@ -223,7 +245,9 @@ class Driver:
             want, mode = manual, "manual"
         elif auto is not None:
             want, mode = self.auto_step(auto), "auto"
-        self.mode = mode if want is not None else "idle"
+        if want is None:
+            mode = "paused" if auto is not None and auto["paused"] and manual is None else "idle"
+        self.mode = mode
         if want is None:
             if self.moving:   # a few zeros, then the base is the gamepad's again
                 for _ in range(3):
@@ -231,7 +255,10 @@ class Driver:
                 self.moving = False
             self.cmd, self.nearest = (0.0, 0.0, 0.0), math.inf
             return
-        if scan is None:
+        if mode == "manual":   # the driver is the judge: no distance limits (the user's call,
+            vx, vy, wz = want  # 2026-09-30); the speed cap and the dead-man stay
+            self.nearest = math.inf if scan is None else limit(*want, scan)[3]   # shown only
+        elif scan is None:
             vx = vy = wz = 0.0
             self.nearest, self.note = math.inf, "no lidar scan: holding still"
         else:
@@ -243,11 +270,22 @@ class Driver:
 
     def auto_step(self, auto):
         """The loop's next command: straight at the next point at AUTO_V, keeping the heading
-        it started with (the base is omnidirectional). None when the loop is done."""
+        it started with (the base is omnidirectional). None when the loop is done, or paused."""
+        if auto["paused"]:
+            return None
         pose = self.pose()
         if pose is None:
             return (0.0, 0.0, 0.0)
         x, y, yaw = pose
+        if auto["step"]:   # stop and go: pause once `step` has been driven since the last one
+            auto["travelled"] += math.hypot(x - auto["from"][0], y - auto["from"][1])
+            auto["from"] = (x, y)
+            if auto["travelled"] >= auto["step"]:
+                auto["paused"] = True
+                self.note = (f"paused after {auto['travelled']:.2f} m, at point {auto['i'] + 1}"
+                             f" of {len(auto['waypoints'])}: move the cable, clear the arena,"
+                             " then Continue")
+                return None
         while True:
             if auto["i"] >= len(auto["waypoints"]):
                 self.stop("auto: loop done")
@@ -271,6 +309,14 @@ class Driver:
         elif auto["blocked_since"] is None:
             auto["blocked_since"] = now
         elif now - auto["blocked_since"] > STUCK:
+            pose = self.pose()
+            # into the robot's log (the launch's): what stopped the loop, for next time
+            print(f"auto: blocked {STUCK:.0f} s short of point {auto['i'] + 1} of"
+                  f" {len(auto['waypoints'])} ({auto['waypoints'][auto['i']][0]:.2f},"
+                  f" {auto['waypoints'][auto['i']][1]:.2f}): robot at"
+                  f" {None if pose is None else tuple(round(v, 2) for v in pose)}, going"
+                  f" ({want[0]:.3f}, {want[1]:.3f}) m/s, nearest return ahead"
+                  f" {self.nearest:.2f} m", flush=True)
             auto["i"] += 1
             auto["skips"] += 1
             auto["blocked_since"] = None
@@ -292,6 +338,7 @@ class Driver:
             "nearest_ahead_m": None if math.isinf(self.nearest) else round(self.nearest, 2),
             "scan_age_s": round(scan_age, 2) if math.isfinite(scan_age) else None,
             "auto": None if auto is None else [auto["i"], len(auto["waypoints"])],
+            "paused": auto is not None and auto["paused"],
             "fence": None if result is None else {"size_m": result["fence"]["size_m"],
                                                   "complete": result["fence"]["complete"],
                                                   "blobs": len(result["blobs"])},
@@ -371,7 +418,12 @@ def serve(driver, port, host="0.0.0.0"):
             elif path == "/api/stop":
                 driver.stop()
             elif path == "/api/auto":
-                error = driver.start_auto() if body.get("on") else driver.stop()
+                if body.get("resume"):
+                    error = driver.resume()
+                elif body.get("on"):
+                    error = driver.start_auto(body.get("step"))
+                else:
+                    error = driver.stop()
             else:
                 return self.reply(404, b'{"error": "not found"}')
             self.reply(200, json.dumps({"ok": error is None, "error": error}).encode())

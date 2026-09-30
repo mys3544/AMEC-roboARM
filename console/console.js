@@ -144,8 +144,13 @@ class M3Card extends Card {
     this.autoButton = $('.auto', controls);
     this.autoButton.onclick = () => {
       const on = !this.robot.state?.auto;
-      this.act(on ? 'auto loop started' : 'auto loop stopped', call(this.robot, 'api/auto', { on }));
+      const stepwise = on && $('.stepwise input', controls).checked;
+      this.act(on ? `auto loop started${stepwise ? ', stop and go' : ''}` : 'auto loop stopped',
+        call(this.robot, 'api/auto', stepwise ? { on, step: 0.5 } : { on }));
     };
+    this.goButton = $('.go', controls);
+    this.goButton.onclick = () =>
+      this.act('auto loop goes on', call(this.robot, 'api/auto', { resume: true }));
     this.img.onload = () => { this.img.classList.remove('broken'); this.nextMap(800); };
     this.img.onerror = () => { this.img.classList.add('broken'); this.nextMap(2000); };
     this.nextMap(0);
@@ -202,7 +207,9 @@ class M3Card extends Card {
       this.offline();
       return;
     }
-    this.setPill(s.motion === false ? 'bench' : s.mode, s.mode !== 'idle');
+    this.setPill(s.motion === false ? 'bench' : s.mode, s.mode !== 'idle' && s.mode !== 'paused');
+    $('.mode', this.el).classList.toggle('paused', s.mode === 'paused');
+    this.goButton.hidden = !s.paused;
     $('.note', this.el).textContent = s.note || '';
     $('.controls', this.el).querySelectorAll('button').forEach(b => {
       b.disabled = s.motion === false && !b.classList.contains('halt');   // bench: nothing moves

@@ -18,8 +18,9 @@ then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fak
 - **X3 card:** the wrist camera, arm / job / camera state, Pick one, Clear the table, Home;
   everything else on its own page (the "own page" link).
 - **M3 card:** the live map with the fence fit, the robot, its scan and the loop; hold the pad
-  or W/A/S/D (sideways on A/D), Q/E to turn; the auto loop. The robot's own limits apply: it
-  stops 35 cm short of anything in its path and 0.4 s after the page stops repeating a command.
+  or W/A/S/D (sideways on A/D), Q/E to turn; the auto loop. The robot's own limits apply: at
+  most 0.15 m/s, stopped 0.4 s after the page stops repeating a command; the loop also stops
+  35 cm short of anything in its path, driving by hand has no distance limit.
 - **STOP ALL** lets go of any held key, stops every robot in `robots.json` -- shown or not --
   and logs how long each took to confirm (pretend robots: M3 20 ms, X3 about 0.8 s).
 - **Pop out** opens one robot alone in its own window (`/?solo=m3`), e.g. for a second

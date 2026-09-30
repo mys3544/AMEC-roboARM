@@ -84,8 +84,9 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
 - **Driving:** http://192.168.73.66:8095/ -- hold the buttons or W/S (forward, back), A/D
   (sideways), Q/E (turn); letting go, Space or closing the tab stops it. "Auto: loop the arena"
   drives a slow loop 45 cm inside the fitted fence, around the landmarks. Both are held to
-  0.15 m/s and stop 35 cm short of anything the lidars see in their path. The gamepad works
-  whenever the page is not commanding.
+  0.15 m/s; the loop stops 35 cm short of anything the lidars see in its path, driving by hand
+  has no distance limit (whoever drives judges). The gamepad works whenever the page is not
+  commanding.
 - **Bench mode:** `python tools/arena_map.py start motion:=false` -- everything is shown, every
   command to move is refused (the page and the console grey their controls). Use it whenever
   the robot is on a table: the lidars see obstacles, not the table's edge. The gamepad still
