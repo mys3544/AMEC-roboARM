@@ -107,11 +107,13 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
 - **The 3D scan (RTAB-Map):** `arena_map.py arm mapping` (the arm to Yahboom's mapping pose; it
   has no read-back), `start mapper:=rtabmap` (the DaBai with depth aligned to colour, the lidar
   aligning key frames), `camcheck` (the camera's height and tilt measured from the floor,
-  against the launch's), drive, then `rtab-export`: the coloured cloud (PLY), the camera poses,
-  the floor print from above and a height view in `out/arena/rtab/`. Stop RTAB-Map with SIGINT
-  and let it save its database before exporting. First scan, 2026-09-30: 2.2 M points at 1 cm;
-  the track readable but blurred, RTAB-Map's own 2D grid 7 cm too big -- `arena_v4` stays the
-  reference.
+  against the launch's), drive, then `rtab-export`: the database stitched again visually (best
+  of three, by the fence walls' thickness in the cloud), the coloured cloud from depth within
+  1.5 m, noise-filtered and cropped to the arena (PLY), the camera poses, the floor print from
+  above and a height view in `out/arena/rtab/`. Stop RTAB-Map with SIGINT and let it save its
+  database before exporting. First scan, 2026-09-30: the lidar-stitched export put the fence's
+  walls 14-16 cm thick and blurred the print; re-stitched visually, 9-11 cm, the print's lines
+  single, the fence 3.215 x 2.817 m. `arena_v4` stays the reference map.
 - **The maps to use:** `arena_v4` -- the live run loop4 replayed with today's defaults
   (bias-corrected merged scan, EKF 7 Hz, 20 cm between key scans): 3.200 x 2.785 m, every wall
   seen, the three landmarks; an image and YAML only, no pose graph. `arena_v3` -- the whole

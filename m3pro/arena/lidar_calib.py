@@ -95,15 +95,7 @@ def icp(source, target, iterations=60):
     return R, t, float(np.sqrt(np.mean(gap[gap < 0.02] ** 2))), float(np.mean(gap < 0.02))
 
 
-def fence_of(points, res=0.01):
-    """fence_fit on the points drawn into a grid (no free space needed: all four walls are in)."""
-    lo = points.min(axis=0) - 0.2
-    size = np.ceil((points.max(axis=0) + 0.2 - lo) / res).astype(int)
-    grid = np.full((size[1], size[0]), 205, np.uint8)
-    cols = ((points[:, 0] - lo[0]) / res).astype(int)
-    rows = size[1] - 1 - ((points[:, 1] - lo[1]) / res).astype(int)
-    grid[rows, cols] = 0
-    return fence_fit.fit(grid, res, lo)
+fence_of = fence_fit.fit_points
 
 
 FIRST, SECOND = "laser0_frame", "laser1_frame"

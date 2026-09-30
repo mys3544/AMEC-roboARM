@@ -1,6 +1,10 @@
 """A top-down picture of the arena floor -- the printed track -- from RTAB-Map's coloured cloud:
 the points within 3 cm of the floor, seen from above at 1 cm per pixel, each pixel the median
-colour of its points. Also a view from above of everything (fence, landmarks) by height.
+colour of its points. Also a view from above of everything (fence, landmarks) by height, the
+cloud cropped to the fence (OUT_arena.ply), and a SCORE line to compare stitchings by: the fence
+as the cloud has it -- its size against 3.2 x 2.8 m and how thick its walls (the spread of the
+same wall across frames). A Laplacian "sharpness" of the print was tried and dropped: it rose
+and fell with speckle and coverage, and ranked the visibly blurred print first.
 
     python3 ortho.py CLOUD.ply OUT_PREFIX     (tools/arena_map.py rtab-export runs it)
 """
@@ -8,6 +12,7 @@ colour of its points. Also a view from above of everything (fence, landmarks) by
 import sys
 
 import cv2
+import fence_fit
 import numpy as np
 
 TYPES = {"float": "f4", "float32": "f4", "double": "f8", "uchar": "u1", "uint8": "u1",
@@ -41,13 +46,39 @@ def read_ply(path):
     return xyz, rgb
 
 
+def write_ply(path, xyz, rgb):
+    data = np.zeros(len(xyz), [("x", "<f4"), ("y", "<f4"), ("z", "<f4"),
+                               ("red", "u1"), ("green", "u1"), ("blue", "u1")])
+    data["x"], data["y"], data["z"] = xyz.T
+    data["red"], data["green"], data["blue"] = rgb.T
+    with open(path, "wb") as f:
+        f.write((f"ply\nformat binary_little_endian 1.0\nelement vertex {len(data)}\n"
+                 "property float x\nproperty float y\nproperty float z\nproperty uchar red\n"
+                 "property uchar green\nproperty uchar blue\nend_header\n").encode())
+        f.write(data.tobytes())
+
+
 def main():
     xyz, rgb = read_ply(sys.argv[1])
     out = sys.argv[2]
     floor_z = np.median(xyz[:, 2][np.abs(xyz[:, 2]) < 0.1])
+
+    # The fence as the cloud has it -- the points 5-25 cm above the floor, fitted like a map --
+    # scores the stitching (how thick its walls, how near 3.2 x 2.8 m) and crops the cloud to
+    # the arena (the camera also saw the room over the fence).
+    band = (xyz[:, 2] - floor_z > 0.05) & (xyz[:, 2] - floor_z < 0.25)
+    fence = fence_fit.fit_points(xyz[band, :2])
+    o = np.array(fence["arena_frame"]["origin_map"])
+    ex = np.array(fence["arena_frame"]["x_axis_map"])
+    length, width = fence["fence"]["size_m"]
+    a, b = (xyz[:, :2] - o) @ ex, (xyz[:, :2] - o) @ fence_fit.rot90(ex)
+    arena = (a > -0.05) & (a < length + 0.05) & (b > -0.05) & (b < width + 0.05)
+    xyz, rgb = xyz[arena], rgb[arena]
+    write_ply(f"{out}_arena.ply", xyz, rgb)
+
     res = 0.01
-    lo = np.percentile(xyz[:, :2], 1, axis=0) - 0.2
-    hi = np.percentile(xyz[:, :2], 99, axis=0) + 0.2
+    lo = xyz[:, :2].min(axis=0) - 0.05
+    hi = xyz[:, :2].max(axis=0) + 0.05
     w, h = np.ceil((hi - lo) / res).astype(int)
     col = ((xyz[:, 0] - lo[0]) / res).astype(int)
     row = h - 1 - ((xyz[:, 1] - lo[1]) / res).astype(int)
@@ -71,8 +102,12 @@ def main():
     view = cv2.applyColorMap(heights, cv2.COLORMAP_TURBO)
     view[top.reshape(h, w) < 0] = 0
     cv2.imwrite(f"{out}_heights.png", view)
-    print(f"{len(xyz)} points, floor at z = {floor_z:+.3f} m, {on_floor.sum()} on it;"
-          f" {w} x {h} px at 1 cm -> {out}_floor.png, {out}_heights.png")
+    f = fence["fence"]
+    print(f"{len(xyz)} points in the arena, floor at z = {floor_z:+.3f} m, {on_floor.sum()} on it;"
+          f" {w} x {h} px at 1 cm -> {out}_floor.png, {out}_heights.png, {out}_arena.ply")
+    print(f"SCORE fence {f['size_m'][0]:.3f} x {f['size_m'][1]:.3f} m"
+          f" (off {f['error_cm'][0]:+.1f} / {f['error_cm'][1]:+.1f} cm), walls thick"
+          f" {[wall['thick_cm'] for wall in f['walls']]} cm, corners {f['corner_angles_deg']}")
 
 
 if __name__ == "__main__":

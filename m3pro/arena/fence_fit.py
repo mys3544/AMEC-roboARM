@@ -226,6 +226,18 @@ def fit(grid, res, origin):
     }
 
 
+def fit_points(points, res=0.01):
+    """fit() on points (N x 2, m) drawn into a grid at `res` -- for a lidar scan or a 3D cloud's
+    fence band rather than a map (no free space is needed when all four walls are in)."""
+    lo = points.min(axis=0) - 0.2
+    size = np.ceil((points.max(axis=0) + 0.2 - lo) / res).astype(int)
+    grid = np.full((size[1], size[0]), 205, np.uint8)
+    cols = ((points[:, 0] - lo[0]) / res).astype(int)
+    rows = size[1] - 1 - ((points[:, 1] - lo[1]) / res).astype(int)
+    grid[rows, cols] = 0
+    return fit(grid, res, lo)
+
+
 def render(grid, res, origin, result, path=None):
     """The map cropped to the fence, the fitted walls in green, blobs in red, the arena axes;
     the whole map when there is no fit (`result` None). Returns the image and the function that

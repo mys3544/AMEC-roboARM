@@ -60,9 +60,11 @@ DEFAULTS = {"sim": "false", "motion": "true", "ekf_hz": "7", "ekf_predict": "fal
             "slam": os.path.join(HERE, "slam_params.yaml"), "slam_set": "",
             "mapper": "slam_toolbox", "camera": "0.05,0,0.365,0,-0.7",
             "rtab_db": os.path.join(os.path.dirname(HERE), "arena", "rtab", "arena.db")}
-# RTAB-Map for the arena: the lidar aligns key frames (ICP, 2D), wheel odometry through the EKF,
-# a key frame every 5 cm or 3 deg, the 2D grid from the lidar at 2 cm.
-RTAB_ARGS = ("--delete_db_on_start --Reg/Strategy 1 --Reg/Force3DoF true"
+# RTAB-Map for the arena: key frames aligned visually (Reg/Strategy 0: the camera's frames agree
+# with their odometry, the lidar's are stamped ahead -- lidar ICP put the same wall in frames up
+# to 16 cm apart, visual 9-10 cm, found re-stitching the first scan offline, 2026-09-30), wheel
+# odometry through the EKF, a key frame every 5 cm or 3 deg, the 2D grid from the lidar at 2 cm.
+RTAB_ARGS = ("--delete_db_on_start --Reg/Strategy 0 --Reg/Force3DoF true"
              " --RGBD/NeighborLinkRefining true --RGBD/ProximityBySpace true"
              " --RGBD/LinearUpdate 0.05 --RGBD/AngularUpdate 0.05"
              " --Grid/FromDepth false --Grid/CellSize 0.02"

@@ -246,24 +246,46 @@ def camcheck(client):
     return 0
 
 
-def rtab_export(client, name="arena"):
-    """RTAB-Map's database -> the coloured cloud (PLY), the camera poses, the floor print from
-    above and a height view -> out/arena/rtab/ here."""
+RESTITCH = "--Reg/Strategy 0"   # visual: the camera's frames agree with their own odometry
+EXPORT = "--max_range 1.5 --noise_radius 0.03 --noise_k 5"   # the DaBai's near, sharp depth
+
+
+def rtab_export(client, name="arena", tries=3):
+    """RTAB-Map's database, stitched again visually (rtabmap-reprocess, ~2 min a try) -> the
+    coloured cloud from depth within 1.5 m, noise-filtered, cropped to the fence (PLY), the
+    camera poses, the floor print from above and a height view -> out/arena/rtab/ here.
+    The scan's own lidar stitching put the same wall in frames up to 16 cm apart (the lidar
+    scans' clock); visually 9-10 cm, the print's lines single (2026-09-30). Visual stitching
+    samples at random and one try can smear a corner, so it is done `tries` times and the one
+    whose fence walls come out thinnest (the worst wall) is kept."""
     upload(client)
     db, out = f"{REMOTE}/rtab/{name}.db", f"{REMOTE}/rtab/export"
-    code, text = sh(client, f"{ROS} && mkdir -p {out} && rtabmap-export --cloud --poses_camera"
-                            f" --output_dir {out} --output {name} {db}"
-                            f" && python3 {REMOTE}/ortho.py {out}/{name}_cloud.ply {out}/{name}",
-                    timeout=900)
-    print(text[-3000:])
-    if code:
-        return code
+    scores = {}
+    for k in range(1, tries + 1):
+        run = f"{out}/try{k}"
+        _code, text = sh(client, f"{ROS} && rm -rf {run} && mkdir -p {run}"
+                                f" && rtabmap-reprocess {RESTITCH} {db} {run}/{name}.db"
+                                f" > {run}/reprocess.log 2>&1"
+                                f" && rtabmap-export --cloud --poses_camera {EXPORT}"
+                                f" --output_dir {run} --output {name} {run}/{name}.db"
+                                f" > {run}/export.log 2>&1"
+                                f" && python3 {REMOTE}/ortho.py {run}/{name}_cloud.ply {run}/{name}",
+                        timeout=1200)
+        score = next((line for line in text.splitlines() if line.startswith("SCORE")), None)
+        print(f"try {k}: {score or text[-800:]}", flush=True)
+        if score:
+            thick = json.loads(score.split("thick ")[1].split(" cm")[0])
+            scores[k] = max(thick)
+    if not scores:
+        return 1
+    best = min(scores, key=scores.get)
+    print(f"kept try {best} (worst wall {scores[best]:.1f} cm)")
     dest = HERE / "out" / "arena" / "rtab"
     dest.mkdir(parents=True, exist_ok=True)
     sftp = client.open_sftp()
-    for suffix in ("_cloud.ply", "_floor.png", "_heights.png", "_camera_poses.txt"):
+    for suffix in ("_arena.ply", "_floor.png", "_heights.png", "_camera_poses.txt"):
         try:
-            sftp.get(f"{out}/{name}{suffix}", str(dest / f"{name}{suffix}"))
+            sftp.get(f"{out}/try{best}/{name}{suffix}", str(dest / f"{name}{suffix}"))
         except OSError as e:
             print(f"no {name}{suffix}: {e}")
     print(f"-> {dest}")
