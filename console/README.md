@@ -23,14 +23,24 @@ then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fak
   35 cm short of anything in its path, driving by hand has no distance limit.
 - **STOP ALL** lets go of any held key, stops every robot in `robots.json` -- shown or not --
   and logs how long each took to confirm (pretend robots: M3 20 ms, X3 about 0.8 s).
-- **Pop out** opens one robot alone in its own window (`/?solo=m3`), e.g. for a second
-  monitor; the layout is remembered in the browser.
+- **3D scan:** the M3's coloured 3D scans of the arena, as `m3pro/tools/arena_map.py
+  rtab-export` leaves them in `m3pro/out/arena/rtab/` (on this laptop, so no robot needed); pick
+  one from the list, or open or drop any `.ply`. Drag turns, right-drag or Shift-drag moves,
+  the wheel (or a pinch) zooms, a double-click or "reset view" goes back to the view from
+  above. Camera colour or height colour (0 to 45 cm above the floor, blue to red), and the point
+  size (a 7 MB export, 463k points, is on screen in 0.1-0.2 s).
+- **Pop out** opens one robot, or the 3D scan, alone in its own window (`/?solo=m3`,
+  `/?solo=cloud`), e.g. for a second monitor; the layout is remembered in the browser.
 
 How it is built: `serve.py` (standard library) serves the page and passes JSON through as
 `/robot/<id>/<path>` -- the X3's panel sends no CORS headers; camera streams and maps come
-straight from the robots. No framework, no build step. It listens on localhost only (IPv4 and
-IPv6: on Windows `localhost` is tried as `::1` first, and without it every connection waited
-2 s). Not yet: dockview panels (drag, split, float), the arena panel with both robots on the
-mat, SSE instead of polling, voice.
+straight from the robots. The scans come from `serve.py` too: `/clouds.json` lists the PLY
+files in the export folder and `/clouds/<name>` is one (that folder and `.ply` only).
+`cloud.js` draws them with WebGL2 and no library (binary little-endian or ASCII PLY, x y z
+and red green blue; other properties skipped), loaded only when the 3D view opens. No
+framework, no build step. It listens on localhost only (IPv4 and IPv6: on Windows `localhost`
+is tried as `::1` first, and without it every connection waited 2 s). Not yet: dockview panels
+(drag, split, float), the arena panel with both robots on the mat, SSE instead of polling,
+voice.
 
 `python -m pytest console` runs `test_serve.py`.

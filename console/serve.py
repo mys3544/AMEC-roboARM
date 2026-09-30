@@ -10,6 +10,8 @@ with a STOP for each and STOP ALL always on screen.
 The page (index.html, console.js, console.css) talks to each robot's own web API. JSON goes
 through here as /robot/<id>/<path> -- the X3's panel sends no CORS headers, and one origin keeps
 the page simple; camera frames and maps come straight from the robots, which images may. The
+3D view gets the M3's exported scans from this laptop: /clouds.json lists the PLY files in
+m3pro/out/arena/rtab (where `arena_map.py rtab-export` puts them), /clouds/<name> is one. The
 console listens on localhost only: it is this laptop's (and a microphone needs localhost).
 Standard library only.
 """
@@ -17,18 +19,21 @@ Standard library only.
 import argparse
 import json
 import pathlib
+import shutil
 import socket
 import subprocess
 import sys
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 PORT = 8099
+CLOUDS = ROOT / "m3pro" / "out" / "arena" / "rtab"   # the 3D scans, from arena_map.py rtab-export
 FAKES = [   # --fake starts these; robots.fake.json points at them
     [sys.executable, str(ROOT / "tools" / "webapp.py"), "--sim", "--port", "8180", "--out", ""],
     [sys.executable, str(ROOT / "m3pro" / "arena" / "fake_m3.py"), "--port", "8195"],
@@ -38,7 +43,7 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
 GET_TIMEOUT, POST_TIMEOUT = 3, 30   # s; a POST may move an arm before it answers
 
 
-def make_handler(robots):
+def make_handler(robots, clouds=CLOUDS):
     urls = {r["id"]: r["url"].rstrip("/") for r in robots}
 
     class Handler(BaseHTTPRequestHandler):
@@ -64,10 +69,26 @@ def make_handler(robots):
                 return self.proxy("GET")
             if path == "/robots.json":
                 return self.send(200, json.dumps(robots).encode(), TYPES[".json"])
+            if path == "/clouds.json":
+                return self.send(200, json.dumps(list_clouds(clouds)).encode(), TYPES[".json"])
+            if path.startswith("/clouds/"):
+                return self.cloud(urllib.parse.unquote(path[len("/clouds/"):]))
             file = (HERE / ("index.html" if path == "/" else path.lstrip("/"))).resolve()
             if file.parent != HERE or file.suffix not in TYPES or not file.is_file():
                 return self.error(404, "not found")
             self.send(200, file.read_bytes(), TYPES[file.suffix])
+
+        def cloud(self, name):
+            file = (clouds / name).resolve()
+            if file.parent != clouds.resolve() or file.suffix != ".ply" or not file.is_file():
+                return self.error(404, "not found")
+            self.send_response(200)   # streamed: a full-size export is tens of MB
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(file.stat().st_size))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            with file.open("rb") as f:
+                shutil.copyfileobj(f, self.wfile)
 
         def do_POST(self):
             if self.path.startswith("/robot/"):
@@ -95,6 +116,14 @@ def make_handler(robots):
                 self.error(502, f"{robot} not reachable: {getattr(e, 'reason', e)}")
 
     return Handler
+
+
+def list_clouds(folder):
+    """The PLY files in the folder, newest first: name, size and when each was written."""
+    files = sorted(folder.glob("*.ply"), key=lambda f: f.stat().st_mtime, reverse=True)
+    return [{"name": f.name, "bytes": f.stat().st_size,
+             "written": time.strftime("%Y-%m-%d %H:%M", time.localtime(f.stat().st_mtime))}
+            for f in files]
 
 
 class Server(ThreadingHTTPServer):

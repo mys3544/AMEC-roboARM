@@ -272,6 +272,121 @@ class X3Card extends Card {
   }
 }
 
+class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP of its own
+  constructor() {
+    this.el = $('#cloud-card').content.firstElementChild.cloneNode(true);
+    this.scene = $('.scene', this.el);
+    this.pick = $('.pick', this.el);
+    this.viewer = import('./cloud.js').then(m => m.viewer($('canvas', this.el)));   // WebGL only when shown
+    this.viewer.catch(e => this.fail(e));
+    $('.popout', this.el).onclick = () => window.open('/?solo=cloud', 'cloud', 'width=1100,height=860');
+    $('.home', this.el).onclick = () => this.viewer.then(v => v.reset());
+    const colours = [...this.el.querySelectorAll('[data-colour]')];
+    colours.forEach(b => {
+      b.onclick = () => {
+        colours.forEach(c => c.classList.toggle('on', c === b));
+        store.set('console.cloud.colour', b.dataset.colour);
+        this.viewer.then(v => v.setColour(b.dataset.colour));
+      };
+    });
+    colours.find(b => b.dataset.colour === store.get('console.cloud.colour', 'camera'))?.click();
+    const size = $('.cloud-controls input', this.el);
+    size.oninput = () => {
+      $('.cloud-controls output', this.el).textContent = `${size.value} px`;
+      store.set('console.cloud.size', Number(size.value));
+      this.viewer.then(v => v.setSize(Number(size.value)));
+    };
+    size.value = store.get('console.cloud.size', 3);
+    size.oninput();
+    this.pick.onchange = () => this.fetchCloud(this.pick.value);
+    $('.file input', this.el).onchange = e => { if (e.target.files[0]) this.openFile(e.target.files[0]); };
+    this.scene.addEventListener('dragover', e => { e.preventDefault(); this.scene.classList.add('dropping'); });
+    this.scene.addEventListener('dragleave', () => this.scene.classList.remove('dropping'));
+    this.scene.addEventListener('drop', e => {
+      e.preventDefault();
+      this.scene.classList.remove('dropping');
+      if (e.dataTransfer.files[0]) this.openFile(e.dataTransfer.files[0]);
+    });
+    this.list();
+  }
+
+  async list() {
+    try {
+      const clouds = await (await fetch('/clouds.json')).json();
+      this.pick.replaceChildren(...clouds.map(c =>
+        new Option(`${c.name}, ${c.written}, ${(c.bytes / 1e6).toFixed(1)} MB`, c.name)));
+      if (!clouds.length) {
+        this.message('no 3D scan on this laptop yet -- m3pro/tools/arena_map.py rtab-export, or open a .ply');
+        return;
+      }
+      const saved = store.get('console.cloud', null);
+      this.pick.value = clouds.some(c => c.name === saved) ? saved : clouds[0].name;
+      this.fetchCloud(this.pick.value);
+    } catch (e) {
+      this.fail(e);
+    }
+  }
+
+  async fetchCloud(name) {
+    store.set('console.cloud', name);
+    this.pick.querySelector('option[value=""]')?.remove();   // a file opened from this computer
+    const token = this.token = {};   // a later choice wins over a slower earlier one
+    this.message(`loading ${name}...`);
+    try {
+      const reply = await fetch(`/clouds/${encodeURIComponent(name)}`);
+      if (!reply.ok) throw new Error(`${name}: HTTP ${reply.status}`);
+      const buffer = await reply.arrayBuffer();
+      if (token === this.token) await this.display(name, buffer);
+    } catch (e) {
+      if (token === this.token) this.fail(e);
+    }
+  }
+
+  async openFile(file) {
+    const token = this.token = {};
+    // listed while it is shown, so that choosing an exported scan again is a change
+    this.pick.querySelector('option[value=""]')?.remove();
+    const option = new Option(`${file.name} (this computer)`, '', true, true);
+    option.disabled = true;
+    this.pick.prepend(option);
+    this.message(`reading ${file.name}...`);
+    try {
+      const buffer = await file.arrayBuffer();
+      if (token === this.token) await this.display(`${file.name} (opened from this computer)`, buffer);
+    } catch (e) {
+      if (token === this.token) this.fail(e);
+    }
+  }
+
+  async display(name, buffer) {
+    const t0 = performance.now();
+    const { count, size } = (await this.viewer).load(buffer);
+    this.message('');
+    $('.note', this.el).textContent = `${count.toLocaleString('en')} points`;
+    $('.facts', this.el).textContent = [
+      `scan     ${name}`,
+      `points   ${count.toLocaleString('en')}, ${(buffer.byteLength / 1e6).toFixed(1)} MB, ` +
+        `on screen in ${Math.round(performance.now() - t0)} ms`,
+      `extent   ${size.map(v => v.toFixed(2)).join(' x ')} m  (x y z, 1st to 99th percentile)`,
+    ].join('\n');
+    log(`3D scan: ${name}, ${count.toLocaleString('en')} points`);
+  }
+
+  message(text) { $('.nosignal', this.el).textContent = text; }
+
+  fail(e) {
+    this.message(`could not show the scan: ${e.message}`);
+    log(`3D scan: ${e.message}`, true);
+  }
+
+  show() {}
+
+  close() {
+    this.closed = true;
+    this.viewer.then(v => v.dispose()).catch(() => {});
+  }
+}
+
 const CARDS = { m3: M3Card, x3: X3Card };
 
 async function main() {
@@ -282,17 +397,19 @@ async function main() {
   function show(layout) {
     cards.forEach(c => c.close());
     const visible = layout === 'both' ? robots : robots.filter(r => r.id === layout);
-    cards = visible.map(r => new CARDS[r.kind](r));
+    cards = layout === 'cloud' ? [new CloudCard()] : visible.map(r => new CARDS[r.kind](r));
     $('#cards').replaceChildren(...cards.map(c => c.el));
     $('#cards').style.setProperty('--cols', cards.length);
     cards.forEach(c => c.show());
     document.querySelectorAll('#layouts button').forEach(b => b.classList.toggle('on', b.dataset.layout === layout));
     if (!solo) store.set('console.layout', layout);
     $('#hint').hidden = !cards.some(c => c instanceof M3Card);
-    document.title = layout === 'both' ? 'RoboARM console' : `${visible[0].name} -- RoboARM console`;
+    document.title = layout === 'both' ? 'RoboARM console'
+      : `${layout === 'cloud' ? '3D scan' : visible[0].name} -- RoboARM console`;
   }
 
-  for (const [label, layout] of [...robots.map(r => [r.name, r.id]), ['Both', 'both']]) {
+  const layouts = [...robots.map(r => [r.name, r.id]), ['Both', 'both'], ['3D scan', 'cloud']];
+  for (const [label, layout] of layouts) {
     const b = document.createElement('button');
     b.textContent = label;
     b.dataset.layout = layout;
@@ -301,7 +418,7 @@ async function main() {
   }
   if (solo) document.body.classList.add('solo');
   const saved = store.get('console.layout', 'both');
-  show(solo || (saved === 'both' || robots.some(r => r.id === saved) ? saved : 'both'));
+  show(solo || (layouts.some(([, layout]) => layout === saved) ? saved : 'both'));
 
   async function stopAll() {
     const t0 = performance.now();
