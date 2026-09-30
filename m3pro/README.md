@@ -104,6 +104,14 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
   3.232 x 2.823 m after a full loop. Most of that was the lidars reading long (0.8 and 1.2 cm,
   `lidar_calib.py`); with the biases taken off, a replay of the same drive stays within 1 cm of
   the measured 3.2 x 2.8 m all the way (3.198 x 2.799 m at the end).
+- **The 3D scan (RTAB-Map):** `arena_map.py arm mapping` (the arm to Yahboom's mapping pose; it
+  has no read-back), `start mapper:=rtabmap` (the DaBai with depth aligned to colour, the lidar
+  aligning key frames), `camcheck` (the camera's height and tilt measured from the floor,
+  against the launch's), drive, then `rtab-export`: the coloured cloud (PLY), the camera poses,
+  the floor print from above and a height view in `out/arena/rtab/`. Stop RTAB-Map with SIGINT
+  and let it save its database before exporting. First scan, 2026-09-30: 2.2 M points at 1 cm;
+  the track readable but blurred, RTAB-Map's own 2D grid 7 cm too big -- `arena_v4` stays the
+  reference.
 - **The maps to use:** `arena_v4` -- the live run loop4 replayed with today's defaults
   (bias-corrected merged scan, EKF 7 Hz, 20 cm between key scans): 3.200 x 2.785 m, every wall
   seen, the three landmarks; an image and YAML only, no pose graph. `arena_v3` -- the whole

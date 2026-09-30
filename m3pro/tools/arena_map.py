@@ -8,6 +8,10 @@
     python tools/arena_map.py record NAME [--step 0.5]   # a replayable log of one auto loop,
                                            # for tuning; --step: stop and go, pausing every 0.5 m
     python tools/arena_map.py resume       # go on after a stop-and-go pause
+    python tools/arena_map.py arm mapping  # the arm to Yahboom's RTAB-Map pose (or "j1,...,j6")
+    python tools/arena_map.py start mapper:=rtabmap   # the coloured 3D arena, RTAB-Map
+    python tools/arena_map.py camcheck     # is the camera where the launch says? (the floor)
+    python tools/arena_map.py rtab-export  # the 3D cloud, the floor print, heights -> out/arena/rtab
     python tools/arena_map.py calib NAME   # the two lidars' mounting, from its standing start
     python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings, compare
     python tools/arena_map.py status
@@ -216,6 +220,56 @@ def record(client, name, step=None):
     return 0
 
 
+ARM_POSES = {   # joint1..joint6 in degrees
+    "mapping": (90, 180, 5, 0, 90, 0),   # Yahboom's for RTAB-Map: the camera level, ~38 cm up
+}
+
+
+def arm(client, pose, ms=3000):
+    """Move the arm, over `ms`: a name from ARM_POSES or six angles "j1,j2,j3,j4,j5,j6". The arm
+    has no read-back: the command is sent three times and trusted."""
+    joints = ARM_POSES.get(pose) or tuple(int(v) for v in pose.split(","))
+    if len(joints) != 6 or not all(0 <= j <= 270 for j in joints):
+        print(f"six angles 0-270 wanted, got {joints}")
+        return 2
+    msg = "{" + ", ".join(f"joint{i}: {j}" for i, j in enumerate(joints, 1)) + f", time: {ms}}}"
+    code, text = sh(client, f"{ROS} && timeout 20 ros2 topic pub --times 3 --rate 2 /arm6_joints"
+                            f" arm_msgs/msg/ArmJoints '{msg}'", timeout=40)
+    print(f"arm -> {joints} over {ms} ms" if code == 0 else text)
+    return code
+
+
+def camcheck(client):
+    """camera_check.py on the robot: does the floor come out at z = 0 through the camera's pose?"""
+    upload(client)
+    print(sh(client, f"{ROS} && cd {REMOTE} && timeout 30 python3 camera_check.py", timeout=60)[1])
+    return 0
+
+
+def rtab_export(client, name="arena"):
+    """RTAB-Map's database -> the coloured cloud (PLY), the camera poses, the floor print from
+    above and a height view -> out/arena/rtab/ here."""
+    upload(client)
+    db, out = f"{REMOTE}/rtab/{name}.db", f"{REMOTE}/rtab/export"
+    code, text = sh(client, f"{ROS} && mkdir -p {out} && rtabmap-export --cloud --poses_camera"
+                            f" --output_dir {out} --output {name} {db}"
+                            f" && python3 {REMOTE}/ortho.py {out}/{name}_cloud.ply {out}/{name}",
+                    timeout=900)
+    print(text[-3000:])
+    if code:
+        return code
+    dest = HERE / "out" / "arena" / "rtab"
+    dest.mkdir(parents=True, exist_ok=True)
+    sftp = client.open_sftp()
+    for suffix in ("_cloud.ply", "_floor.png", "_heights.png", "_camera_poses.txt"):
+        try:
+            sftp.get(f"{out}/{name}{suffix}", str(dest / f"{name}{suffix}"))
+        except OSError as e:
+            print(f"no {name}{suffix}: {e}")
+    print(f"-> {dest}")
+    return 0
+
+
 def resume(client):
     """Go on after a stop-and-go pause."""
     _c, text = sh(client, "curl -s -m 5 -X POST -H 'Content-Type: application/json'"
@@ -361,7 +415,9 @@ def stop(client):
 
 def main():
     commands = {"start": start, "status": status, "snap": snap, "drive": drive, "stop": stop,
-                "resume": resume}
+                "resume": resume, "camcheck": camcheck, "rtab-export": rtab_export}
+    if len(sys.argv) == 3 and sys.argv[1] == "arm":
+        return arm(connect(), sys.argv[2])
     if len(sys.argv) == 5 and sys.argv[1] == "record" and sys.argv[3] == "--step":
         return record(connect(), sys.argv[2], float(sys.argv[4]))
     if len(sys.argv) == 3 and sys.argv[1] in ("save", "record", "calib"):
