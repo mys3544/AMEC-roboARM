@@ -1,20 +1,15 @@
-"""arena/drive_server.py's safety limit and its loop planner, without ROS (its modules stubbed)."""
+"""arena/drive_core.py: the drive page's safety limit, its loop planner, and the Driver's
+dead-man and stop, with a pretend clock and base."""
 
+import itertools
 import math
 import pathlib
 import sys
-from unittest import mock
 
 import numpy as np
 
-for name in ("rclpy", "rclpy.node", "rclpy.qos", "rclpy.signals", "rclpy.time", "geometry_msgs",
-             "geometry_msgs.msg", "nav_msgs", "nav_msgs.msg", "sensor_msgs", "sensor_msgs.msg",
-             "std_msgs", "std_msgs.msg", "tf2_ros"):
-    sys.modules.setdefault(name, mock.MagicMock())
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "arena"))
-import itertools
-
-import drive_server as ds
+import drive_core as ds
 
 
 def wall_ahead(distance):
@@ -68,3 +63,41 @@ def test_the_loop_keeps_clear_of_the_landmarks():
             assert gaps(p, q, c).min() - r > ds.HALF_PATH
     for p in route:
         assert 0.3 - 1e-9 <= p[0] <= length - 0.3 + 1e-9 and 0.3 - 1e-9 <= p[1] <= width - 0.3 + 1e-9
+
+
+class Clock:
+    t = 100.0
+
+    def __call__(self):
+        return self.t
+
+
+def test_a_command_lapses_without_repeats_and_stop_stops_at_once():
+    clock, sent = Clock(), []
+    driver = ds.Driver(lambda: (0.0, 0.0, 0.0), lambda *v: sent.append(v), clock)
+    driver.set_scan(wall_ahead(2.0))
+    driver.drive({"vx": 1.0})
+    driver.tick()
+    assert driver.mode == "manual" and sent[-1] == (ds.MAX_V, 0.0, 0.0)
+    clock.t += ds.DEADMAN + 0.01   # the page stopped repeating it (a closed tab)
+    driver.set_scan(wall_ahead(2.0))
+    driver.tick()
+    assert driver.mode == "idle" and sent[-1] == (0.0, 0.0, 0.0)
+    driver.drive({"vx": 1.0})
+    driver.tick()
+    driver.stop()
+    driver.tick()
+    assert driver.mode == "idle" and sent[-1] == (0.0, 0.0, 0.0)
+    count = len(sent)
+    driver.tick()
+    assert len(sent) == count   # idle: nothing sent, the base is the gamepad's
+
+
+def test_no_motion_without_a_fresh_scan():
+    clock, sent = Clock(), []
+    driver = ds.Driver(lambda: (0.0, 0.0, 0.0), lambda *v: sent.append(v), clock)
+    driver.set_scan(wall_ahead(2.0))
+    clock.t += ds.SCAN_STALE + 0.01
+    driver.drive({"vx": 1.0})
+    driver.tick()
+    assert sent[-1] == (0.0, 0.0, 0.0) and "no lidar" in driver.note

@@ -23,6 +23,23 @@
         "8091"
       ],
       "port": 8091
+    },
+    {
+      "name": "console-fake",
+      "runtimeExecutable": ".venv/Scripts/python",
+      "runtimeArgs": [
+        "console/serve.py",
+        "--fake"
+      ],
+      "port": 8099
+    },
+    {
+      "name": "console",
+      "runtimeExecutable": ".venv/Scripts/python",
+      "runtimeArgs": [
+        "console/serve.py"
+      ],
+      "port": 8099
     }
   ]
 }

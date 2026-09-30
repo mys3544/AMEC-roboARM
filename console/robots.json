@@ -1,0 +1,8 @@
+[
+  {"id": "x3", "name": "X3 Plus", "kind": "x3", "color": "#e07b39",
+   "url": "http://127.0.0.1:8091",
+   "note": "the X3's panel on this laptop: .claude/launch.json webapp-robot (tools/webapp.py --robot http://192.168.73.210:8761 --port 8091)"},
+  {"id": "m3", "name": "M3 Pro", "kind": "m3", "color": "#2f6fdf",
+   "url": "http://192.168.73.66:8095",
+   "note": "the M3's drive page: m3pro/tools/arena_map.py start"}
+]

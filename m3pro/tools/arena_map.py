@@ -288,7 +288,7 @@ def drive(client):
         print("not mapping: `start` starts the drive page with the rest")
         return 1
     sftp = client.open_sftp()
-    for name in ("drive_server.py", "drive.html", "fence_fit.py"):
+    for name in ("drive_server.py", "drive_core.py", "drive.html", "fence_fit.py"):
         sftp.put(str(ARENA / name), f"{REMOTE}/{name}")
     end_drive(client)
     log = f"{REMOTE}/logs/drive_{time.strftime('%Y%m%d_%H%M%S')}.log"

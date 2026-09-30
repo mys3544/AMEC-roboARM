@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoboARM console</title>
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+<header class="bar">
+  <h1>RoboARM console</h1>
+  <nav id="layouts" class="segmented" aria-label="Which robots to show"></nav>
+  <span id="links" class="links"></span>
+  <span id="hint" class="hint">keys: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive, <kbd>Q</kbd><kbd>E</kbd> turn the M3 &middot; <kbd>Space</kbd> stops all</span>
+  <button id="stopall" class="stopall" title="Space or Esc">STOP ALL</button>
+</header>
+<main id="cards" class="cards"></main>
+<section class="logbox">
+  <h2>Log</h2>
+  <pre id="log"></pre>
+</section>
+
+<template id="card">
+  <article class="card">
+    <header class="card-head">
+      <span class="swatch"></span>
+      <h2 class="name"></h2>
+      <span class="pill mode">offline</span>
+      <span class="note"></span>
+      <span class="spacer"></span>
+      <a class="open" target="_blank" rel="noopener" title="the robot's own page">own page &#8599;</a>
+      <button class="popout" title="this robot alone, in its own window">pop out</button>
+      <button class="stop">STOP</button>
+    </header>
+    <div class="view"><img alt=""><span class="nosignal">no picture</span></div>
+    <pre class="facts">connecting&hellip;</pre>
+    <div class="controls"></div>
+  </article>
+</template>
+
+<template id="m3-controls">
+  <div class="drive">
+    <div class="pad">
+      <button data-keys="w a" title="W+A">&#8598;</button>
+      <button data-keys="w" title="W">&#8593;</button>
+      <button data-keys="w d" title="W+D">&#8599;</button>
+      <button data-keys="a" title="A: sideways left">&#8592;</button>
+      <button class="halt" title="stop this robot">&#9632;</button>
+      <button data-keys="d" title="D: sideways right">&#8594;</button>
+      <button data-keys="s a" title="S+A">&#8601;</button>
+      <button data-keys="s" title="S">&#8595;</button>
+      <button data-keys="s d" title="S+D">&#8600;</button>
+    </div>
+    <div class="side">
+      <div class="turn">
+        <button data-keys="q" title="Q">&#10226; turn</button>
+        <button data-keys="e" title="E">turn &#10227;</button>
+      </div>
+      <label class="speed">speed <input type="range" min="20" max="100" value="60"> <output>60 %</output></label>
+      <button class="auto">Auto: loop the arena</button>
+    </div>
+  </div>
+</template>
+
+<template id="x3-controls">
+  <div class="jobs">
+    <button data-job="pick">Pick one</button>
+    <button data-job="pickall">Clear the table</button>
+    <button data-preset="home">Home</button>
+  </div>
+</template>
+
+<script src="console.js"></script>
+</body>
+</html>
