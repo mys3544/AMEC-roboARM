@@ -9,6 +9,10 @@ the measured geometry (hand-eye calibration) replaces the URDF's numbers.
 
 The camera (the DCW2) is fixed to arm4: joints 2-4 set its tilt; joint 5 only rolls the gripper.
 Lowering joint 2 leans the arm forward and tilts the camera down.
+
+SIGNS: J1 turns the other way than the URDF's axis -- a bigger J1 turns the arm to the right (-y).
+Found by the hand-eye pictures (2026-09-30): through the URDF's sign the board seen from J1 76..104
+moved 0.37 m with J1; mirrored, it stayed within 8 mm. Yahboom's kin_srv has the URDF's sign.
 """
 
 from __future__ import annotations
@@ -61,7 +65,8 @@ def frames(pose: dict[int, float]) -> dict[str, np.ndarray]:
     """4 x 4 transforms base_link -> each part, for servo degrees {1..5: angle} (6 ignored)."""
     out, m = {}, np.eye(4)
     for joint, (xyz, rpy, axis) in enumerate(CHAIN, 1):
-        m = m @ _frame(xyz, _rpy(*rpy)) @ _frame((0, 0, 0), _rot(axis, math.radians(pose[joint] - 90)))
+        angle = pose[joint] - 90 if joint != 1 else 90 - pose[joint]   # J1: see SIGNS
+        m = m @ _frame(xyz, _rpy(*rpy)) @ _frame((0, 0, 0), _rot(axis, math.radians(angle)))
         out[f"arm{joint}"] = m
     out["camera"] = out["arm4"] @ _frame(CAMERA[0], _rpy(*CAMERA[1]))
     out["gripping"] = out["arm5"] @ _frame(GRIPPING[0], _rpy(*GRIPPING[1]))
