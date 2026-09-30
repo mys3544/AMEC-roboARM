@@ -103,7 +103,12 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
 - **First maps, 2026-09-30,** in `arena/maps/`: 3.213 x 2.801 m after half a metre of driving,
   3.232 x 2.823 m after a full loop. Most of that was the lidars reading long (0.8 and 1.2 cm,
   `lidar_calib.py`); with the biases taken off, a replay of the same drive stays within 1 cm of
-  the measured 3.2 x 2.8 m all the way (3.198 x 2.799 m at the end). Not yet confirmed live.
+  the measured 3.2 x 2.8 m all the way (3.198 x 2.799 m at the end).
+- **The maps to use:** `arena_v4` -- the live run loop4 replayed with today's defaults
+  (bias-corrected merged scan, EKF 7 Hz, 20 cm between key scans): 3.200 x 2.785 m, every wall
+  seen, the three landmarks; an image and YAML only, no pose graph. `arena_v3` -- the whole
+  arena driven by hand, with its pose graph on the robot, but made before the bias correction:
+  3.226 x 2.817 m.
 
 ## Network: lab WiFi at boot, hotspot off
 
