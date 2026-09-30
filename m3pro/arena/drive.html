@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>M3 Pro drive</title>
+<style>
+  :root { --bg: #f3f4f7; --panel: #fff; --ink: #1d2330; --muted: #667085; --line: #d9dde5;
+          --key: #eef1f6; --accent: #2f6fdf; --stop: #d23b3b; --ok: #1f8a4c; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171d; --panel: #1d2129; --ink: #e6e8ee; --muted: #9aa3b5; --line: #323846;
+            --key: #2a303b; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { padding: 12px 16px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  h1 { font-size: 17px; margin: 0; }
+  #mode { font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--key); }
+  #mode.manual, #mode.auto { background: var(--accent); color: #fff; }
+  #note { color: var(--muted); }
+  main { display: flex; gap: 16px; padding: 0 16px 16px; flex-wrap: wrap; align-items: flex-start; }
+  #mapbox { flex: 1 1 520px; min-width: 0; background: var(--panel); border: 1px solid var(--line);
+            border-radius: 10px; padding: 8px; }
+  #map { width: 100%; height: auto; display: block; image-rendering: pixelated; }
+  #controls { flex: 0 1 300px; background: var(--panel); border: 1px solid var(--line);
+              border-radius: 10px; padding: 12px; display: grid; gap: 12px; }
+  button { font: inherit; color: var(--ink); border: 1px solid var(--line); background: var(--key);
+           border-radius: 8px; cursor: pointer; touch-action: none; user-select: none; }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #stop { background: var(--stop); border-color: var(--stop); color: #fff; font-weight: 700;
+          font-size: 18px; padding: 14px; }
+  .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .pad button { height: 56px; font-size: 20px; }
+  .turn { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .turn button { height: 44px; }
+  #auto { padding: 10px; }
+  label { display: flex; gap: 8px; align-items: center; }
+  input[type=range] { flex: 1; }
+  pre { margin: 0; font: 12px/1.6 ui-monospace, Consolas, monospace; white-space: pre-wrap;
+        color: var(--muted); }
+  .help { color: var(--muted); font-size: 12px; margin: 0; }
+  kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; background: var(--key);
+        font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>M3 Pro &middot; arena mapping</h1>
+  <span id="mode">idle</span>
+  <span id="note"></span>
+</header>
+<main>
+  <div id="mapbox"><img id="map" alt="The arena map: fence fit in green, robot in orange, scan in red"></div>
+  <section id="controls">
+    <button id="stop">STOP</button>
+    <div class="pad">
+      <button data-keys="w a" title="W+A">&#8598;</button>
+      <button data-keys="w" title="W">&#8593;</button>
+      <button data-keys="w d" title="W+D">&#8599;</button>
+      <button data-keys="a" title="A: sideways left">&#8592;</button>
+      <button id="halt" title="Space">&#9632;</button>
+      <button data-keys="d" title="D: sideways right">&#8594;</button>
+      <button data-keys="s a" title="S+A">&#8601;</button>
+      <button data-keys="s" title="S">&#8595;</button>
+      <button data-keys="s d" title="S+D">&#8600;</button>
+    </div>
+    <div class="turn">
+      <button data-keys="q" title="Q">&#10226; turn left</button>
+      <button data-keys="e" title="E">turn right &#10227;</button>
+    </div>
+    <label>speed <input id="speed" type="range" min="20" max="100" value="60"> <span id="pct">60 %</span></label>
+    <button id="auto">Auto: loop the arena</button>
+    <p class="help">Hold to move, let go to stop. Keys: <kbd>W</kbd><kbd>S</kbd> forward/back,
+      <kbd>A</kbd><kbd>D</kbd> sideways, <kbd>Q</kbd><kbd>E</kbd> turn, <kbd>Space</kbd> stop.
+      Full speed is 0.15 m/s; the robot refuses to move towards anything nearer than 35 cm.</p>
+    <pre id="info">connecting&hellip;</pre>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const dirs = { w: [1, 0, 0], s: [-1, 0, 0], a: [0, 1, 0], d: [0, -1, 0], q: [0, 0, 1], e: [0, 0, -1] };
+const held = new Set();
+let repeat = null;
+
+const post = (path, body) => fetch(path, {
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
+}).then(r => r.json()).catch(() => ({ ok: false, error: 'robot not reachable' }));
+
+function command() {
+  const v = [0, 0, 0];
+  for (const k of held) dirs[k].forEach((x, i) => { v[i] += x; });
+  const scale = $('speed').value / 100;
+  return v.map(x => Math.max(-1, Math.min(1, x)) * scale);
+}
+function send() { const [vx, vy, wz] = command(); post('/api/drive', { vx, vy, wz }); }
+function refresh() {
+  document.querySelectorAll('[data-keys]').forEach(b =>
+    b.classList.toggle('on', b.dataset.keys.split(' ').every(k => held.has(k))));
+  if (held.size) {   // the server stops the robot 0.4 s after the last repeat
+    send();
+    if (!repeat) repeat = setInterval(send, 100);
+  } else if (repeat) {
+    clearInterval(repeat); repeat = null; post('/api/stop');
+  }
+}
+function stopAll() { held.clear(); refresh(); post('/api/stop'); }
+
+addEventListener('keydown', e => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === ' ') { e.preventDefault(); stopAll(); }
+  else if (dirs[k]) { held.add(k); refresh(); }
+});
+addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (dirs[k]) { held.delete(k); refresh(); } });
+addEventListener('blur', () => { if (held.size) { held.clear(); refresh(); } });
+document.querySelectorAll('[data-keys]').forEach(b => {
+  const keys = b.dataset.keys.split(' ');
+  b.addEventListener('pointerdown', e => { b.setPointerCapture(e.pointerId); keys.forEach(k => held.add(k)); refresh(); });
+  const up = () => { if (keys.some(k => held.has(k))) { keys.forEach(k => held.delete(k)); refresh(); } };
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => b.addEventListener(t, up));
+});
+$('stop').onclick = stopAll;
+$('halt').onclick = stopAll;
+$('speed').oninput = () => { $('pct').textContent = $('speed').value + ' %'; };
+$('auto').onclick = async () => {
+  const on = !$('auto').classList.contains('on');
+  const r = await post('/api/auto', { on });
+  if (!r.ok) $('note').textContent = r.error;
+};
+
+async function nextMap() {
+  try {
+    const r = await fetch('/api/map.png');
+    if (r.ok) {
+      const old = $('map').src;
+      $('map').src = URL.createObjectURL(await r.blob());
+      if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+    }
+  } catch (_) { /* shown by the state poll */ }
+  setTimeout(nextMap, 800);
+}
+const fmt = v => (v === null || v === undefined) ? '-' : v;
+async function poll() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    $('mode').textContent = s.mode;
+    $('mode').className = s.mode;
+    $('note').textContent = s.note || '';
+    $('auto').classList.toggle('on', s.auto !== null);
+    $('auto').textContent = s.auto ? `Auto: point ${s.auto[0] + 1} of ${s.auto[1]} (click to stop)` : 'Auto: loop the arena';
+    const f = s.fence;
+    $('info').textContent = [
+      `pose      ${s.pose ? `x ${s.pose[0].toFixed(2)}  y ${s.pose[1].toFixed(2)}  ${s.pose[2].toFixed(0)} deg` : 'none yet'}`,
+      `command   ${s.cmd.map(v => v.toFixed(2)).join('  ')}  (vx vy wz)`,
+      `ahead     ${s.nearest_ahead_m === null ? 'clear' : s.nearest_ahead_m + ' m'}`,
+      `lidar     ${s.scan_age_s < 0.5 ? 'ok' : 'STALE ' + s.scan_age_s + ' s'}`,
+      `battery   ${fmt(s.battery_v)} V`,
+      `fence     ${f ? `${f.size_m[0].toFixed(3)} x ${f.size_m[1].toFixed(3)} m${f.complete ? '' : ' (one wall not seen yet)'}, ${f.blobs} blobs` : 'not fitted yet'}`,
+    ].join('\n');
+  } catch (_) {
+    $('mode').textContent = 'offline'; $('mode').className = '';
+    $('info').textContent = 'robot not reachable';
+  }
+  setTimeout(poll, 400);
+}
+nextMap();
+poll();
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+# Yahboom's ira_laser_tools settings, two changed for the arena.
+laserscan_multi_merger:
+  ros__parameters:
+    destination_frame: "base_link"
+    cloud_destination_topic: "/merged_cloud"
+    scan_destination_topic: "/scan_multi"
+    laserscan_topics: "/scan0 /scan1"
+    angle_min: -3.14159
+    angle_max: 3.14159
+    angle_increment: 0.0087266   # 0.5 deg; each lidar gives 0.54 deg steps (Yahboom: 1 deg)
+    scan_time: 0.0
+    range_min: 0.05
+    range_max: 8.0               # the arena's diagonal is 4.25 m (Yahboom: 4 m)

@@ -52,6 +52,35 @@ uv run --frozen ruff check roboarm tools tests vision_service
 python tools/sync_robot.py              # system Python (paramiko): push to ~/roboarm on the M3
 ```
 
+## Mapping the arena
+
+`arena/` runs on the robot's host ROS 2 (not in a container), from `~/arena`: slam_toolbox on
+the two lidars at 2 cm, with Yahboom's EKF and scan merge (`arena_slam.launch.py`), and a drive
+page on port 8095 (`drive_server.py`). `tools/arena_map.py` drives it from this laptop (system
+Python, paramiko):
+
+```bash
+python tools/arena_map.py start        # upload arena/ and start the stack; nothing moves yet
+python tools/arena_map.py snap         # the map so far, with the fence fit -> out/arena/
+python tools/arena_map.py save NAME    # -> arena/maps/NAME*, and the pose graph on the robot
+python tools/arena_map.py stop
+```
+
+- **Driving:** http://192.168.73.66:8095/ -- hold the buttons or W/S (forward, back), A/D
+  (sideways), Q/E (turn); letting go, Space or closing the tab stops it. "Auto: loop the arena"
+  drives a slow loop 45 cm inside the fitted fence, around the landmarks. Both are held to
+  0.15 m/s and stop 35 cm short of anything the lidars see in their path. The gamepad works
+  whenever the page is not commanding.
+- **The fence fit** (`fence_fit.py`) checks every map against the fence's 3.2 x 2.8 m: side
+  lengths, corner angles, how straight and how much of each wall is seen, and the blobs inside
+  (the landmarks) in an arena frame with its origin at a fence corner.
+- **What the robot gives:** the lidars come from the micro-ROS board as `/scan0` and `/scan1`,
+  270 degrees each at about 7 Hz, 14.5 cm above the floor; their static transforms exist only
+  while `m3pro_bringup/static_tf.launch.py` runs (the launch includes it).
+- **First maps, 2026-09-30,** in `arena/maps/`: 3.213 x 2.801 m after half a metre of driving,
+  3.232 x 2.823 m after a full loop -- the map grows with distance driven, which is the next
+  thing to tune.
+
 ## Network: lab WiFi at boot, hotspot off
 
 Out of the box the robot starts its own hotspot, SSID ROSMASTER at 192.168.8.88, with no
