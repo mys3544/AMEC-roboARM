@@ -4,6 +4,9 @@
     python tools/arena_map.py snap         # the map so far + the fence fit -> out/arena/
     python tools/arena_map.py save NAME    # map + fence fit -> arena/maps/, pose graph on the robot
     python tools/arena_map.py drive        # restart only the drive page (new code), map kept
+    python tools/arena_map.py record NAME  # a replayable log of one auto loop, for tuning
+    python tools/arena_map.py calib NAME   # the two lidars' mounting, from its standing start
+    python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings, compare
     python tools/arena_map.py status
     python tools/arena_map.py stop
 
@@ -65,11 +68,8 @@ def start(client):
     if text.strip():
         print(f"another SLAM stack is running on the robot -- stop it first:\n{text}")
         return 1
-    sftp = client.open_sftp()
     sh(client, f"mkdir -p {REMOTE}/logs {REMOTE}/snaps {REMOTE}/maps")
-    for pattern in ("*.py", "*.yaml", "*.html"):
-        for path in sorted(ARENA.glob(pattern)):
-            sftp.put(str(path), f"{REMOTE}/{path.name}")
+    upload(client)
     log = f"{REMOTE}/logs/slam_{time.strftime('%Y%m%d_%H%M%S')}.log"
     # setsid: the launch leads its own process group, whose id `stop` signals. Nothing may go
     # in front of it on this line: `a && b &` backgrounds a subshell, whose pid is not the group's
@@ -146,6 +146,137 @@ def save(client, name):
     return 0
 
 
+RAW = "/scan0 /scan1 /odom_raw /imu/data_raw"   # what a replay feeds the stack
+
+
+def record(client, name):
+    """A replayable log for tuning, ~/arena/bags/NAME: 20 s standing (the lidars' mounting is
+    calibrated from it), the auto loop, 10 s standing. The raw topics, plus what the live stack
+    made of them (/scan, /odom, /tf) for comparison."""
+    bag = f"{REMOTE}/bags/{name}"
+    if not running(client):
+        print("not mapping: `start` first (the loop is planned on the live map)")
+        return 1
+    if sh(client, f"test -e {bag}")[0] == 0:
+        print(f"{bag} exists already")
+        return 1
+    sh(client, f"mkdir -p {REMOTE}/bags; setsid nohup bash -c '{ROS} && exec ros2 bag record"
+               f" -o {bag} {RAW} /cmd_vel /battery /scan /odom /tf /tf_static'"
+               f" > {REMOTE}/logs/bag_{name}.log 2>&1 < /dev/null & echo $! > {REMOTE}/bag.pgid")
+    print("recording; standing still for 20 s")
+    time.sleep(20)
+    _c, text = sh(client, "curl -s -m 5 -X POST -H 'Content-Type: application/json'"
+                          " -d '{\"on\": true}' localhost:8095/api/auto")
+    print(f"auto loop: {text}")
+    try:
+        started = time.monotonic()
+        while time.monotonic() - started < 480:
+            time.sleep(10)
+            state = json.loads(sh(client, "curl -s -m 5 localhost:8095/api/state")[1])
+            # the live map's fence as the robot drives: does it grow?
+            save_map(client, f"{REMOTE}/snaps/rec")
+            fence = json.loads(sh(client, f"cat {REMOTE}/snaps/rec_fit.json")[1])["fence"]
+            print(f"  {time.monotonic() - started:4.0f} s {state['mode']} {state['auto']}"
+                  f" fence {fence['size_m'][0]:.3f} x {fence['size_m'][1]:.3f}"
+                  f" thick {[w['thick_cm'] for w in fence['walls']]} {state['note']}")
+            if state["mode"] == "idle" and state["auto"] is None:
+                break
+        print("standing still for 10 s")
+        time.sleep(10)
+    finally:
+        sh(client, "curl -s -m 5 -X POST localhost:8095/api/stop")
+        sh(client, f"kill -INT -- -$(cat {REMOTE}/bag.pgid); sleep 3")
+    print(sh(client, f"{ROS} && ros2 bag info {bag}")[1])
+    return 0
+
+
+CONFIGS = {   # what `tune` tries by default: arena_slam.launch.py arguments
+    "live": [],                                   # what `start` runs now
+    "yahboom": ["scans:=merged", "ekf_hz:=7"],    # Yahboom's scan merge and EKF rate
+    "merged30": ["scans:=merged"],
+}
+
+
+def upload(client):
+    sftp = client.open_sftp()
+    for pattern in ("*.py", "*.yaml", "*.html", "*.sh"):
+        for path in sorted(ARENA.glob(pattern)):
+            sftp.put(str(path), f"{REMOTE}/{path.name}")
+
+
+def calib(client, name):
+    """lidar_calib.py on a recording's first 15 s; the corrected mounting -> ~/arena/lidars_cal.yaml."""
+    upload(client)
+    _c, text = sh(client, f"{ROS} && cd {REMOTE} && python3 lidar_calib.py bags/{name}"
+                          " --write lidars_cal.yaml && cat lidars_cal.yaml", timeout=600)
+    print(text)
+    return 0
+
+
+def tune(client, name, wanted):
+    """Replay recording NAME through configurations side by side (replay.sh, one ROS domain
+    each) and compare their maps. Configurations: the names in CONFIGS (all by default), or
+    LABEL=arg:=value,arg:=value."""
+    configs = {}
+    for item in wanted or CONFIGS:
+        label, _eq, args = item.partition("=")
+        configs[label] = args.split(",") if args else CONFIGS[label]
+    upload(client)
+    bag = f"{REMOTE}/bags/{name}"
+    info = sh(client, f"{ROS} && ros2 bag info {bag}")[1]
+    seconds = float(info.split("Duration:")[1].split("s")[0])
+    for i, (label, args) in enumerate(configs.items()):
+        out = f"{REMOTE}/tune/{name}/{label}"
+        sh(client, f"rm -rf {out}; mkdir -p {out}; setsid nohup bash {REMOTE}/replay.sh {bag}"
+                   f" {out} {41 + i} {' '.join(shlex.quote(a) for a in args)}"
+                   f" > {out}.log 2>&1 < /dev/null &")
+    print(f"replaying {seconds:.0f} s through {len(configs)} configurations at once")
+    time.sleep(seconds + 20)
+    logs = " ".join(f"{REMOTE}/tune/{name}/{label}.log" for label in configs)
+    for _ in range(20):
+        done = sh(client, f"grep -l '^done' {logs} | wc -l")[1].strip()
+        if int(done) >= len(configs):
+            break
+        time.sleep(10)
+    dest = HERE / "out" / "arena" / "tune" / name
+    dest.mkdir(parents=True, exist_ok=True)
+    sftp = client.open_sftp()
+    print(f"{'config':14} {'fence m':>15} {'off cm':>12} {'corners deg':>24} {'walls thick cm':>22}"
+          f" {'dropped':>7}")
+    for label in configs:
+        out = f"{REMOTE}/tune/{name}/{label}"
+        try:
+            fit = json.loads(sh(client, f"cat {out}/fit.json")[1])
+            sftp.get(f"{out}/map_fit.png", str(dest / f"{label}.png"))
+        except (ValueError, OSError):
+            print(f"{label:14} failed -- {out}.log, {out}/launch.log")
+            continue
+        fence = fit["fence"]
+        dropped = sh(client, f"cat {out}/dropped.txt")[1].strip()
+        corners = " ".join(f"{a:5.1f}" for a in fence["corner_angles_deg"])
+        thick = " ".join(f"{w['thick_cm']:4.1f}" for w in fence["walls"])
+        print(f"{label:14} {fence['size_m'][0]:.3f} x {fence['size_m'][1]:.3f}"
+              f" {fence['error_cm'][0]:+5.1f} {fence['error_cm'][1]:+5.1f}"
+              f" {corners:>24} {thick:>22} {dropped:>7}")
+    print("\nthe fence as the replay went on (every 20 s), cm off 3.2 / 2.8:")
+    for label in configs:
+        out = f"{REMOTE}/tune/{name}/{label}"
+        fits = sh(client, f"for f in $(ls {out}/t*.fit.json | sort -V); do echo $(basename $f)"
+                          f" $(tr -d '\\n ' < $f); done")[1].splitlines()
+        steps = []
+        for line in fits:
+            step, _sp, text = line.partition(" ")
+            try:
+                off = json.loads(text)["fence"]["error_cm"]
+                steps.append(f"{step.split('.')[0]} " + "/".join(
+                    "  -  " if e is None else f"{e:+.1f}" for e in off))
+            except ValueError:
+                steps.append(f"{step.split('.')[0]} (no fit)")
+        print(f"{label:14} " + "   ".join(steps))
+    print(f"-> {dest}")
+    return 0
+
+
 DRIVE = f"python3 {REMOTE}/drive_server.py"
 
 
@@ -194,8 +325,10 @@ def stop(client):
 
 def main():
     commands = {"start": start, "status": status, "snap": snap, "drive": drive, "stop": stop}
-    if len(sys.argv) == 3 and sys.argv[1] == "save":
-        return save(connect(), sys.argv[2])
+    if len(sys.argv) == 3 and sys.argv[1] in ("save", "record", "calib"):
+        return {"save": save, "record": record, "calib": calib}[sys.argv[1]](connect(), sys.argv[2])
+    if len(sys.argv) >= 3 and sys.argv[1] == "tune":
+        return tune(connect(), sys.argv[2], sys.argv[3:])
     if len(sys.argv) != 2 or sys.argv[1] not in commands:
         print(__doc__)
         return 2

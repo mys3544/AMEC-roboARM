@@ -54,10 +54,10 @@ python tools/sync_robot.py              # system Python (paramiko): push to ~/ro
 
 ## Mapping the arena
 
-`arena/` runs on the robot's host ROS 2 (not in a container), from `~/arena`: slam_toolbox on
-the two lidars at 2 cm, with Yahboom's EKF and scan merge (`arena_slam.launch.py`), and a drive
-page on port 8095 (`drive_server.py`). `tools/arena_map.py` drives it from this laptop (system
-Python, paramiko):
+`arena/` runs on the robot's host ROS 2 (not in a container), from `~/arena`: slam_toolbox at
+2 cm on each lidar's own scan, their range biases taken off (`scan_relay.py`, `lidars.yaml`),
+with Yahboom's EKF at 30 Hz (`arena_slam.launch.py`), and a drive page on port 8095
+(`drive_server.py`). `tools/arena_map.py` drives it from this laptop (system Python, paramiko):
 
 ```bash
 python tools/arena_map.py start        # upload arena/ and start the stack; nothing moves yet
@@ -65,6 +65,21 @@ python tools/arena_map.py snap         # the map so far, with the fence fit -> o
 python tools/arena_map.py save NAME    # -> arena/maps/NAME*, and the pose graph on the robot
 python tools/arena_map.py stop
 ```
+
+Tuning, on a recording instead of the robot's battery:
+
+```bash
+python tools/arena_map.py record NAME  # 20 s standing, the auto loop, 10 s standing -> a bag,
+                                       # printing the live map's fence every 10 s
+python tools/arena_map.py calib NAME   # the lidars' range biases (+ mounting) from the standing
+python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings side by side
+```
+
+`tune` runs `replay.sh` once per configuration, each on its own ROS domain (so neither each
+other nor the live robot interfere), fits the fence every 20 s of the replay and prints a table
+and the fence over time. A configuration is a name from `CONFIGS` in the tool, or
+`LABEL=arg:=value,arg:=value` with `arena_slam.launch.py`'s arguments (`scans`, `ekf_hz`,
+`ekf_predict`, `lidars`, `slam`, `slam_set`).
 
 - **Driving:** http://192.168.73.66:8095/ -- hold the buttons or W/S (forward, back), A/D
   (sideways), Q/E (turn); letting go, Space or closing the tab stops it. "Auto: loop the arena"
@@ -75,11 +90,15 @@ python tools/arena_map.py stop
   lengths, corner angles, how straight and how much of each wall is seen, and the blobs inside
   (the landmarks) in an arena frame with its origin at a fence corner.
 - **What the robot gives:** the lidars come from the micro-ROS board as `/scan0` and `/scan1`,
-  270 degrees each at about 7 Hz, 14.5 cm above the floor; their static transforms exist only
-  while `m3pro_bringup/static_tf.launch.py` runs (the launch includes it).
+  270 degrees each at about 7 Hz, 14.5 cm above the floor; Yahboom publishes their static
+  transforms only in `m3pro_bringup/static_tf.launch.py` (the launch publishes them from
+  `lidars.yaml`). The board stamps everything 55-75 ms ahead of the Jetson's clock, so the
+  EKF trails the scans and slam_toolbox drops most of them -- harmless (it keeps a scan every
+  10 cm of travel anyway); keeping them (`scan_queue_size` 10) wrecked the map.
 - **First maps, 2026-09-30,** in `arena/maps/`: 3.213 x 2.801 m after half a metre of driving,
-  3.232 x 2.823 m after a full loop -- the map grows with distance driven, which is the next
-  thing to tune.
+  3.232 x 2.823 m after a full loop. Most of that was the lidars reading long (0.8 and 1.2 cm,
+  `lidar_calib.py`); with the biases taken off, a replay of the same drive stays within 1 cm of
+  the measured 3.2 x 2.8 m all the way (3.198 x 2.799 m at the end). Not yet confirmed live.
 
 ## Network: lab WiFi at boot, hotspot off
 

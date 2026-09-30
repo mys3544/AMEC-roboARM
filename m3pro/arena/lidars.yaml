@@ -1,0 +1,10 @@
+# Where the two lidars sit on the robot: base_link -> the lidar's frame, [x, y, z] in m and yaw
+# in degrees. These are Yahboom's (m3pro_bringup/static_tf.launch.py); lidar_calib.py measures
+# how far the second one is off relative to the first, and each one's range bias (taken off
+# every range by scan_relay.py, so only with scans:=lidars).
+laser0_frame: [-0.11617, 0.09156, 0.1253, 0.0]    # left rear, /scan0
+laser1_frame: [0.10766, -0.09078, 0.1253, 0.0]    # right front, /scan1
+# Measured 2026-09-30 (bag loop1, the robot standing inside the 3.2 x 2.8 m fence): each lidar
+# alone saw it 1.5 and 2.3 cm too big. lidar_calib.py's mounting correction for the second lidar
+# (2.5 cm, 0.55 deg) changed nothing in replays, so the mounting stays Yahboom's.
+range_bias: {laser0_frame: 0.0077, laser1_frame: 0.0115}   # m

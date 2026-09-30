@@ -159,8 +159,11 @@ def fit(grid, res, origin):
         along = (pts - a) @ ((b - a) / length)
         stretches = max(1, int((length - 2 * GATE) / (2 * res)))
         seen = np.isin(np.arange(stretches), np.floor((along - GATE) / (2 * res))).mean()
+        # thick: how far apart the scans put the wall (5th to 95th percentile across it) -- the
+        # direct measure of how well the scans were registered
         wall_stats.append({"length_m": round(length, 3),
                            "rms_cm": round(float(np.sqrt(np.mean(across ** 2))) * 100, 2),
+                           "thick_cm": round(float(np.ptp(np.percentile(across, [5, 95]))) * 100, 1),
                            "seen": round(float(seen), 3)})
     angles = [round(float(np.degrees(np.arccos(abs(lines[i - 1][1] @ lines[i][1])))), 2)
               for i in range(4)]
