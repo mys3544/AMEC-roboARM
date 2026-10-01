@@ -137,3 +137,18 @@ def test_the_guard_passes_the_poses_the_arm_has_been_in_on_the_robot():
 
 def test_threads_are_not_left_behind():
     assert not [t for t in threading.enumerate() if t.name == "m3-arm-glide" and t.is_alive()]
+
+
+def test_a_move_planned_on_the_measured_floor_may_come_closer_to_it_but_not_too_close():
+    board = Board()
+    arm = board.arm()
+    arm.engage()
+    low = m3kinematics.reach((0.224, 0.007, 0.019), 70, floor_clear=0.003)   # a 30 mm cube placed
+    assert low is not None and m3kinematics.problem(low) is not None         # the default refuses it
+    with pytest.raises(ArmError, match="floor"):
+        arm.move_to(low)
+    with pytest.raises(ArmError, match="minimum"):
+        arm.move_to(low, floor_clear=0.001)
+    above = m3kinematics.reach((0.224, 0.007, 0.08), 70)
+    arm.move_to(above)                                   # from just above, a short way down
+    assert arm.move_to(low, floor_clear=0.003)[2] == low[2]

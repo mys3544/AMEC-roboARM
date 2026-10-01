@@ -57,7 +57,10 @@ CHASSIS = ((-0.17, 0.08, 0.205), (0.08, 0.14, 0.175))
 # 0.040 (meshes/lwheel1.STL); camcheck's 0.350 m for the camera at the mapping pose against the
 # URDF's 0.355 agrees. (Yahboom's launch puts base_link 2 cm up, base_footprint -> base_link.)
 FLOOR = 0.0     # m, the floor in base_link
-FLOOR_CLEAR = 0.015   # m above the floor the fingertips stay, with the SAG's ~1 cm uncertainty
+FLOOR_CLEAR = 0.015   # m above the floor the fingertips stay, with the SAG's ~1 cm uncertainty --
+                      # for moves planned on this model alone; a move planned on the floor the
+                      # depth just measured (the last descent of a place or a pick) may ask less
+MIN_FLOOR_CLEAR = 0.002   # m: never less, whoever asks
 SAG = {2: 4.0, 3: -8.5}   # degrees the joints really sit off their command (see SAG above)
 
 
@@ -111,7 +114,7 @@ def outline(pose: dict[int, float]) -> list[np.ndarray]:
     return points + [joints[-1]]
 
 
-def problem(pose: dict[int, float]) -> str | None:
+def problem(pose: dict[int, float], floor_clear: float = FLOOR_CLEAR) -> str | None:
     """Why the pose would put the arm into the chassis, the lidars or the floor; None if it
     would not."""
     for p in outline(pose):
@@ -119,9 +122,9 @@ def problem(pose: dict[int, float]) -> str | None:
             if x0 < p[0] < x1 and abs(p[1]) < CHASSIS_Y and p[2] < top:
                 return (f"the arm would come down to {100 * (p[2] - FLOOR):.0f} cm above the floor over"
                         f" the chassis (x {p[0]:+.2f} m): keep it above {100 * (top - FLOOR):.0f} cm there")
-        if p[2] < FLOOR + FLOOR_CLEAR:
+        if p[2] < FLOOR + max(floor_clear, MIN_FLOOR_CLEAR):
             return (f"the arm would reach {100 * (p[2] - FLOOR):.1f} cm above the floor"
-                    f" (x {p[0]:+.2f} m): the fingertips stay {100 * FLOOR_CLEAR:.1f} cm clear of it")
+                    f" (x {p[0]:+.2f} m): the fingertips stay {100 * floor_clear:.1f} cm clear of it")
     return None
 
 
@@ -161,7 +164,8 @@ def _planar(radius: float, z: float, pitch_down: float) -> list[tuple[float, flo
     return out
 
 
-def reach(target, pitch_down: float, j5: float = 90, tolerance: float = 0.005) -> dict[int, int] | None:
+def reach(target, pitch_down: float, j5: float = 90, tolerance: float = 0.005,
+          floor_clear: float = FLOOR_CLEAR) -> dict[int, int] | None:
     """Servo degrees that put the grip point on `target` (base_link, m) with the fingers
     `pitch_down` degrees below level, or None when no pose the guard allows does it -- within
     `tolerance` m and 3 degrees after rounding to whole servo degrees (one degree of J2 moves the
@@ -191,7 +195,7 @@ def reach(target, pitch_down: float, j5: float = 90, tolerance: float = 0.005) -
         pose = {1: round(j1), 2: round(q[0]), 3: round(q[1]), 4: round(q[2]), 5: round(j5)}
         point, pitch = grip(pose)
         miss = float(np.linalg.norm(point - target))
-        good = miss <= tolerance and abs(pitch - pitch_down) <= 3 and problem(pose) is None
+        good = miss <= tolerance and abs(pitch - pitch_down) <= 3 and problem(pose, floor_clear) is None
         if good and (best is None or miss < best[0]):
             best = (miss, pose)
     return None if best is None else best[1]

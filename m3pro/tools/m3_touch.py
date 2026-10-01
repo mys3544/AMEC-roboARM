@@ -1,7 +1,7 @@
 """The M3's touch test: how far the open-loop chain -- camera, arm geometry, IK -- puts the fingertip
 from a point the camera saw. The lab's ChArUco board lies flat in front of the robot; the arm looks
 at it (the look pose), finds its corners in base_link through roboarm/m3kinematics.py and the URDF's
-camera mounting, then holds the grip point a few cm above a corner while someone measures the miss.
+camera mounting -- the camera's height and tilt taken from the floor the depth sees (m3vision) -- then holds the grip point a few cm above a corner while someone measures the miss.
 
     python tools/m3_touch.py look            # the arm moves to the look pose; -> out/touch/look.json
     python tools/m3_touch.py go N [--up 0.05]   # the grip point to --up m above corner N, and holds
@@ -28,27 +28,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT))
 import m3_handeye as he
 
-from roboarm import m3arm, m3kinematics
+from roboarm import m3arm, m3kinematics, m3vision
 
 LOOK = {"1": 88, "2": 105, "3": 25, "4": 0, "5": 90}   # the board in the pick zone fills the view
 STATE = ROOT / "out" / "touch" / "look.json"
-
-
-def level(model: np.ndarray, cam_board: np.ndarray) -> np.ndarray:
-    """base_link <- camera with its height, tilt and roll taken from the board lying on the floor
-    (the table is level, at m3kinematics.FLOOR) -- exact to the PnP -- and its place along the
-    floor and its heading from the arm model, which the plane cannot tell. The look-again step's
-    first correction: at the look pose the model alone put the camera 16 mm and 4.8 deg off."""
-    normal = cam_board[:3, 2] * np.sign(-cam_board[:3, 2] @ cam_board[:3, 3])   # towards the camera
-    height = float(abs(normal @ cam_board[:3, 3]))
-    seen_up = model[:3, :3] @ normal              # where the model says the floor's normal points
-    axis = np.cross(seen_up, [0.0, 0.0, 1.0])
-    s, c = float(np.linalg.norm(axis)), float(seen_up[2])
-    out = model.copy()
-    if s > 1e-9:
-        out[:3, :3] = cv2.Rodrigues(axis / s * np.arctan2(s, c))[0] @ model[:3, :3]
-    out[2, 3] = m3kinematics.FLOOR + height
-    return out
 
 
 def look() -> None:
@@ -68,7 +51,15 @@ def look() -> None:
     cam_board = he.rt(np.concatenate([rvec.ravel(), tvec.ravel()]))
     pose = {int(j): float(v) for j, v in snap["joints"].items()}
     model = m3kinematics.frames(pose)["arm4"] @ he.urdf_camera()
-    base_cam = level(model, cam_board)
+    depth = cv2.imdecode(np.frombuffer(base64.b64decode(snap["depth_png"]), np.uint8), cv2.IMREAD_UNCHANGED)
+    normal, height, share = m3vision.floor_plane(depth, K)
+    base_cam = m3vision.level(model, normal, height, m3kinematics.FLOOR)
+    # the board lies on the same floor: its own plane, as a check on the depth's
+    board_normal = cam_board[:3, 2] * np.sign(-cam_board[:3, 2] @ cam_board[:3, 3])
+    board_height = float(abs(board_normal @ cam_board[:3, 3]))
+    apart = np.degrees(np.arccos(np.clip(board_normal @ normal, -1, 1)))
+    print(f"floor from depth: camera {height * 1000:.0f} mm above it ({share:.0%} of the points on it); "
+          f"the board's plane: {board_height * 1000:.0f} mm, the two {apart:.2f} deg apart")
     allpoints = he.board().getChessboardCorners()
     in_base = (base_cam @ cam_board @ np.c_[allpoints, np.ones(len(allpoints))].T).T[:, :3]
     order = sorted(range(len(in_base)), key=lambda i: (round(in_base[i][0], 2), -in_base[i][1]))

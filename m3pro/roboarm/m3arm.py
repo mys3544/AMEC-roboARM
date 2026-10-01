@@ -109,14 +109,14 @@ class M3Arm:
         return float(volts)
 
     # ---------------------------------------------------------------- motion --
-    def _check(self, pose: Pose) -> None:
+    def _check(self, pose: Pose, floor_clear: float | None = None) -> None:
         for joint, angle in pose.items():
             if joint not in SAFE_LIMITS:
                 raise ArmError(f"no such joint: {joint}")
             lo, hi = SAFE_LIMITS[joint]
             if not lo <= angle <= hi:
                 raise ArmError(f"J{joint}={angle} is outside its safe range {lo}..{hi}")
-        why = m3kinematics.problem(pose)
+        why = m3kinematics.problem(pose, m3kinematics.FLOOR_CLEAR if floor_clear is None else floor_clear)
         if why:
             raise ArmError(f"refused: {why} ({' '.join(f'J{j}={pose[j]}' for j in JOINTS)})")
 
@@ -127,19 +127,21 @@ class M3Arm:
             self._pose = dict(pose)
             self._move = (start, dict(pose), self._clock(), ms / 1000)
 
-    def _plan(self, targets: Pose) -> tuple[Pose, Pose]:
+    def _plan(self, targets: Pose, floor_clear: float | None = None) -> tuple[Pose, Pose]:
+        if floor_clear is not None and floor_clear < m3kinematics.MIN_FLOOR_CLEAR:
+            raise ArmError(f"floor_clear {floor_clear} m is under the {m3kinematics.MIN_FLOOR_CLEAR} m minimum")
         start = self.read()
         targets = {int(j): int(v) for j, v in targets.items()}
         goal = {j: targets.get(j, start[j]) for j in JOINTS}
-        self._check(goal)
+        self._check(goal, floor_clear)
         return start, goal
 
-    def _steps(self, start: Pose, goal: Pose) -> list[Pose]:
+    def _steps(self, start: Pose, goal: Pose, floor_clear: float | None = None) -> list[Pose]:
         biggest = max(abs(goal[j] - start[j]) for j in JOINTS)
         n = max(1, math.ceil(biggest / self.step_deg)) if biggest else 0
         steps = [{j: round(start[j] + (goal[j] - start[j]) * k / n) for j in JOINTS} for k in range(1, n + 1)]
         for step in steps:   # every pose on the way, before any is sent
-            self._check(step)
+            self._check(step, floor_clear)
         return steps
 
     def _run(self, steps: list[Pose], speed_dps: float, cancel: threading.Event | None = None) -> None:
@@ -159,11 +161,13 @@ class M3Arm:
                 return
 
     def move_to(self, targets: Pose, speed_dps: float = 40.0, settle: bool = True,
-                repeatable: bool = False) -> Pose:   # repeatable: Arm's signature (no read-back)
-        """Move to `targets` (partial poses allowed) in checked steps of at most step_deg."""
+                repeatable: bool = False, floor_clear: float | None = None) -> Pose:   # repeatable: Arm's
+        """Move to `targets` (partial poses allowed) in checked steps of at most step_deg. A move
+        planned on a floor the depth has just measured may keep less than FLOOR_CLEAR from it
+        (`floor_clear`, m; never under MIN_FLOOR_CLEAR)."""
         self._cancel_glide()
-        start, goal = self._plan(targets)
-        self._run(self._steps(start, goal), speed_dps)
+        start, goal = self._plan(targets, floor_clear)
+        self._run(self._steps(start, goal, floor_clear), speed_dps)
         if settle:
             self._sleep(0.25)
         return goal
