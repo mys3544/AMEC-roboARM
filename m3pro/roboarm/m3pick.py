@@ -47,14 +47,17 @@ LOOK = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90}   # the wide look: the floor from the
                                              # 22 cm off, the depth's near end ~19 (until 2026-10-01 J3 25:
                                              # from 20 cm, and the near cubes cut by the picture's edge)
 FOLDED = {1: 90, 2: 180, 3: 5, 4: 0, 5: 90}   # home, without the gripper: it keeps what it holds
+CARRIES = ((130, 40, 40), (150, 30, 30), (160, 10, 10), (180, 5, 0))   # (J2, J3, J4) to carry at, lowest
+                                                                       # first: the last is FOLDED
 BACK = 0.12                 # m the fingertips stop short along the approach: the camera ~24 cm off
 FLOOR_CLEAR_PLACE = 0.003   # m the fingertips may come to the floor on the last descent, the floor just measured
 OPEN_MM = 55
 DROP_OUT, DROP_UP, DROP_SPREAD = 0.189, 0.110, 0.100   # m: the X3 Plus's drop-off (config.DROP_POSE)
 GRIP_Z_MIN = 0.018   # m: the grip point's lowest; the fingertips reach ~1.4 cm below it at 70 deg
-PITCHES = (70, 65, 75, 60, 80, 55, 50, 85, 45)   # the approaches tried first, then every whole degree
-FINE = tuple(p for p in range(85, 39, -1) if p not in PITCHES)   # between: at the far edge the window
-                                                                # is a few degrees wide (2026-10-01)
+PITCHES = (70, 65, 75, 60, 80, 55, 50, 85, 90, 45)   # the approaches tried first, then every whole degree
+FINE = tuple(p for p in range(90, 39, -1) if p not in PITCHES)   # between: at the far edge the window is a
+                                                                # few degrees wide; near the bumper only
+                                                                # straight down reaches (2026-10-01)
 LIFTS = (0.0, 0.003, 0.006, 0.009, 0.012, 0.015)   # m the grip may go higher on the thing, up to its top,
                                                    # when its middle is out of reach: the fingertips
                                                    # reach ~1.2 cm past the grip point, so even at the
@@ -121,10 +124,10 @@ EXACT_M = 0.04   # the last bit of the line, at exactly the approach's pitch
 def line(a: np.ndarray, b: np.ndarray, pitch: float, floor_clear: float, step: float = 0.02):
     """IK poses along the straight line a -> b, every `step`, the hand at `pitch` over the last
     EXACT_M and up to 15 deg off it before that -- at the far edge the shoulder is at its end and the
-    elbow runs into its own (J3 0) going back up the line at one pitch (2026-10-01); None if a
-    point is out of reach."""
+    elbow runs into its own (J3 0) going back up the line at one pitch (2026-10-01); None if an end,
+    or two points in a row, are out of reach."""
     n = max(1, math.ceil(np.linalg.norm(b - a) / step))
-    out = []
+    out, skipped = [], False
     for i in range(n, -1, -1):   # from the grip back up: each point's pitch near the one below it
         point = a + (b - a) * i / n
         last = pitch if not out else out[-1][1]
@@ -135,9 +138,14 @@ def line(a: np.ndarray, b: np.ndarray, pitch: float, floor_clear: float, step: f
             p = m3kinematics.reach(point, last + tilt, floor_clear=floor_clear)
             if p is not None:
                 out.append((p, last + tilt))
+                skipped = False
                 break
         else:
-            return None
+            # one point in the middle missed by whole servo degrees (2026-10-01: straight down by the
+            # bumper, 2 cm up, while 4-10 cm up reached): the glide goes on to the next, checked too
+            if i in (0, n) or skipped:
+                return None
+            skipped = True
     return [p for p, _ in reversed(out)]
 
 
@@ -186,6 +194,20 @@ def drop_pose(extra: float) -> dict | None:
         if pose:
             return pose
     return None
+
+
+def way_to(here: dict, goal: dict, direct: bool = True) -> list[dict]:
+    """The quickest way the guard allows from `here` to `goal` (whole poses), for one glide: straight
+    there (unless not `direct`: holding something, never swung across the chassis low); else turned
+    to the goal's J1 while rising to a carry pose, then on; else up first, turned, then on.
+    CARRIES lowest first, FOLDED -- always allowed -- last."""
+    def at(carry, j1):
+        return {**here, 1: j1, 2: carry[0], 3: carry[1], 4: carry[2]}
+    ways = ([[goal]] if direct else []) + [[at(c, goal[1]), goal] for c in CARRIES] +         [[at(c, here[1]), at(c, goal[1]), goal] for c in CARRIES]
+    for way in ways:
+        if m3arm.glide_problem(here, way) is None:
+            return way
+    return ways[-1]
 
 
 def mark(image: np.ndarray, K, camera: np.ndarray, found: list[dict], target: dict | None = None) -> np.ndarray:
@@ -309,6 +331,12 @@ class Picker:
         self.call("move_to", {int(j): v for j, v in pose.items()}, **kwargs)
         self.check()
 
+    def go(self, goal: dict, speed: float = 20) -> None:
+        """To `goal` the quickest way the guard allows (way_to): straight, or round over the chassis
+        (2026-10-01: the look -> a straight-down pre-grasp, straight, passed 17 cm over the arm's base)."""
+        here = {int(j): v for j, v in self.call("read").items()}
+        self.through(way_to(here, {**here, **{int(j): v for j, v in goal.items()}}), speed=speed)
+
     def through(self, poses: list[dict], floor_clear: float | None = None, speed: float = 20) -> None:
         """Through `poses` without stopping at each (M3Arm.follow)."""
         self.check()
@@ -326,7 +354,7 @@ class Picker:
             model = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
             normal, height, _ = m3vision.floor_plane(depth, K)
             camera = m3vision.level(model, normal, height, m3kinematics.FLOOR)
-            found = m3vision.objects(depth, K, camera)
+            found = m3vision.objects(depth, K, camera, floor=(normal, height))
         base = np.asarray(m3kinematics.CHAIN[0][0][:2])
         for o in found:   # cheap, and hopeful: the pick plans the one it takes in full
             radius = float(np.hypot(*(o["centre"][:2] - base)))
@@ -372,7 +400,8 @@ class Picker:
 
     def wide_look(self) -> list[dict]:
         """To the wide look, the gripper opening on the way, and what it shows."""
-        self.move({**LOOK, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}, speed=FREE_DPS)
+        here = {int(j): v for j, v in self.call("read").items()}
+        self.through(way_to(here, {**LOOK, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}), speed=FREE_DPS)
         _camera, found = self.look("wide")
         self.say("wide look: " + describe(found))
         return found
@@ -403,7 +432,7 @@ class Picker:
             raise NothingToPick("out of reach: " + describe(kit))
         guess = wrist_for(planned[1][-1], target["yaw"], target["period"]) if target["whole"] else 90
         with self.step("pregrasp"):   # the wrist turned on the way, as the wide look has it
-            self.move({**planned[1][0], 5: guess}, speed=NEAR_DPS)
+            self.go({**planned[1][0], 5: guess}, speed=NEAR_DPS)
         with self.step("look.close"):
             _camera, close = self.look("close", target["centre"])
         again = [o for o in close if o["kind"] and np.linalg.norm(o["centre"][:2] - target["centre"][:2]) < MATCH_M]
@@ -419,7 +448,7 @@ class Picker:
         poses = [{**p, 5: j5} for p in poses]
         self.say(f"the {name(reading)}: fingers along {reading['yaw']:.0f} deg ({yaw_from} look), wrist J5 {j5}")
         with self.step("descend"):   # to the line's top, then down it in one glide
-            self.move(poses[0], speed=NEAR_DPS)
+            self.go(poses[0], speed=NEAR_DPS)
             self.through(poses[1:], floor_clear=FLOOR_CLEAR_PLACE, speed=DESCEND_DPS)
         with self.step("close"):
             self.call("close_gripper", width_mm=round(reading["size"] * 1000), floor_clear=FLOOR_CLEAR_PLACE,
@@ -445,15 +474,18 @@ class Picker:
         return record, after
 
     def drop(self) -> None:
-        """What is held to the X3 Plus's drop-off, let go, back up: up over the chassis and turned
-        there, never swung across it low with something in hand -- in one glide each way."""
+        """What is held to the X3 Plus's drop-off and let go, in one glide: up to a carry height
+        and turned there -- turning while rising where the guard allows it -- then out and down;
+        never swung across the chassis low with something in hand. The lowest carry first (until
+        2026-10-01 always folded right up, J2 180: 7 s a drop). Back to the wide look straight
+        from there, holding nothing."""
         extra = float(self.rng.uniform(0.0, DROP_SPREAD))
         pose = drop_pose(extra) or drop_pose(0.0)
         with self.step("drop"):
-            self.through([FOLDED, {**FOLDED, 1: 180}, pose], speed=FREE_DPS)
+            here = {int(j): v for j, v in self.call("read").items()}
+            self.through(way_to(here, pose, direct=False), speed=FREE_DPS)
             self.call("set_gripper", m3arm.GRIPPER_OPEN, speed_dps=GRIPPER_DPS, settle=False)
             time.sleep(0.2)
-            self.through([{**FOLDED, 1: 180}, FOLDED], speed=FREE_DPS)
         self.say(f"dropped {1000 * (DROP_OUT + extra):.0f} mm out on the right")
 
     def clean_up(self, kind: str | None = None, limit: int = 20) -> None:

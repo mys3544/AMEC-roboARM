@@ -26,7 +26,11 @@ def points(depth_mm: np.ndarray, K, step: int = 4) -> np.ndarray:
     return np.stack([(u - K[0, 2]) * z / K[0, 0], (v - K[1, 2]) * z / K[1, 1], z], axis=1)
 
 
-def floor_plane(depth_mm: np.ndarray, K, tolerance: float = 0.006, rounds: int = 300,
+SCORED = 3000   # points each RANSAC guess is scored on: the floor is most of the picture, a sample
+                # tells the best guess as well as all ~19 000 (and is 6x quicker)
+
+
+def floor_plane(depth_mm: np.ndarray, K, tolerance: float = 0.006, rounds: int = 120,
                 seed: int = 0) -> tuple[np.ndarray, float, float]:
     """The floor under the camera: (unit normal pointing at the camera, the camera's height above
     it in m, the share of the points on it). The largest plane in view, by RANSAC, then a least-
@@ -36,17 +40,21 @@ def floor_plane(depth_mm: np.ndarray, K, tolerance: float = 0.006, rounds: int =
     if len(p) < 500:
         raise ValueError(f"only {len(p)} depth points between {NEAR} and {FAR} m")
     rng = np.random.default_rng(seed)
+    sample = p[rng.choice(len(p), min(SCORED, len(p)), replace=False)]
     best, best_count = None, 0
     for _ in range(rounds):
-        a, b, c = p[rng.choice(len(p), 3, replace=False)]
+        a, b, c = sample[rng.choice(len(sample), 3, replace=False)]
         n = np.cross(b - a, c - a)
         if np.linalg.norm(n) < 1e-9:
             continue
         n /= np.linalg.norm(n)
-        inliers = np.abs((p - a) @ n) < tolerance
-        if inliers.sum() > best_count:
-            best, best_count = inliers, int(inliers.sum())
-    floor = p[best]
+        count = int((np.abs((sample - a) @ n) < tolerance).sum())
+        if count > best_count:
+            best, best_count = (a, n), count
+    a, n = best
+    inliers = np.abs((p - a) @ n) < tolerance   # the best guess's points among all of them
+    best_count = int(inliers.sum())
+    floor = p[inliers]
     centre = floor.mean(axis=0)
     normal = np.linalg.svd(floor - centre, full_matrices=False)[2][2]
     if normal @ centre > 0:   # point it at the camera, which sits at the origin
@@ -87,7 +95,7 @@ def kit_item(top: float, long: float):
 
 
 def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
-            min_points: int = 40) -> list[dict]:
+            min_points: int = 40, floor: tuple[np.ndarray, float] | None = None) -> list[dict]:
     """The things standing on the floor, from one depth image and the camera levelled on that
     floor (level()): each the depth's points 6-100 mm over the floor, grouped by where they stand
     (cells of `cell` m that touch), dropped onto the floor -- every face of a box standing there
@@ -100,10 +108,11 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
     "kind" ("cube", "block" or None), "size" (m the fingers close across, or None), "length",
     "height" (m), "top" (m, measured), "footprint" ((w, h) m as seen), "yaw" (deg: a line the
     fingers may close along -- any face of a square footprint, across a lying block), "period"
-    (deg: 90 square, 180 a lying block), "whole" (bool), "points"}."""
+    (deg: 90 square, 180 a lying block), "whole" (bool), "points"}. `floor`: (normal, height) from
+    floor_plane() when the caller has it already."""
     K = np.asarray(K, float).reshape(3, 3)
     rows, cols = depth_mm.shape[:2]
-    normal, height, _ = floor_plane(depth_mm, K)
+    normal, height = floor if floor is not None else floor_plane(depth_mm, K)[:2]
     p = points(depth_mm, K, step=1)
     above = height + p @ normal
     keep = (above > 0.006) & (above < 0.10)
@@ -112,24 +121,15 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
         return []
     base = (camera[:3, :3] @ p.T).T + camera[:3, 3]
     cells = np.floor(base[:, :2] / cell).astype(int)
-    index: dict[tuple, list[int]] = {}
-    for i, c in enumerate(map(tuple, cells)):
-        index.setdefault(c, []).append(i)
-    found, seen = [], set()
-    for start in index:
-        if start in seen:
-            continue
-        todo, members = [start], []
-        seen.add(start)
-        while todo:   # the touching cells: one object
-            c = todo.pop()
-            members += index[c]
-            for dx in (-1, 0, 1):
-                for dy in (-1, 0, 1):
-                    n = (c[0] + dx, c[1] + dy)
-                    if n in index and n not in seen:
-                        seen.add(n)
-                        todo.append(n)
+    cells -= cells.min(axis=0)
+    grid = np.zeros(cells.max(axis=0)[::-1] + 1, np.uint8)   # the floor seen from above, a cell a pixel
+    grid[cells[:, 1], cells[:, 0]] = 1
+    _count, labels = cv2.connectedComponents(grid, connectivity=8)   # the touching cells: one object
+    label = labels[cells[:, 1], cells[:, 0]]
+    order = np.argsort(label, kind="stable")
+    bounds = np.flatnonzero(np.diff(label[order])) + 1
+    found = []
+    for members in np.split(order, bounds):
         if len(members) < min_points:
             continue
         xy = base[members, :2].astype(np.float32)

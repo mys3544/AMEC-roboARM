@@ -7,7 +7,7 @@ import time
 
 import numpy as np
 
-from roboarm import m3kinematics, m3pick
+from roboarm import m3arm, m3kinematics, m3pick
 
 K = np.array([[480.0, 0, 320], [0, 480.0, 240], [0, 0, 1]])
 HOME = {1: 90, 2: 180, 3: 5, 4: 0, 5: 90, 6: 0}
@@ -47,6 +47,7 @@ class World:
             time.sleep(self.move_s)
             self.pose = goal
         elif method == "follow":
+            time.sleep(self.move_s)
             for pose in args[0]:
                 goal = {**self.pose, **{int(j): v for j, v in pose.items()}}
                 why = m3kinematics.problem(goal, kwargs.get("floor_clear") or m3kinematics.FLOOR_CLEAR)
@@ -132,3 +133,17 @@ def test_a_stop_with_nothing_running_does_not_linger():
     picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0)
     picker.stop()
     assert not picker.stopping()
+
+
+def test_the_way_to_the_drop_off_carries_low_and_turns_while_rising_and_the_guard_passes_it():
+    lifted = [{1: 80, 2: 76, 3: 15, 4: 19, 5: 90, 6: 134}, {1: 136, 2: 59, 3: 34, 4: 18, 5: 44, 6: 134}]
+    for extra in (0.0, 0.05, 0.1):
+        drop = m3pick.drop_pose(extra)
+        for here in lifted:
+            way = m3pick.way_to(here, drop, direct=False)
+            assert way[-1] == drop and len(way) >= 2 and m3arm.glide_problem(here, way) is None
+            assert way[0][2] < m3pick.FOLDED[2]   # not folded right up: a carry below it
+        back = m3pick.way_to(drop, {**m3pick.LOOK, 6: 76})
+        assert m3arm.glide_problem(drop, back) is None and back[-1][2] == m3pick.LOOK[2]
+    deck = {1: 90, 2: 60, 3: 10, 4: 10, 5: 90}   # down onto the front deck: refused, and said why
+    assert "chassis" in m3arm.glide_problem(dict(HOME), [deck])

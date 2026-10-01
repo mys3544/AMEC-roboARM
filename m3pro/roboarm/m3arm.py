@@ -51,6 +51,25 @@ POLL_S = 0.03              # how often a move under way looks for an interrupt
 BLEND = 0.8                # follow(): the next pose goes out this far through the one before
 
 
+def glide_problem(start: Pose, poses: list[Pose], floor_clear: float | None = None,
+                  step_deg: float = 5.0) -> str | None:
+    """Why gliding from `start` through `poses` (whole poses, joints 1-5 at least) would not be
+    allowed -- every pose, and every step_deg on the way as follow() drives it, its corners cut at
+    BLEND -- or None. For planners to choose a way before asking the arm for it."""
+    clear = m3kinematics.FLOOR_CLEAR if floor_clear is None else floor_clear
+    last = start
+    for i, goal in enumerate(poses):
+        biggest = max(abs(goal[j] - last[j]) for j in (1, 2, 3, 4, 5))
+        n = max(1, math.ceil(biggest / step_deg))
+        for k in range(1, n + 1):
+            why = m3kinematics.problem({j: round(last[j] + (goal[j] - last[j]) * k / n) for j in (1, 2, 3, 4, 5)}, clear)
+            if why:
+                return why
+        if i < len(poses) - 1:
+            last = {j: round(last[j] + BLEND * (goal[j] - last[j])) for j in goal}
+    return None
+
+
 def gripper_angle(width_mm: float) -> int:
     """The angle that closes the fingers to `width_mm`, from Yahboom's table (interpolated)."""
     widths = sorted(GRIPPER_WIDTH)

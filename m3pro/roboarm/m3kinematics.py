@@ -85,15 +85,36 @@ def _frame(xyz, r):
     return m
 
 
+def _axis(axis) -> tuple[np.ndarray, np.ndarray]:
+    a = np.asarray(axis, float)
+    a = a / np.linalg.norm(a)
+    k = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
+    return k, k @ k
+
+
+# What does not change with the pose, worked out once: a grasp plan runs frames() thousands of times,
+# and building these again each time was most of its time (2026-10-01: 0.5 ms a call, 2.7 s a plan
+# on the robot).
+_ORIGINS = [_frame(xyz, _rpy(*rpy)) for xyz, rpy, _ in CHAIN]
+_AXES = [_axis(axis) for *_, axis in CHAIN]
+_TO_CAMERA = _frame(CAMERA[0], _rpy(*CAMERA[1]))
+_TO_GRIPPING = _frame(GRIPPING[0], _rpy(*GRIPPING[1]))
+
+
 def frames(pose: dict[int, float]) -> dict[str, np.ndarray]:
     """4 x 4 transforms base_link -> each part, for servo degrees {1..5: angle} (6 ignored)."""
     out, m = {}, np.eye(4)
-    for joint, (xyz, rpy, axis) in enumerate(CHAIN, 1):
-        angle = 90 - pose[joint] if joint in MIRRORED else pose[joint] + SAG.get(joint, 0.0) - 90
-        m = m @ _frame(xyz, _rpy(*rpy)) @ _frame((0, 0, 0), _rot(axis, math.radians(angle)))
+    turn = np.eye(4)
+    for joint, (origin, (k, kk)) in enumerate(zip(_ORIGINS, _AXES, strict=True), 1):
+        angle = math.radians(90 - pose[joint] if joint in MIRRORED else pose[joint] + SAG.get(joint, 0.0) - 90)
+        turn[:3, :3] = math.sin(angle) * k + (1 - math.cos(angle)) * kk   # Rodrigues, less the identity
+        turn[0, 0] += 1.0
+        turn[1, 1] += 1.0
+        turn[2, 2] += 1.0
+        m = m @ origin @ turn
         out[f"arm{joint}"] = m
-    out["camera"] = out["arm4"] @ _frame(CAMERA[0], _rpy(*CAMERA[1]))
-    out["gripping"] = out["arm5"] @ _frame(GRIPPING[0], _rpy(*GRIPPING[1]))
+    out["camera"] = out["arm4"] @ _TO_CAMERA
+    out["gripping"] = out["arm5"] @ _TO_GRIPPING
     return out
 
 
@@ -117,32 +138,40 @@ def camera(pose: dict[int, float]) -> tuple[np.ndarray, float]:
     return f[:3, 3], -math.degrees(math.asin(f[2, 0]))
 
 
-def outline(pose: dict[int, float]) -> list[np.ndarray]:
-    """Points along the arm, shoulder to fingertips, every ~2 cm: what the guard checks."""
+def outline(pose: dict[int, float]) -> np.ndarray:
+    """Points along the arm, shoulder to fingertips, every ~2 cm, and the camera: what the guard
+    checks (n x 3, in that order)."""
     f = frames(pose)
     joints = [f[f"arm{j}"][:3, 3] for j in (2, 3, 4, 5)] + [f["gripping"][:3, 3]]
     along = joints[-1] - joints[-2]   # the fingers go on the way the wrist reaches the Gripping point
     joints.append(joints[-1] + FINGERS * along / np.linalg.norm(along))
-    joints.append(f["camera"][:3, 3])
-    points = []
-    for a, b in itertools.pairwise(joints[:-1]):
+    stretches = []
+    for a, b in itertools.pairwise(joints):
         n = max(1, int(np.linalg.norm(b - a) / 0.02))
-        points += [a + (b - a) * k / n for k in range(n + 1)]
-    return points + [joints[-1]]
+        stretches.append(a + (b - a) * (np.arange(n + 1)[:, None] / n))
+    return np.vstack([*stretches, f["camera"][:3, 3][None]])
 
 
 def problem(pose: dict[int, float], floor_clear: float = FLOOR_CLEAR) -> str | None:
     """Why the pose would put the arm into the chassis, the lidars or the floor; None if it
-    would not."""
-    for p in outline(pose):
-        for x0, x1, top in CHASSIS:
-            if x0 < p[0] < x1 and abs(p[1]) < CHASSIS_Y and p[2] < top:
-                return (f"the arm would come down to {100 * (p[2] - FLOOR):.0f} cm above the floor over"
-                        f" the chassis (x {p[0]:+.2f} m): keep it above {100 * (top - FLOOR):.0f} cm there")
-        if p[2] < FLOOR + max(floor_clear, MIN_FLOOR_CLEAR):
-            return (f"the arm would reach {100 * (p[2] - FLOOR):.1f} cm above the floor"
-                    f" (x {p[0]:+.2f} m): the fingertips stay {100 * floor_clear:.1f} cm clear of it")
-    return None
+    would not. The first point along the arm that is in the way says why."""
+    p = outline(pose)
+    step = np.full(len(p), -1)
+    for i, (x0, x1, top) in enumerate(CHASSIS):
+        over = (p[:, 0] > x0) & (p[:, 0] < x1) & (np.abs(p[:, 1]) < CHASSIS_Y) & (p[:, 2] < top)
+        step = np.where(over & (step < 0), i, step)
+    low = p[:, 2] < FLOOR + max(floor_clear, MIN_FLOOR_CLEAR)
+    bad = (step >= 0) | low
+    if not bad.any():
+        return None
+    first = int(np.argmax(bad))
+    x, z = p[first, 0], p[first, 2]
+    if step[first] >= 0:
+        top = CHASSIS[step[first]][2]
+        return (f"the arm would come down to {100 * (z - FLOOR):.0f} cm above the floor over"
+                f" the chassis (x {x:+.2f} m): keep it above {100 * (top - FLOOR):.0f} cm there")
+    return (f"the arm would reach {100 * (z - FLOOR):.1f} cm above the floor"
+            f" (x {x:+.2f} m): the fingertips stay {100 * floor_clear:.1f} cm clear of it")
 
 
 def grip(pose: dict[int, float]) -> tuple[np.ndarray, float]:
@@ -202,9 +231,13 @@ def reach(target, pitch_down: float, j5: float = 90, tolerance: float = 0.005,
 
     best = None
     for guess in _planar(radius, float(target[2]), pitch_down):
+        if not all(-15 <= v <= 195 for v in guess):   # the refinement moves a few degrees: no use
+            continue
         q = np.array(guess)
         for _ in range(6):   # the URDF's small offsets: a numerical Jacobian, a few steps
             e = error(q)
+            if np.abs(e).max() < 0.01:   # 0.1 mm and 0.02 deg off: there
+                break
             J = np.column_stack([(error(q + d) - e) / 0.01 for d in np.eye(3) * 0.01])
             q = q + np.linalg.lstsq(J, -e, rcond=None)[0]
         if not all(0 <= v <= 180 for v in q):
