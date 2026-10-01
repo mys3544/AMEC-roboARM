@@ -62,3 +62,27 @@ def test_level_puts_a_model_camera_back_on_the_measured_floor():
     left = fixed[:3, :3] @ real[:3, :3].T
     axis = cv2.Rodrigues(left)[0].ravel()
     assert np.linalg.norm(axis) < math.radians(1.5) and abs(axis[2]) > 0.9 * np.linalg.norm(axis)
+
+
+def test_a_cube_on_the_floor_is_found_where_it_stands_and_named_by_its_height():
+    cam = camera(0.33, 52, 1.0)
+    found = m3vision.objects(render(cam, cube=(0.42, -0.03)), K, cam)
+    assert len(found) == 1
+    cube = found[0]
+    assert cube["size"] == 0.030 and abs(cube["top"] - 0.030) < 0.004
+    assert np.linalg.norm(cube["centre"][:2] - [0.42, -0.03]) < 0.004
+    assert m3vision.objects(render(cam), K, cam) == []       # a bare floor: nothing
+
+
+def test_something_as_tall_as_a_cube_but_longer_is_not_one():
+    cam = camera(0.33, 52, 1.0)
+    depth = render(cam, cube=(0.42, -0.03))
+    plank = render(cam, cube=(0.42, -0.03))   # a second render to borrow from: a 30 mm tall plank 12 cm long
+    v, u = np.mgrid[0:480, 0:640]
+    rays = np.stack([(u - 320) / 480.0, (v - 240) / 480.0, np.ones_like(u, float)], axis=-1) @ cam[:3, :3].T
+    t = (0.03 - cam[2, 3]) / np.where(np.abs(rays[..., 2]) > 1e-9, rays[..., 2], -1e-9)
+    hit = cam[:3, 3] + rays * t[..., None]
+    on = (t > 0) & (np.abs(hit[..., 0] - 0.55) < 0.015) & (np.abs(hit[..., 1] - 0.10) < 0.06)
+    plank = np.where(on, (t * 1000).astype(np.uint16), depth)
+    found = m3vision.objects(plank, K, cam)
+    assert sorted(o["size"] is None for o in found) == [False, True]   # the cube, and not-a-cube
