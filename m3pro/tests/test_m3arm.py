@@ -1,6 +1,7 @@
 """roboarm/m3arm.py with a pretend board: nothing moves before engage(), every pose sent is legal
-and clear of the chassis, moves go in small steps, an interrupt holds where it stopped, the
-gripper closes only to a width."""
+and clear of the chassis, every step on the way is checked and then a move is one command, an
+interrupt holds where it got to, follow() goes through poses without stopping, the gripper closes
+only to a width."""
 
 import threading
 import time
@@ -18,10 +19,11 @@ class Board:
     """What the M3's board is sent, on a pretend clock that sleeping moves on."""
 
     def __init__(self, volts=11.8):
-        self.sent, self.t, self.volts = [], 100.0, volts
+        self.sent, self.t, self.volts, self.times = [], 100.0, volts, []
 
     def send(self, pose, ms):
         self.sent.append((dict(pose), ms))
+        self.times.append(self.t)
 
     def clock(self):
         return self.t
@@ -47,19 +49,15 @@ def test_nothing_moves_before_engage_and_engage_sends_a_whole_known_pose():
         assert board.sent == [(HOME, m3arm.ENGAGE_MS)] and arm.read() == HOME
 
 
-def test_a_move_goes_in_small_legal_steps_and_is_believed_on_the_way():
+def test_a_move_is_one_command_over_its_whole_time_and_is_believed_on_the_way():
     board = Board()
     with board.arm(step_deg=5) as arm:
         arm.engage()
         board.sent.clear()
-        assert arm.move_to(SURVEY) == SURVEY
-    poses = [p for p, _ms in board.sent]
-    assert poses[-2] == SURVEY and poses[-1] == SURVEY   # the last step, then the hold on exit
-    last = HOME
-    for p in poses[:-1]:
-        assert max(abs(p[j] - last[j]) for j in m3arm.JOINTS) <= 5
-        assert m3kinematics.problem(p) is None
-        last = p
+        t0 = board.t
+        assert arm.move_to(SURVEY, speed_dps=40, settle=False) == SURVEY
+        assert abs(board.t - t0 - 60 / 40) < 0.05          # J2 180 -> 120 at 40 deg/s
+    assert board.sent == [(SURVEY, 1500), (SURVEY, 0)]   # one sweep, then the hold on exit
     arm2 = board.arm()
     arm2.engage()
     t0 = board.t
@@ -89,11 +87,29 @@ def test_an_interrupt_holds_where_the_move_got_to():
     arm = board.arm(step_deg=5)
     arm.engage()
     board.sent.clear()
-    arm.interrupt = lambda: len(board.sent) >= 3
+    t0 = board.t
+    arm.interrupt = lambda: board.t >= t0 + 0.75   # halfway through 1.5 s
     with pytest.raises(ArmError, match="interrupted"):
-        arm.move_to(SURVEY)
-    (third, _ms), (held, ms) = board.sent[-2], board.sent[-1]
-    assert ms == 0 and held == third != SURVEY   # stopped at the last step sent, not the goal
+        arm.move_to(SURVEY, speed_dps=40)
+    held, ms = board.sent[-1]
+    assert ms == 0 and abs(held[2] - (HOME[2] + SURVEY[2]) / 2) <= 2   # frozen halfway, not at the goal
+
+
+def test_follow_goes_through_without_stopping_and_checks_the_rounded_corners():
+    board = Board()
+    arm = board.arm()
+    arm.engage()
+    board.sent.clear()
+    via = {1: 90, 2: 150, 3: 20, 4: 0, 5: 90}
+    t0 = board.t
+    assert arm.follow([via, SURVEY], speed_dps=60) == SURVEY
+    (first, ms1), (second, _ms2) = board.sent
+    assert first == {**via, 6: 0} and second == SURVEY
+    assert board.times[1] - t0 < ms1 / 1000 - 0.05      # the second went out before the first arrived
+    board.sent.clear()
+    with pytest.raises(ArmError, match="chassis"):     # a way that dips onto the deck: nothing sent
+        arm.follow([{2: 60, 3: 10, 4: 10}, SURVEY])
+    assert board.sent == []
 
 
 def test_a_glide_returns_at_once_and_hold_stops_it():

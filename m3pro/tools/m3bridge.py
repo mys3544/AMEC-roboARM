@@ -17,6 +17,17 @@ board, the battery from /battery. The camera: /camera/color/image_raw into the M
     GET /rgbd  {"stamp", "depth_lag_s", "joints" (believed; null before engage), "K" (3 x 3),
                 "color_jpeg", "depth_png" (base64; the PNG is 16-bit, millimetres)}
 
+And the pick itself (roboarm.m3pick.Picker), here beside the arm and the camera so no picture
+crosses the network -- what the console's M3 arm card drives and watches:
+
+    POST /pick/start    {"kind": "cube"|"block"|null, "at": [x, y]|null}   one pick, then home
+    POST /pick/cleanup  {"kind": ...}   every kit thing in reach, one by one
+    POST /pick/home     POST /pick/stop (the arm holds where it is, at once)
+    GET  /pick/state    the job, its step, the counts, the last attempt, what the last look found
+    GET  /pick/log?since=N    the narrated steps after N
+    GET  /pick/frame.jpg      the last look, marked
+    GET  /api/metrics         where the time went (roboarm.metrics: one run a job)
+
 No authentication: the lab network only, as the X3's bridge.
 """
 
@@ -24,24 +35,26 @@ from __future__ import annotations
 
 import argparse
 import base64
+import json
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
 import numpy as np
 
-from roboarm import camera, m3arm
+from roboarm import camera, m3arm, m3pick, metrics
 from roboarm.arm import ArmError
 from roboarm.web import bridge
 from roboarm.web.server import Server, send_json
 
 PORT = 8761
+OUT = Path(__file__).resolve().parents[1] / "out" / "pick"
 CALIBRATION = Path(__file__).resolve().parents[1] / "data" / "m3_calibration.json"   # none yet
 
 
@@ -65,6 +78,14 @@ class Frames:
         self.lock = threading.Lock()
         self.color = self.color_stamp = self.depth = self.depth_stamp = self.K = None
 
+    def arrays(self):
+        """(colour BGR, depth mm, K 3 x 3) as they are now, copies; an ArmError while one is missing."""
+        with self.lock:
+            color, depth, K = self.color, self.depth, self.K
+        if color is None or depth is None or K is None:
+            raise ArmError("no picture from the camera yet: was the bridge started with --camera?")
+        return color.copy(), depth.copy(), np.asarray(K, float).reshape(3, 3)
+
     def snapshot(self, joints) -> dict:
         with self.lock:
             color, depth, K = self.color, self.depth, self.K
@@ -80,10 +101,68 @@ class Frames:
         }
 
 
-def make_handler(the_bridge: bridge.Bridge, frames: Frames):
+def blank_frame() -> bytes:
+    image = np.zeros((480, 640, 3), np.uint8)
+    cv2.putText(image, "no look yet", (220, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2, cv2.LINE_AA)
+    return cv2.imencode(".jpg", image)[1].tobytes()
+
+
+def make_handler(the_bridge: bridge.Bridge, frames: Frames, picker: m3pick.Picker | None = None):
+    blank = blank_frame()
+
     class Handler(bridge.Handler):
+        def send_bytes(self, data: bytes, kind: str) -> None:
+            self.send_response(200)
+            self.send_header("Content-Type", kind)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self) -> None:
+            url = urlparse(self.path)
+            if picker is None or not url.path.startswith("/pick/"):
+                super().do_POST()
+                return
+            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+            except ValueError:
+                send_json(self, {"error": "the body is not JSON"}, 400)
+                return
+            kind = body.get("kind") if body.get("kind") in ("cube", "block") else None
+            if url.path == "/pick/stop":
+                picker.stop()
+                the_bridge.interrupt()
+                reply = {"ok": True}
+            elif url.path == "/pick/start":
+                reply = picker.start("pick_once", kind=kind, at=body.get("at"))
+            elif url.path == "/pick/cleanup":
+                reply = picker.start("clean_up", kind=kind)
+            elif url.path == "/pick/home":
+                reply = picker.start("home")
+            else:
+                send_json(self, {"error": f"no {url.path}"}, 404)
+                return
+            send_json(self, reply, 409 if "error" in reply else 200)
+
         def do_GET(self) -> None:
-            if urlparse(self.path).path == "/rgbd":
+            url = urlparse(self.path)
+            if picker is not None and url.path == "/pick/state":
+                send_json(self, picker.status())
+                return
+            if picker is not None and url.path == "/pick/log":
+                since = parse_qs(url.query).get("since", ["0"])[0]
+                send_json(self, {"lines": picker.log(int(since) if since.isdigit() else 0)})
+                return
+            if picker is not None and url.path == "/pick/frame.jpg":
+                self.send_bytes(picker.frame or blank, "image/jpeg")
+                return
+            if url.path == "/api/metrics":
+                send_json(self, metrics.snapshot(events="events=0" not in url.query))
+                return
+            if url.path == "/rgbd":
                 arm = the_bridge.arm
                 try:
                     joints = arm.read() if arm is not None else None
@@ -156,6 +235,30 @@ def make_node(frames: Frames, stream: RosStream):
     return M3Node()
 
 
+def arm_caller(the_bridge: bridge.Bridge, picker):
+    """The picker's way to the arm: the bridge's own calls (one at a time, on its lock), with the
+    arm's interrupt also asking the picker -- a stop between two calls would otherwise be wiped by
+    the next call, which clears the bridge's interrupt before it starts."""
+    def call(method, *args, **kwargs):
+        if the_bridge.arm is None:
+            the_bridge.connect()
+        arm = the_bridge.arm
+        if arm is not None and not getattr(arm.interrupt, "asks_picker", False):
+            plain = arm.interrupt
+
+            def interrupt() -> bool:
+                return picker().stopping() or bool(plain is not None and plain())
+            interrupt.asks_picker = True
+            arm.interrupt = interrupt
+        return the_bridge.call(method, list(args), kwargs)
+    return call
+
+
+def snapshot(the_bridge: bridge.Bridge, frames: Frames):
+    color, depth, K = frames.arrays()
+    return color, depth, K, the_bridge.call("read", [], {})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--host", default="0.0.0.0")
@@ -182,7 +285,10 @@ def main() -> int:
         return m3arm.M3Arm(node.send, lambda: node.volts)
 
     the_bridge = bridge.Bridge(make_arm, lambda: stream, CALIBRATION)
-    server = Server((args.host, args.port), make_handler(the_bridge, frames))
+    picker = m3pick.Picker(arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT)
+    metrics.REGISTRY.log_path = OUT / "metrics.jsonl"
+    OUT.mkdir(parents=True, exist_ok=True)
+    server = Server((args.host, args.port), make_handler(the_bridge, frames, picker))
     the_bridge.connect()
     state = "arm ready (engage before the first move)" if the_bridge.arm else f"arm NOT connected: {the_bridge.arm_error}"
     print(f"m3bridge on port {server.server_port}: {state}", flush=True)

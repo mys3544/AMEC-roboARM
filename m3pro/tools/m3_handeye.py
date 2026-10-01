@@ -44,7 +44,7 @@ from roboarm import config as cfg
 from roboarm import m3arm, m3kinematics
 
 BRIDGE = "http://192.168.73.66:8761"
-LINK_TO_OPTICAL = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], float)   # optical x right, y down, z ahead
+LINK_TO_OPTICAL = m3kinematics.OPTICAL   # optical x right, y down, z ahead
 REAL_SAG_DEG = 4.0   # what camcheck found: the arm sits this much lower than the URDF (to predict views)
 OUT = ROOT / "data" / "m3_handeye.json"
 
@@ -71,10 +71,7 @@ def arm4(pose: dict[int, float], joints=JOINTS0) -> np.ndarray:
 
 def urdf_camera() -> np.ndarray:
     """arm4 -> the camera's optical frame, as the URDF has it: the starting guess."""
-    m = np.eye(4)
-    m[:3, :3] = m3kinematics._rpy(*m3kinematics.CAMERA[1]) @ LINK_TO_OPTICAL
-    m[:3, 3] = m3kinematics.CAMERA[0]
-    return m
+    return m3kinematics.camera_optical()
 
 
 def rt(params: np.ndarray) -> np.ndarray:

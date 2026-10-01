@@ -24,17 +24,22 @@ def camera(height, down_deg, roll_deg):
 
 
 def render(cam, cube=None, noise=0.002, seed=1):
-    """A depth image (mm) of the floor z = 0 -- and a 30 mm cube on it -- from `cam`."""
+    """A depth image (mm) of the floor z = 0 -- and a box on it, (x, y[, turn deg[, length, height]]):
+    a 30 mm cube unless told, 30 mm wide always -- from `cam`."""
     rng = np.random.default_rng(seed)
     v, u = np.mgrid[0:480, 0:640]
     rays = np.stack([(u - 320) / 480.0, (v - 240) / 480.0, np.ones_like(u, float)], axis=-1)
     d = rays @ cam[:3, :3].T                       # ray directions in base
     t = -cam[2, 3] / np.where(np.abs(d[..., 2]) > 1e-9, d[..., 2], -1e-9)
     z = np.where(t > 0, t, 0.0)                    # depth along the optical axis = t (ray z = 1)
-    if cube is not None:   # the cube's top face, 30 mm up
-        t2 = (0.03 - cam[2, 3]) / np.where(np.abs(d[..., 2]) > 1e-9, d[..., 2], -1e-9)
+    if cube is not None:   # the box's top face
+        length, tall = (tuple(cube[3:5]) + (0.03, 0.03))[:2]
+        t2 = (tall - cam[2, 3]) / np.where(np.abs(d[..., 2]) > 1e-9, d[..., 2], -1e-9)
         hit = cam[:3, 3] + d * t2[..., None]
-        on = (t2 > 0) & (np.abs(hit[..., 0] - cube[0]) < 0.015) & (np.abs(hit[..., 1] - cube[1]) < 0.015)
+        turn = math.radians(cube[2] if len(cube) > 2 else 0.0)
+        dx, dy = hit[..., 0] - cube[0], hit[..., 1] - cube[1]
+        along, aside = dx * math.cos(turn) + dy * math.sin(turn), -dx * math.sin(turn) + dy * math.cos(turn)
+        on = (t2 > 0) & (np.abs(along) < length / 2) & (np.abs(aside) < 0.015)
         z = np.where(on, t2, z)
     z = z + rng.normal(0, noise, z.shape)
     return np.clip(z * 1000, 0, 65535).astype(np.uint16)
@@ -86,3 +91,24 @@ def test_something_as_tall_as_a_cube_but_longer_is_not_one():
     plank = np.where(on, (t * 1000).astype(np.uint16), depth)
     found = m3vision.objects(plank, K, cam)
     assert sorted(o["size"] is None for o in found) == [False, True]   # the cube, and not-a-cube
+
+
+def test_a_turned_cube_reads_its_turn_and_one_cut_by_the_pictures_edge_says_so():
+    cam = camera(0.33, 52, 1.0)
+    cube = m3vision.objects(render(cam, cube=(0.42, -0.03, 40)), K, cam)[0]
+    assert cube["whole"] and abs((cube["yaw"] - 40 + 45) % 90 - 45) < 3
+    # the picture's bottom edge meets the cube's top face at x ~0.211: a third of it out of view, and
+    # the rectangle round the rest turns with the edge (2026-10-01: 0.7 deg for a cube turned 45)
+    cut = m3vision.objects(render(cam, cube=(0.215, 0.0, 40)), K, cam)[0]
+    assert cut["size"] == 0.030 and not cut["whole"]
+
+
+def test_the_blocks_lying_and_standing_are_named_and_gripped_across():
+    cam = camera(0.33, 52, 1.0)
+    lying = m3vision.objects(render(cam, cube=(0.42, -0.03, 30, 0.06, 0.03)), K, cam)[0]
+    assert (lying["kind"], lying["size"], lying["length"], lying["period"]) == ("block", 0.030, 0.060, 180)
+    assert lying["whole"] and abs((lying["yaw"] - 120 + 90) % 180 - 90) < 3   # across its length (30 + 90)
+    assert np.linalg.norm(lying["centre"] - [0.42, -0.03, 0.015]) < 0.004
+    standing = m3vision.objects(render(cam, cube=(0.42, -0.03, 10, 0.03, 0.06)), K, cam)[0]
+    assert (standing["kind"], standing["size"], standing["height"], standing["period"]) == ("block", 0.030, 0.060, 90)
+    assert abs(standing["centre"][2] - 0.030) < 1e-9

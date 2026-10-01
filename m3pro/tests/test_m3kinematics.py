@@ -1,5 +1,7 @@
-"""roboarm/m3kinematics.py: J1 turns the measured way, the guard keeps the arm off the chassis Yahboom's
+"""roboarm/m3kinematics.py: J1 and J5 turn the measured ways, the guard keeps the arm off the chassis Yahboom's
 model describes and off the floor, and reach() finds again the poses that put the grip in front."""
+
+import math
 
 import numpy as np
 
@@ -45,3 +47,13 @@ def test_a_cube_in_front_can_be_reached_from_above_at_a_slant():
     assert pose is not None and k.problem(pose) is None
     point, pitch = k.grip(pose)
     assert abs(point[0] - 0.24) < 0.005 and abs(pitch - 70) <= 3
+
+
+def test_j5_turns_the_way_it_was_seen_to():
+    """2026-10-01, the gripper pointing down over the table: J5 90 -> 130 swung the finger on the
+    robot's left (+y) forward (+x), away from the robot."""
+    pose = {1: 90, 2: 56, 3: 21, 4: 27}
+    left = k.frames({**pose, 5: 90})["arm5"][:3, 1]
+    assert left[1] > 0.9                                   # at J5 90 the fingers open left-right
+    turned = k.frames({**pose, 5: 130})["arm5"][:3, 1]
+    assert turned[0] > 0.5 and math.degrees(math.atan2(turned[1], turned[0])) < 60

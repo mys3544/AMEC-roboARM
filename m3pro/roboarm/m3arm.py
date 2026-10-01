@@ -13,8 +13,12 @@ What the M3's board does not do, and what that changes (surveyed 2026-09-30):
     a width, through Yahboom's width table, and grasped() cannot tell -- look instead.
 
 Every pose sent is checked by roboarm.m3kinematics.problem (the chassis, the lidars, the floor)
-and against per-joint limits; moves go in steps of at most `step_deg`, each one checked, and an
-interrupt stops at the last step sent. Angles are servo degrees; 90 is the URDF's zero.
+and against per-joint limits -- and so is every pose on the way, every `step_deg`, before anything
+is sent. Then a move is ONE command over its whole time: the board's servos sweep there together,
+joint by joint in a straight line, which is the path checked. (Until 2026-10-01 each 5 deg step was
+a command of its own, and the arm went stop-and-go the whole way.) follow() runs through several
+poses without stopping at each. An interrupt freezes the arm where it is believed to be. Angles
+are servo degrees; 90 is the URDF's zero.
 """
 
 from __future__ import annotations
@@ -43,6 +47,8 @@ GRIPPER_WIDTH = {0: 180, 20: 152, 30: 134, 40: 115, 50: 95, 60: 57}
 GRIPPER_OPEN = 30          # wider than the 60 mm entry: the kit's biggest piece is 40 mm
 ENGAGE_MS = 3000           # the first command, from wherever the limp arm is
 MIN_BATTERY_V = 10.5       # the M3's board went silent at ~10.4 V under load (2026-09-30)
+POLL_S = 0.03              # how often a move under way looks for an interrupt
+BLEND = 0.8                # follow(): the next pose goes out this far through the one before
 
 
 def gripper_angle(width_mm: float) -> int:
@@ -145,20 +151,34 @@ class M3Arm:
         return steps
 
     def _run(self, steps: list[Pose], speed_dps: float, cancel: threading.Event | None = None) -> None:
-        if not steps:
-            return
-        ms = max(20, int(1000 * self.step_deg / speed_dps))
-        for step in steps:
+        if steps:   # all checked already: one command to the last of them
+            self._sweep(steps[-1], speed_dps, cancel)
+
+    def _sweep(self, goal: Pose, speed_dps: float, cancel: threading.Event | None = None,
+               early: float = 0.0) -> None:
+        """Send `goal` to arrive when the joint with the furthest to go gets there at speed_dps,
+        and wait for it -- or only (1 - early) of the way, for follow() to send the next."""
+        start = self.read()
+        seconds = max(0.05, max(abs(goal[j] - start[j]) for j in JOINTS) / speed_dps)
+        self._send(goal, int(1000 * seconds))
+        self._wait(seconds * (1.0 - early), cancel)
+
+    def _wait(self, seconds: float, cancel: threading.Event | None = None) -> None:
+        end = self._clock() + seconds
+        while True:
             if self.interrupt is not None and self.interrupt():
                 self._freeze()   # not hold(): a glide's own thread cannot wait for itself
                 raise ArmError("move interrupted -- the arm is holding where it stopped")
             if cancel is not None and cancel.is_set():
+                self._freeze()
                 return
-            self._send(step, ms)
+            left = end - self._clock()
+            if left <= 0:
+                return
             if cancel is None:
-                self._sleep(ms / 1000)
-            elif cancel.wait(ms / 1000):
-                return
+                self._sleep(min(POLL_S, left))
+            else:
+                cancel.wait(min(POLL_S, left))
 
     def move_to(self, targets: Pose, speed_dps: float = 40.0, settle: bool = True,
                 repeatable: bool = False, floor_clear: float | None = None) -> Pose:   # repeatable: Arm's
@@ -171,6 +191,33 @@ class M3Arm:
         if settle:
             self._sleep(0.25)
         return goal
+
+    def follow(self, poses: list[Pose], speed_dps: float = 30.0, floor_clear: float | None = None,
+               settle: bool = False) -> Pose:
+        """Through `poses` (partial poses allowed) one after another without stopping at each: the
+        next goes out when the arm is BLEND of the way to the one before, so it rounds the corner
+        -- and that rounded way is checked too, with every stretch, before anything moves. For a
+        straight line of the hand: IK poses along it, a few cm apart."""
+        self._cancel_glide()
+        if floor_clear is not None and floor_clear < m3kinematics.MIN_FLOOR_CLEAR:
+            raise ArmError(f"floor_clear {floor_clear} m is under the {m3kinematics.MIN_FLOOR_CLEAR} m minimum")
+        here = self.read()
+        goals, last = [], here
+        for pose in poses:
+            goal = {j: int({int(k): v for k, v in pose.items()}.get(j, last[j])) for j in JOINTS}
+            self._check(goal, floor_clear)
+            goals.append(goal)
+            last = goal
+        last = here
+        for i, goal in enumerate(goals):   # the stretches as they will be driven, corners cut
+            self._steps(last, goal, floor_clear)
+            if i < len(goals) - 1:
+                last = {j: round(last[j] + BLEND * (goal[j] - last[j])) for j in JOINTS}
+        for i, goal in enumerate(goals):
+            self._sweep(goal, speed_dps, early=0.0 if i == len(goals) - 1 else 1.0 - BLEND)
+        if settle:
+            self._sleep(0.25)
+        return goals[-1] if goals else here
 
     def glide(self, targets: Pose, speed_dps: float = 12.0) -> Pose:
         """Start the move and return at once with the goal; moving() says whether it goes on."""

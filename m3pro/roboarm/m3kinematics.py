@@ -19,6 +19,9 @@ ruler readings: a working correction, not a measurement (the arm also repeats on
 SIGNS: J1 turns the other way than the URDF's axis -- a bigger J1 turns the arm to the right (-y).
 Found by the hand-eye pictures (2026-09-30): through the URDF's sign the board seen from J1 76..104
 moved 0.37 m with J1; mirrored, it stayed within 8 mm. Yahboom's kin_srv has the URDF's sign.
+J5 turns the URDF's way, seen (2026-10-01): the gripper pointing down, J5 90 -> 130 swings the
+finger on the robot's left forward. (A mirrored J5, read off a missed pick's pictures that
+morning, put the fingers along a 60 mm block instead of across it: three misses.)
 """
 
 from __future__ import annotations
@@ -62,6 +65,7 @@ FLOOR_CLEAR = 0.015   # m above the floor the fingertips stay, with the SAG's ~1
                       # depth just measured (the last descent of a place or a pick) may ask less
 MIN_FLOOR_CLEAR = 0.002   # m: never less, whoever asks
 SAG = {2: 4.0, 3: -8.5}   # degrees the joints really sit off their command (see SAG above)
+MIRRORED = (1,)           # joints that turn against the URDF's axis (see SIGNS above)
 
 
 def _rot(axis, q):
@@ -85,12 +89,25 @@ def frames(pose: dict[int, float]) -> dict[str, np.ndarray]:
     """4 x 4 transforms base_link -> each part, for servo degrees {1..5: angle} (6 ignored)."""
     out, m = {}, np.eye(4)
     for joint, (xyz, rpy, axis) in enumerate(CHAIN, 1):
-        angle = pose[joint] + SAG.get(joint, 0.0) - 90 if joint != 1 else 90 - pose[joint]   # SAG, SIGNS
+        angle = 90 - pose[joint] if joint in MIRRORED else pose[joint] + SAG.get(joint, 0.0) - 90
         m = m @ _frame(xyz, _rpy(*rpy)) @ _frame((0, 0, 0), _rot(axis, math.radians(angle)))
         out[f"arm{joint}"] = m
     out["camera"] = out["arm4"] @ _frame(CAMERA[0], _rpy(*CAMERA[1]))
     out["gripping"] = out["arm5"] @ _frame(GRIPPING[0], _rpy(*GRIPPING[1]))
     return out
+
+
+OPTICAL = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], float)   # the DCW2 link -> its optical frame
+                                                                  # (x right, y down, z ahead)
+
+
+def camera_optical() -> np.ndarray:
+    """arm4 -> the camera's optical frame, as the URDF has it: the one in use (the hand-eye fit of
+    the mount was degenerate, 2026-09-30; the depth's floor levels whatever it gets wrong)."""
+    m = np.eye(4)
+    m[:3, :3] = _rpy(*CAMERA[1]) @ OPTICAL
+    m[:3, 3] = CAMERA[0]
+    return m
 
 
 def camera(pose: dict[int, float]) -> tuple[np.ndarray, float]:

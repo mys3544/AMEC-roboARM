@@ -11,7 +11,9 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-NEAR, FAR = 0.2, 1.2   # m: the DCW2's depth starts at 0.2; past ~1.2 the floor is too oblique to trust
+NEAR, FAR = 0.15, 1.2   # m: the DCW2 answers from ~0.19 (a cut at 0.2 took the near half of a cube's
+                        # top face at the pick's close look, 2026-10-01); past ~1.2 the floor is too
+                        # oblique to trust
 
 
 def points(depth_mm: np.ndarray, K, step: int = 4) -> np.ndarray:
@@ -70,21 +72,37 @@ def level(model: np.ndarray, normal: np.ndarray, height: float, floor_z: float =
     return out
 
 
-SIZES = (0.030, 0.040)   # the kit's cubes, m (Yahboom's 30 and 40 mm)
+# The kit (plan v2.2): (kind, width across, length, height) in m -- the cubes, and the 30 x 30 x 60
+# block (two cubes glued) lying and standing. The fingers close across `width`.
+KIT = (("cube", 0.030, 0.030, 0.030), ("cube", 0.040, 0.040, 0.040),
+       ("block", 0.030, 0.060, 0.030), ("block", 0.030, 0.030, 0.060))
 
 
-def objects(depth_mm: np.ndarray, K, camera: np.ndarray, sizes=SIZES, cell: float = 0.004,
+def kit_item(top: float, long: float):
+    """The kit item a footprint `long` m at its longest and `top` m tall is, or None: the nearest
+    height within 7 mm, no longer than the item (+12 mm -- seen partly a thing looks smaller,
+    never bigger: 2026-10-01, 150 x 46 mm and 35 tall was not a cube)."""
+    fits = [item for item in KIT if abs(item[3] - top) <= 0.007 and long <= item[2] + 0.012]
+    return min(fits, key=lambda item: (abs(item[3] - top), item[2])) if fits else None
+
+
+def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
             min_points: int = 40) -> list[dict]:
     """The things standing on the floor, from one depth image and the camera levelled on that
     floor (level()): each the depth's points 6-100 mm over the floor, grouped by where they stand
     (cells of `cell` m that touch), dropped onto the floor -- every face of a box standing there
     lies over its footprint -- and the smallest rectangle round them. Its top (the 95th percentile
-    of the heights) names the cube: the nearest of `sizes` within 7 mm and a footprint no wider
-    than it (+12 mm), else None. A side of the
-    footprint shorter than that size is grown to it on the camera's side: from close the DCW2 sees
-    only part of a cube's top face, never the band nearest it (2026-10-01). Nearest the camera
-    first; each {"centre" (base, m, at half height), "size" (m or None), "top" (m),
-    "footprint" ((w, h) m as seen), "yaw" (deg, the rectangle's turn about the vertical), "points"}."""
+    of the heights) and its longest side name the kit item (kit_item(): a cube, a block lying or
+    standing), else None. A side shorter than the item's is grown to it on the camera's side: a
+    thing cut by the picture's edge is seen only in part. Such a rectangle's turn is the edge's,
+    not the thing's (2026-10-01: 0.7 deg for a cube turned 45) -- "whole" says it was seen whole,
+    its turn worth using. Nearest the camera first; each {"centre" (base, m, at half height),
+    "kind" ("cube", "block" or None), "size" (m the fingers close across, or None), "length",
+    "height" (m), "top" (m, measured), "footprint" ((w, h) m as seen), "yaw" (deg: a line the
+    fingers may close along -- any face of a square footprint, across a lying block), "period"
+    (deg: 90 square, 180 a lying block), "whole" (bool), "points"}."""
+    K = np.asarray(K, float).reshape(3, 3)
+    rows, cols = depth_mm.shape[:2]
     normal, height, _ = floor_plane(depth_mm, K)
     p = points(depth_mm, K, step=1)
     above = height + p @ normal
@@ -116,18 +134,27 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, sizes=SIZES, cell: floa
             continue
         xy = base[members, :2].astype(np.float32)
         top = float(np.percentile(above[members], 95))
-        size = min(sizes, key=lambda s: abs(s - top))
-        size = size if abs(size - top) <= 0.007 else None
-        (cx, cy), (w, h), angle = cv2.minAreaRect(xy)
-        if size is not None and max(w, h) > size + 0.012:   # seen partly, a cube looks smaller, never
-            size = None                                      # bigger: something else (2026-10-01: 150 x 46 mm, 35 tall)
+        (cx, cy), (w, h), angle = cv2.minAreaRect(xy)   # w lies along `angle`, h across it
+        item = kit_item(top, max(w, h))
+        kind, size, length, tall = item if item else (None, None, None, top)
         centre = np.array([cx, cy])
-        if size is not None:
+        mine = p[members]
+        u, v = K[0, 0] * mine[:, 0] / mine[:, 2] + K[0, 2], K[1, 1] * mine[:, 1] / mine[:, 2] + K[1, 2]
+        clipped = bool(np.any((u < 3) | (u > cols - 4) | (v < 3) | (v > rows - 4)))
+        lying = item is not None and length > size
+        long_deg = angle if w >= h else angle + 90             # the footprint's long side
+        whole = False
+        if item:
+            want = {True: length, False: size}                 # each side's length, the longer one's first
+            whole = not clipped and all(side >= want[side == max(w, h)] - 0.006 for side in (w, h))
             to_camera = camera[:2, 3] - centre
-            for length, a in ((w, np.radians(angle)), (h, np.radians(angle) + np.pi / 2)):
+            for side, a in ((w, np.radians(angle)), (h, np.radians(angle) + np.pi / 2)):
                 along = np.array([np.cos(a), np.sin(a)])
-                if length < size:
-                    centre = centre + np.sign(to_camera @ along) * (size - length) / 2 * along
-        found.append({"centre": np.array([centre[0], centre[1], (size or top) / 2]), "size": size, "top": top,
-                      "footprint": (float(w), float(h)), "yaw": float(angle) % 90, "points": len(members)})
+                need = want[lying and side == max(w, h)]
+                if side < need:
+                    centre = centre + np.sign(to_camera @ along) * (need - side) / 2 * along
+        found.append({"centre": np.array([centre[0], centre[1], tall / 2]), "kind": kind, "size": size,
+                      "length": length, "height": tall, "top": top, "footprint": (float(w), float(h)),
+                      "yaw": float(long_deg + 90) % 180 if lying else float(angle) % 90,
+                      "period": 180 if lying else 90, "whole": whole, "points": len(members)})
     return sorted(found, key=lambda o: float(np.linalg.norm(o["centre"][:2] - camera[:2, 3])))
