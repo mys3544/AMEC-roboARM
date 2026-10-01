@@ -15,8 +15,10 @@ taken to the drop-off -- one, or every one in reach (clean_up).
      other; up over the chassis and turned there, never swung across it low with something in hand;
   6. the wide look again: nothing where it stood = picked -- and it is the next pick's wide look.
 
-Every move is one smooth command, or a glide through several (M3Arm.move_to / follow), at FREE_DPS in
-the open and slower near the floor; each step's time goes to roboarm.metrics.
+Every move is one smooth command, or a glide through several (M3Arm.move_to / follow), quicker in
+the open and slower near the floor -- the speeds and pauses are SETTINGS, changed from the console;
+each step's time goes to roboarm.metrics. Where the base drove up to something out of reach, it
+drives back to where the job began before each drop: the drop-off box stays there.
 
 The arm picks off the floor 16-27 cm ahead of base_link (3.5-14 cm before the bumper; nearer, the
 hand cannot point down steeply enough), less far aside: further out the shoulder (J2) would have to lean past its end at 0 (2026-10-01).
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 import collections
 import contextlib
+import itertools
 import json
 import math
 import threading
@@ -51,7 +54,10 @@ CARRIES = ((130, 40, 40), (150, 30, 30), (160, 10, 10), (180, 5, 0))   # (J2, J3
                                                                        # first: the last is FOLDED
 BACK = 0.12                 # m the fingertips stop short along the approach: the camera ~24 cm off
 FLOOR_CLEAR_PLACE = 0.003   # m the fingertips may come to the floor on the last descent, the floor just measured
-OPEN_MM = 55
+OPEN_MM = 55        # the fingers apart at the wide look; at the pre-grasp opened_for() the target
+SPARE_MM = 25       # the opening over the target's width (2026-10-01: a 40 mm cube -- 57 mm across
+                    # its diagonal -- missed at 55; it opens to ~67 now, the gripper's widest)
+FINGER_M = 0.008    # m a fingertip reaches past the opening's edge (its own thickness and a margin)
 DROP_OUT, DROP_UP, DROP_SPREAD = 0.189, 0.110, 0.100   # m: the X3 Plus's drop-off (config.DROP_POSE)
 GRIP_Z_MIN = 0.018   # m: the grip point's lowest; the fingertips reach ~1.4 cm below it at 70 deg
 PITCHES = (70, 65, 75, 60, 80, 55, 50, 85, 90, 45)   # the approaches tried first, then every whole degree
@@ -62,14 +68,34 @@ LIFTS = (0.0, 0.003, 0.006, 0.009, 0.012, 0.015)   # m the grip may go higher on
                                                    # when its middle is out of reach: the fingertips
                                                    # reach ~1.2 cm past the grip point, so even at the
                                                    # top they hold its upper 1.2 cm
-SETTLE_S = 0.6   # still before a look: the arm stops swaying, the depth (0.17 s behind the colour) catches up
-FREE_DPS = 90      # deg/s of the joint with the furthest to go: moves in the open, to the look and the drop-off
-NEAR_DPS = 60      # to the pre-grasp, over the things on the floor
-DESCEND_DPS = 25   # down the line to the grip
-LIFT_DPS = 45      # back up it, holding
-GRIPPER_DPS = 150
+# What the console may change while the robot runs (POST /pick/settings), kept in out/pick/settings.json:
+# key -> (what it is, unit, lowest, highest, step, default). Arm speeds are deg/s of the joint with the
+# furthest to go, all times "speed" %. 2026-10-01: 120/80/40 deg/s shoved the robot ~2 cm on its mecanum
+# rollers -- the swing to the drop-off with a cube in hand -- and the descent arrived swaying (two
+# misses); 90/60/25 picked 2 of 2. A 0.35 s settle before the wide look after the swing back from the
+# drop-off read everything ~3 cm off; 0.35 before the close look did no harm.
+SETTINGS = {
+    "speed": ("arm speed, every move", "%", 30, 150, 5, 100),
+    "free_dps": ("moves in the open: the look, the drop-off", "deg/s", 20, 150, 5, 90),
+    "near_dps": ("to the pre-grasp, over the things", "deg/s", 10, 120, 5, 60),
+    "descend_dps": ("down the line to the grip", "deg/s", 5, 60, 1, 25),
+    "lift_dps": ("back up it, holding", "deg/s", 10, 120, 5, 60),
+    "gripper_dps": ("the gripper", "deg/s", 30, 300, 10, 150),
+    "settle_wide_s": ("still before the wide look", "s", 0.0, 2.0, 0.05, 0.6),
+    "settle_close_s": ("still before the close look", "s", 0.0, 2.0, 0.05, 0.35),
+    "grip_s": ("held shut before lifting", "s", 0.0, 1.5, 0.05, 0.3),
+    "release_s": ("open at the drop-off before going back", "s", 0.0, 1.0, 0.05, 0.2),
+    "drive_cm_s": ("driving speed", "cm/s", 1.0, 10.0, 0.5, 5.0),
+    "driven_s": ("still after driving, before the look", "s", 0.0, 2.0, 0.05, 0.4),
+    "nudge_cm": ("driving per move, at most", "cm", 1, 15, 1, 10),
+    "right_cm": ("driving right, at most (the drop-off box is there)", "cm", 0, 15, 1, 3),
+}
 MATCH_M = 0.03   # the close look's thing is the wide look's when within this
 MAX_MISSES = 2   # clean_up gives a spot up after this many misses in a row
+APPROACH_X = 0.21    # m ahead of base_link a thing out of reach is driven to (and to y 0): mid-reach
+BUMPER_X = 0.124     # m: the chassis' front edge (m3kinematics), and what the drive keeps clear of it
+BUMPER_GAP = 0.04
+APPROACHES = 3       # drives towards things before a pick gives up
 
 
 class Stopped(Exception):
@@ -93,17 +119,53 @@ def describe(found: list[dict]) -> str:
                      for o in found) or "nothing"
 
 
-def wrist_for(pose: dict, yaw: float, period: float = 90) -> int:
+def opened_for(size_m: float) -> int:
+    """The gripper angle that opens the fingers SPARE_MM wider than a thing `size_m` across --
+    beyond Yahboom's table (60 mm), its widest, GRIPPER_OPEN (~67 mm)."""
+    width = size_m * 1000 + SPARE_MM
+    return m3arm.gripper_angle(width) if width <= max(m3arm.GRIPPER_WIDTH) else m3arm.GRIPPER_OPEN
+
+
+def opening_m(angle: int) -> float:
+    """m between the fingers at a gripper angle: Yahboom's table inverted, extended past its end."""
+    table = sorted(m3arm.GRIPPER_WIDTH.items())
+    for (w0, a0), (w1, a1) in itertools.pairwise(table):
+        if a1 <= angle <= a0:
+            return (w0 + (angle - a0) * (w1 - w0) / (a1 - a0)) / 1000
+    (w0, a0), (w1, a1) = table[-2], table[-1]
+    return (w1 + (angle - a1) * (w1 - w0) / (a1 - a0)) / 1000
+
+
+def finger_clearance(pose: dict, opening: float, others: list[dict]) -> float:
+    """m from the two open fingertips, at `pose`, to the nearest of `others` (their footprints as
+    circles round their corners); inf with nothing about."""
+    f = m3kinematics.frames(pose)
+    grip, closing = f["gripping"][:3, 3][:2], f["arm5"][:3, 1][:2]
+    closing = closing / max(float(np.linalg.norm(closing)), 1e-9)
+    tips = [grip + side * (opening / 2 + FINGER_M) * closing for side in (1, -1)]
+    gaps = [float(np.linalg.norm(t - o["centre"][:2])) - 0.5 * float(np.hypot(*o["footprint"]))
+            for t in tips for o in others]
+    return min(gaps, default=float("inf"))
+
+
+def wrist_for(pose: dict, yaw: float, period: float = 90, opening: float = OPEN_MM / 1000,
+              others: list[dict] = ()) -> int:
     """J5 that squares the fingers with the object: they close along the wrist's y axis (the
     finger links sit either side of it, URDF), at J5 90 square to the arm's own plane -- with the
     arm turned to reach a cube that sits square to the robot, 25 deg off its faces: they caught its
     corners and shoved it (2026-10-01). `yaw` is a line the fingers may close along, the same every
-    `period` deg (90 a cube, 180 across a lying block): the smallest turn."""
+    `period` deg (90 a cube, 180 across a lying block): the smallest turn -- but of the ways that
+    square them (a cube's two), the one whose open fingers keep furthest from `others` (2026-10-01:
+    fingers opening left and right of a cube hit a 40 mm one 6.5 cm beside it)."""
     def mismatch(j5):
         y = m3kinematics.frames({**pose, 5: j5})["arm5"][:3, 1]
         closing = math.degrees(math.atan2(y[1], y[0]))
         return abs((closing - yaw + period / 2) % period - period / 2)
-    return min(range(181), key=lambda j5: (round(mismatch(j5)), abs(j5 - 90)))
+    best = min(range(181), key=lambda j5: (round(mismatch(j5)), abs(j5 - 90)))
+    if not others:
+        return best
+    squared = [j5 for j5 in {best, best - 90, best + 90} if 0 <= j5 <= 180 and round(mismatch(j5)) <= round(mismatch(best)) + 1]
+    return max(squared, key=lambda j5: (min(finger_clearance({**pose, 5: j5}, opening, others), 0.03), -abs(j5 - 90)))
 
 
 def turn_of(close: dict | None, wide: dict) -> tuple[dict, str]:
@@ -203,11 +265,33 @@ def way_to(here: dict, goal: dict, direct: bool = True) -> list[dict]:
     CARRIES lowest first, FOLDED -- always allowed -- last."""
     def at(carry, j1):
         return {**here, 1: j1, 2: carry[0], 3: carry[1], 4: carry[2]}
-    ways = ([[goal]] if direct else []) + [[at(c, goal[1]), goal] for c in CARRIES] +         [[at(c, here[1]), at(c, goal[1]), goal] for c in CARRIES]
+    ways = ([[goal]] if direct else []) + [[at(c, goal[1]), goal] for c in CARRIES] \
+        + [[at(c, here[1]), at(c, goal[1]), goal] for c in CARRIES]
     for way in ways:
         if m3arm.glide_problem(here, way) is None:
             return way
     return ways[-1]
+
+
+def nudge(found: list[dict], kit: list[dict], at=None, most: float = 0.10, right: float = 0.03) -> tuple[float, float] | None:
+    """(forward, left) m to drive so that the kit thing nearest the robot (or `at`) comes to
+    APPROACH_X ahead, straight ahead -- forward and sideways only, at most `most` each way and
+    `right` to the right (the drop-off box is on that side), never so far that anything in the
+    robot's way ends up within BUMPER_GAP of the bumper; None when that is under a centimetre."""
+    key = (lambda o: float(np.linalg.norm(o["centre"][:2] - at))) if at is not None else \
+        (lambda o: float(np.hypot(*o["centre"][:2])))
+    target = min(kit, key=key)
+    goal = target["centre"]
+    dx = float(np.clip(goal[0] - APPROACH_X, 0.0, most))
+    axis = np.asarray(m3kinematics.CHAIN[0][0][:2])   # J1's: what the arm reaches round
+    near = float(np.hypot(goal[0] - dx - axis[0], goal[1] - axis[1])) <= furthest(target["height"]) - 0.02
+    dy = 0.0 if near else float(np.clip(goal[1], -right, most))   # sideways only if forward is not enough
+    for o in found:   # anything the chassis would sweep into, kit or not, before or after a sideways move
+        if min(abs(o["centre"][1]), abs(o["centre"][1] - dy)) < m3kinematics.CHASSIS_Y + 0.03:
+            dx = min(dx, max(0.0, o["centre"][0] - BUMPER_X - BUMPER_GAP))
+    if abs(dx) < 0.01 and abs(dy) < 0.01:
+        return None
+    return round(float(dx), 3), round(float(dy), 3)
 
 
 def mark(image: np.ndarray, K, camera: np.ndarray, found: list[dict], target: dict | None = None) -> np.ndarray:
@@ -232,8 +316,19 @@ class Picker:
     """One job at a time (pick, clean_up, home, drop), on a thread of its own; what it is doing,
     its log and the last look's marked picture for whoever watches (the bridge's /pick/*)."""
 
-    def __init__(self, call, snapshot, out: Path | None = None, settle_s: float = SETTLE_S, rng=None):
-        self.call, self.snapshot, self.out, self.settle_s = call, snapshot, out, settle_s
+    def __init__(self, call, snapshot, out: Path | None = None, settle_s: float | None = None, rng=None,
+                 drive=None):
+        self.call, self.snapshot, self.out = call, snapshot, out
+        self.settle_s = settle_s    # None: the settings' (the tests set 0)
+        self.drive = drive          # drive(dx, dy, speed m/s) the base, m in its own frame -> what it went; None: it cannot
+        self.may_drive = False      # per job: what the caller allowed
+        self.offset = np.zeros(2)   # m the base has driven since the job began (forward, left): the drop-off
+                                    # box stays where it was, so the base goes back before a drop
+        self.cfg = {key: spec[5] for key, spec in SETTINGS.items()}
+        saved = None if out is None else out / "settings.json"
+        if saved is not None and saved.exists():
+            with contextlib.suppress(ValueError, OSError):
+                self.set_settings(json.loads(saved.read_text()), save=False)
         self.rng = rng or np.random.default_rng()
         self.frame: bytes | None = None   # the last look, marked, as JPEG
         self.found: list[dict] = []
@@ -260,10 +355,31 @@ class Picker:
         with self._lock:
             state = dict(self.state)
         state["now"] = time.time()   # the robot's clock, for how long the step has run
+        state["moved_cm"] = [round(100 * float(v), 1) for v in self.offset]
         state["found"] = [{"kind": o["kind"], "name": name(o) if o["kind"] else None,
                            "x": round(float(o["centre"][0]), 3), "y": round(float(o["centre"][1]), 3),
                            "yaw": round(o["yaw"], 1), "reach": o.get("reach")} for o in self.found]
         return state
+
+    def settings(self) -> list[dict]:
+        return [{"key": key, "label": spec[0], "unit": spec[1], "min": spec[2], "max": spec[3], "step": spec[4],
+                 "default": spec[5], "value": self.cfg[key]} for key, spec in SETTINGS.items()]
+
+    def set_settings(self, values: dict, save: bool = True) -> list[dict]:
+        """Change settings (unknown keys refused, values held to their range); they count from the
+        next move on, and are kept for the next start."""
+        for key, value in values.items():
+            if key not in SETTINGS:
+                raise ValueError(f"no setting {key!r}")
+            lo, hi = SETTINGS[key][2], SETTINGS[key][3]
+            self.cfg[key] = min(max(float(value), lo), hi)
+        if save and self.out is not None:
+            self.out.mkdir(parents=True, exist_ok=True)
+            (self.out / "settings.json").write_text(json.dumps(self.cfg, indent=1))
+        return self.settings()
+
+    def dps(self, key: str) -> float:
+        return self.cfg[key] * self.cfg["speed"] / 100
 
     def stopping(self) -> bool:
         """A stop is under way: only while a job runs -- a STOP pressed with nothing running must
@@ -347,7 +463,8 @@ class Picker:
     # -------------------------------------------------------------------------- seeing --
     def look(self, tag: str, target_near: np.ndarray | None = None):
         """(levelled camera, what was found) from where the arm is; the marked picture kept."""
-        time.sleep(self.settle_s)
+        time.sleep(self.settle_s if self.settle_s is not None else
+                   self.cfg["settle_close_s" if tag == "close" else "settle_wide_s"])
         self.check()
         image, depth, K, pose = self.snapshot()
         with metrics.span("detect"):
@@ -387,21 +504,24 @@ class Picker:
     def home(self) -> None:
         self.engaged()
         with self.step("home"):
-            self.call("home", speed_dps=FREE_DPS, settle=False)
+            self.call("home", speed_dps=self.dps("free_dps"), settle=False)
 
-    def pick_once(self, kind: str | None = None, at=None) -> dict:
-        """One pick and the drop-off, then home."""
+    def pick_once(self, kind: str | None = None, at=None, drive: bool = False) -> dict:
+        """One pick and the drop-off, then home; `drive`: the base may drive up to it."""
+        self.may_drive = drive and self.drive is not None
+        self.offset = np.zeros(2)
         self.engaged()
         try:
             return self.pick(kind, at)[0]
         finally:
             if not self._stop.is_set():
+                self.drive_back()
                 self.home()
 
     def wide_look(self) -> list[dict]:
         """To the wide look, the gripper opening on the way, and what it shows."""
         here = {int(j): v for j, v in self.call("read").items()}
-        self.through(way_to(here, {**LOOK, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}), speed=FREE_DPS)
+        self.through(way_to(here, {**LOOK, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}), speed=self.dps("free_dps"))
         _camera, found = self.look("wide")
         self.say("wide look: " + describe(found))
         return found
@@ -415,24 +535,38 @@ class Picker:
         if found is None:
             with self.step("look.wide"):
                 found = self.wide_look()
-        kit = [o for o in found if o["kind"] and (kind is None or o["kind"] == kind)]
-        if not kit:
-            raise NothingToPick(f"no kit {kind or 'cube or block'} in view")
         at = None if at is None else np.asarray(at, float)
-        target = planned = None
-        with metrics.span("plan"):
-            for o in sorted((o for o in kit if o["reach"]),
-                            key=lambda o: float(np.linalg.norm(o["centre"][:2] - (at if at is not None else [0, 0])))):
-                planned = plan_grasp(o["centre"], o["height"])
-                if planned:
-                    target = o
-                    break
-                o["reach"] = False
-        if target is None:
-            raise NothingToPick("out of reach: " + describe(kit))
-        guess = wrist_for(planned[1][-1], target["yaw"], target["period"]) if target["whole"] else 90
-        with self.step("pregrasp"):   # the wrist turned on the way, as the wide look has it
-            self.go({**planned[1][0], 5: guess}, speed=NEAR_DPS)
+        for approach in range(APPROACHES + 1):
+            kit = [o for o in found if o["kind"] and (kind is None or o["kind"] == kind)]
+            if not kit:
+                raise NothingToPick(f"no kit {kind or 'cube or block'} in view")
+            target = planned = None
+            with metrics.span("plan"):
+                for o in sorted((o for o in kit if o["reach"]),
+                                key=lambda o: float(np.linalg.norm(o["centre"][:2] - (at if at is not None else [0, 0])))):
+                    planned = plan_grasp(o["centre"], o["height"])
+                    if planned:
+                        target = o
+                        break
+                    o["reach"] = False
+            if target is not None:
+                break
+            move = self.may_drive and approach < APPROACHES and \
+                nudge(found, kit, at, self.cfg["nudge_cm"] / 100, self.cfg["right_cm"] / 100)
+            if not move:
+                raise NothingToPick("out of reach: " + describe(kit))
+            with self.step("drive"):
+                self.say(f"driving {100 * move[0]:.0f} cm forward, {100 * move[1]:+.0f} cm left, to bring it in reach")
+                went = self.base(*move)
+                if at is not None:
+                    at = at - went
+                found = self.wide_look()
+        opening = opened_for(target["size"])
+        others = [o for o in found if o is not target]
+        guess = wrist_for(planned[1][-1], target["yaw"], target["period"], opening_m(opening), others) \
+            if target["whole"] else 90
+        with self.step("pregrasp"):   # the wrist turned and the fingers opened on the way, as the wide look has it
+            self.go({**planned[1][0], 5: guess, m3arm.GRIPPER: opening}, speed=self.dps("near_dps"))
         with self.step("look.close"):
             _camera, close = self.look("close", target["centre"])
         again = [o for o in close if o["kind"] and np.linalg.norm(o["centre"][:2] - target["centre"][:2]) < MATCH_M]
@@ -444,18 +578,19 @@ class Picker:
                  f"{1000 * np.linalg.norm(centre[:2] - target['centre'][:2]):.1f} mm")
         planned = plan_grasp(centre, reading["height"], prefer=(planned[0], planned[2])) or planned
         pitch, poses, _lift = planned
-        j5 = wrist_for(poses[-1], reading["yaw"], reading["period"])
+        others = [o for o in close if np.linalg.norm(o["centre"][:2] - centre[:2]) > MATCH_M] + others   # and the wide look's: the close one sees less round it
+        j5 = wrist_for(poses[-1], reading["yaw"], reading["period"], opening_m(opened_for(reading["size"])), others)
         poses = [{**p, 5: j5} for p in poses]
         self.say(f"the {name(reading)}: fingers along {reading['yaw']:.0f} deg ({yaw_from} look), wrist J5 {j5}")
         with self.step("descend"):   # to the line's top, then down it in one glide
-            self.go(poses[0], speed=NEAR_DPS)
-            self.through(poses[1:], floor_clear=FLOOR_CLEAR_PLACE, speed=DESCEND_DPS)
+            self.go(poses[0], speed=self.dps("near_dps"))
+            self.through(poses[1:], floor_clear=FLOOR_CLEAR_PLACE, speed=self.dps("descend_dps"))
         with self.step("close"):
             self.call("close_gripper", width_mm=round(reading["size"] * 1000), floor_clear=FLOOR_CLEAR_PLACE,
-                      speed_dps=GRIPPER_DPS, settle=False)
-            time.sleep(0.3)
+                      speed_dps=self.dps("gripper_dps"), settle=False)
+            time.sleep(self.cfg["grip_s"])
         with self.step("lift"):
-            self.through(list(reversed(poses[:-1])), floor_clear=FLOOR_CLEAR_PLACE, speed=LIFT_DPS)
+            self.through(list(reversed(poses[:-1])), floor_clear=FLOOR_CLEAR_PLACE, speed=self.dps("lift_dps"))
         self.drop()
         with self.step("look.after"):   # the next pick's wide look, too
             after = self.wide_look()
@@ -481,17 +616,41 @@ class Picker:
         from there, holding nothing."""
         extra = float(self.rng.uniform(0.0, DROP_SPREAD))
         pose = drop_pose(extra) or drop_pose(0.0)
+        self.drive_back()   # the box did not drive with it
         with self.step("drop"):
             here = {int(j): v for j, v in self.call("read").items()}
-            self.through(way_to(here, pose, direct=False), speed=FREE_DPS)
-            self.call("set_gripper", m3arm.GRIPPER_OPEN, speed_dps=GRIPPER_DPS, settle=False)
-            time.sleep(0.2)
+            self.through(way_to(here, pose, direct=False), speed=self.dps("free_dps"))
+            self.call("set_gripper", m3arm.GRIPPER_OPEN, speed_dps=self.dps("gripper_dps"), settle=False)
+            time.sleep(self.cfg["release_s"])
         self.say(f"dropped {1000 * (DROP_OUT + extra):.0f} mm out on the right")
 
-    def clean_up(self, kind: str | None = None, limit: int = 20) -> None:
+    def base(self, dx: float, dy: float) -> np.ndarray:
+        """Drive the base (m forward, left), at the settings' speed; what it went, added to the
+        offset from where the job began; then still for a moment before anyone looks."""
+        went = self.drive(dx, dy, self.cfg["drive_cm_s"] / 100)
+        went = np.asarray(went if went is not None else (dx, dy), float)
+        self.offset = self.offset + went
+        time.sleep(self.cfg["driven_s"])
+        return went
+
+    def drive_back(self) -> None:
+        """Back to where the job began (the drop-off box is there), a move at most at a time."""
+        if self.drive is None or float(np.linalg.norm(self.offset)) < 0.005:
+            return
+        with self.step("drive back"):
+            most = self.cfg["nudge_cm"] / 100
+            for _ in range(4):
+                if float(np.linalg.norm(self.offset)) < 0.005:
+                    break
+                self.say(f"driving back {100 * self.offset[0]:.0f} cm, {100 * -self.offset[1]:+.0f} cm left, to the start")
+                self.base(*np.clip(-self.offset, -most, most))
+
+    def clean_up(self, kind: str | None = None, limit: int = 20, drive: bool = False) -> None:
         """Pick every kit thing in reach, one by one, until none is left in reach (or `limit`);
         each pick's last look is the next one's wide look. A spot missed MAX_MISSES times in a row
-        is given up."""
+        is given up. `drive`: the base may drive up to what is out of reach."""
+        self.may_drive = drive and self.drive is not None
+        self.offset = np.zeros(2)
         self.engaged()
         found, misses = None, []
         for _ in range(limit):
@@ -507,6 +666,7 @@ class Picker:
             if len(misses) >= MAX_MISSES and np.linalg.norm(misses[-1] - misses[-2]) < MATCH_M:
                 self.say("clean-up stopped: the same spot missed twice")
                 break
+        self.drive_back()
         self.home()
 
     def _remember(self, record: dict) -> None:

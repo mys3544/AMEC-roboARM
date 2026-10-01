@@ -96,7 +96,13 @@
       <button data-pick="block">Pick a block</button>
       <button class="cleanup" title="every cube and block in reach, one by one, to the drop-off">Clean up all in reach</button>
       <button class="home">Home</button>
+      <label class="stepwise" title="forward and sideways only, a few cm at a time; back to the start before each drop"><input type="checkbox" class="drive"> may drive closer to what is out of reach</label>
     </div>
+    <label class="speed armspeed" title="every arm move, as a share of the speeds below">arm speed <input type="range" min="30" max="150" step="5" value="100"> <output>100 %</output></label>
+    <details class="tuning">
+      <summary>Speeds and pauses</summary>
+      <div class="fields"><span class="note">loading from the robot&hellip;</span></div>
+    </details>
     <table class="timing">
       <thead><tr><th>step, last job</th><th>s</th><th>mean s</th><th>n</th></tr></thead>
       <tbody></tbody>

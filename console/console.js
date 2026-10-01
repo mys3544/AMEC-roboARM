@@ -288,11 +288,18 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
     super(robot, 'the arm camera, live');
     const controls = $('#m3arm-controls').content.firstElementChild.cloneNode(true);
     $('.controls', this.el).append(controls);
+    const drive = () => $('.drive', controls).checked;
     controls.querySelectorAll('[data-pick]').forEach(b => {
-      b.onclick = () => this.act(`${b.textContent}: started`, call(robot, 'pick/start', { kind: b.dataset.pick || null }));
+      b.onclick = () => this.act(`${b.textContent}: started`,
+        call(robot, 'pick/start', { kind: b.dataset.pick || null, drive: drive() }));
     });
-    $('.cleanup', controls).onclick = () => this.act('clean up: started', call(robot, 'pick/cleanup', {}));
+    $('.cleanup', controls).onclick = () => this.act('clean up: started', call(robot, 'pick/cleanup', { drive: drive() }));
     $('.home', controls).onclick = () => this.act('home: started', call(robot, 'pick/home', {}));
+    this.speed = $('.armspeed input', controls);
+    this.speed.oninput = () => { $('.armspeed output', controls).textContent = `${this.speed.value} %`; };
+    this.speed.onchange = () => this.setting('speed', this.speed.value);
+    this.fields = $('.tuning .fields', controls);
+    this.settingsLoaded = false;
     this.timing = $('.timing tbody', controls);
     this.total = $('.timing tfoot', controls);
     this.armlog = $('.armlog', controls);
@@ -317,10 +324,54 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
     if (!this.closed) this.img.src = `${this.robot.url}/stream.mjpg?t=${Date.now()}`;
   }
 
+  showSettings(list) {   // the speed slider, and a field for each other speed and pause
+    const rows = [];
+    for (const s of list) {
+      if (s.key === 'speed') {
+        this.speed.value = s.value;
+        this.speed.oninput();
+        continue;
+      }
+      const label = document.createElement('label');
+      label.textContent = s.label;
+      label.title = `${s.min}-${s.max} ${s.unit}, ${s.default} at first`;
+      const input = document.createElement('input');
+      Object.assign(input, { type: 'number', min: s.min, max: s.max, step: s.step, value: s.value });
+      input.dataset.key = s.key;
+      input.onchange = () => this.setting(s.key, input.value, input);
+      label.htmlFor = input.id = `m3arm-${s.key}`;
+      const unit = document.createElement('span');
+      unit.className = 'unit';
+      unit.textContent = s.unit;
+      rows.push(label, input, unit);
+    }
+    this.fields.replaceChildren(...rows);
+    this.settingsLoaded = true;
+  }
+
+  async setting(key, value, input) {   // takes effect from the robot's next move
+    try {
+      const { settings } = await call(this.robot, 'pick/settings', { [key]: Number(value) });
+      const now = settings.find(s => s.key === key);
+      if (input) {
+        input.value = now.value;   // held to its range by the robot
+        input.classList.add('saved');
+        setTimeout(() => input.classList.remove('saved'), 800);
+      } else {
+        this.speed.value = now.value;
+        this.speed.oninput();
+      }
+      log(`${this.robot.name}: ${now.label} ${now.value} ${now.unit}`);
+    } catch (e) {
+      log(`${this.robot.name}: ${key} not changed -- ${e.message}`, true);
+    }
+  }
+
   async follow() {   // the robot's narrated steps, and where the time went, while the card is open
     let tick = 0;
     while (!this.closed) {
       try {
+        if (!this.settingsLoaded) this.showSettings((await call(this.robot, 'pick/settings')).settings);
         const { lines } = await call(this.robot, `pick/log?since=${this.since}`);
         for (const line of lines) {
           this.since = line.n;
@@ -370,6 +421,8 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
       `last     ${last ? `${last.picked ? 'picked' : 'MISSED'} the ${last.kind} in ${last.seconds} s` +
         ` (approach ${last.pitch} deg, fingers along ${last.yaw_deg} deg from the ${last.yaw_from} look, J5 ${last.j5})` : '-'}`,
       `in view  ${seen.length ? seen.join('; ') : 'no cube or block'}`,
+      `base     ${s.moved_cm && (s.moved_cm[0] || s.moved_cm[1])
+        ? `${s.moved_cm[0]} cm forward, ${s.moved_cm[1]} cm left of where the job began` : 'where the job began'}`,
     ].join('\n');
   }
 }

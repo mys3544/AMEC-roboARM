@@ -95,6 +95,15 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .timing td, .timing th { padding: 1px 8px 1px 0; }
 .timing td:nth-child(n+2), .timing th:nth-child(n+2) { text-align: right; }
 .timing tfoot td { border-top: 1px solid var(--line); font-weight: 600; }
+.armspeed { max-width: 420px; }
+.arm .jobs .stepwise { display: inline-flex; align-items: center; gap: 6px; }
+.tuning summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.tuning .fields { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 8px; align-items: center;
+                  margin-top: 6px; max-width: 520px; font-size: 13px; }
+.tuning input { width: 6em; font: inherit; color: var(--ink); background: var(--key); border: 1px solid var(--line);
+                border-radius: 6px; padding: 2px 6px; }
+.tuning .unit { color: var(--muted); }
+.tuning input.saved { border-color: var(--ok); }
 .armlog { margin: 0; max-height: 180px; overflow: auto; font: 12px/1.5 ui-monospace, Consolas, monospace;
           color: var(--muted); }
 .armlog .err { color: var(--stop); }

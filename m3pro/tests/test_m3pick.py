@@ -6,6 +6,7 @@ import math
 import time
 
 import numpy as np
+import pytest
 
 from roboarm import m3arm, m3kinematics, m3pick
 
@@ -36,7 +37,9 @@ class World:
 
     def __init__(self, boxes, move_s=0.0):
         self.pose, self.boxes, self.move_s = dict(HOME), list(boxes), move_s
-        self.held, self.dropped, self.calls = None, [], []
+        self.held, self.dropped, self.calls, self.driven = None, [], [], []
+        self.base = np.zeros(2)   # where the base is from where it began
+        self.dropped_at = []
 
     def call(self, method, *args, **kwargs):
         self.calls.append((method, args, kwargs))
@@ -63,8 +66,17 @@ class World:
                 self.boxes.remove(near[0])
         elif method == "set_gripper" and self.held and args[0] <= 40:   # opened wide: let go
             self.dropped.append(self.held)
+            self.dropped_at.append(self.base.copy())
             self.held = None
         return dict(self.pose) if method == "read" else None
+
+    def drive(self, dx, dy, speed=0.05):
+        """The base moves: everything on the floor moves the other way, in its frame -- the things
+        it holds and has dropped go with it, the drop-off box stays."""
+        self.driven.append((round(float(dx), 4), round(float(dy), 4)))
+        self.boxes = [(x - dx, y - dy, *rest) for x, y, *rest in self.boxes]
+        self.base += (dx, dy)
+        return dx, dy
 
     def snapshot(self):
         camera = m3kinematics.frames(self.pose)["arm4"] @ m3kinematics.camera_optical()
@@ -72,7 +84,7 @@ class World:
 
 
 def run(world, job, **kwargs):
-    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0))
+    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
     picker.start(job, **kwargs)
     picker.wait(120)
     return picker
@@ -147,3 +159,58 @@ def test_the_way_to_the_drop_off_carries_low_and_turns_while_rising_and_the_guar
         assert m3arm.glide_problem(drop, back) is None and back[-1][2] == m3pick.LOOK[2]
     deck = {1: 90, 2: 60, 3: 10, 4: 10, 5: 90}   # down onto the front deck: refused, and said why
     assert "chassis" in m3arm.glide_problem(dict(HOME), [deck])
+
+
+def test_out_of_reach_it_drives_up_when_allowed_and_only_then():
+    far = (0.29, -0.13, 0, 0.03, 0.03)   # 29 cm out: no shoulder angle reaches it from here
+    world = World([far])
+    picker = run(world, "pick_once")
+    assert "out of reach" in picker.state["error"] and not world.driven
+    world = World([far])
+    picker = run(world, "pick_once", drive=True)
+    assert picker.state["error"] is None and picker.state["picked"] == 1 and world.dropped
+    (dx, dy), back = world.driven
+    assert 0.05 < dx <= 0.10 and dy == 0.0     # forward was enough: no sideways
+    assert back == (-dx, -dy)                  # and back before the drop: the box did not drive along
+    assert np.allclose(world.dropped_at[0], 0) and np.allclose(world.base, 0)
+
+
+def test_the_drive_keeps_clear_of_what_is_in_the_way():
+    def at(x, y):
+        return {"kind": "cube", "centre": np.array([x, y, 0.015]), "height": 0.03}
+    target, blocker = at(0.30, 0.0), at(0.18, 0.03)
+    dx, _dy = m3pick.nudge([target, blocker], [target])
+    assert abs(dx - (0.18 - m3pick.BUMPER_X - m3pick.BUMPER_GAP)) < 1e-3
+    assert m3pick.nudge([at(0.17, 0.0)], [at(0.17, 0.0)]) is None   # already near: nowhere to go
+
+
+def test_the_fingers_square_a_cube_the_way_that_keeps_them_off_its_neighbour_and_open_wider_for_40_mm():
+    """2026-10-01: a 30 mm cube with a 40 mm one 6.5 cm to its left -- fingers opening left-right hit it."""
+    cube = np.array([0.212, -0.063, 0.015])
+    big = {"centre": np.array([0.234, -0.002, 0.02]), "footprint": (0.04, 0.04)}
+    _pitch, poses, _lift = m3pick.plan_grasp(cube, 0.03)
+    width = m3pick.opening_m(m3pick.opened_for(0.030))
+    alone = m3pick.wrist_for(poses[-1], 70, 90, width)
+    beside = m3pick.wrist_for(poses[-1], 70, 90, width, [big])
+    assert m3pick.finger_clearance({**poses[-1], 5: alone}, width, [big]) < 0.005
+    assert m3pick.finger_clearance({**poses[-1], 5: beside}, width, [big]) > 0.02
+    assert abs(abs(beside - alone) - 90) <= 2           # the cube's other square way
+    assert abs(m3pick.opening_m(m3pick.opened_for(0.030)) - 0.055) < 0.001
+    assert m3pick.opening_m(m3pick.opened_for(0.040)) > 0.065   # a 40 mm cube's diagonal is 57 mm
+
+
+def test_the_settings_are_held_to_their_ranges_kept_and_count(tmp_path):
+    world = World([(0.21, 0.03, 0, 0.03, 0.03)])
+    picker = m3pick.Picker(world.call, world.snapshot, out=tmp_path)
+    assert {s["key"] for s in picker.settings()} == set(m3pick.SETTINGS)
+    picker.set_settings({"speed": 500, "descend_dps": 30})
+    assert picker.cfg["speed"] == m3pick.SETTINGS["speed"][3] and picker.dps("descend_dps") == 30 * 1.5
+    with pytest.raises(ValueError, match="no setting"):
+        picker.set_settings({"warp": 9})
+    again = m3pick.Picker(world.call, world.snapshot, out=tmp_path)   # a restart keeps them
+    assert again.cfg["descend_dps"] == 30
+    again.set_settings({"settle_close_s": 0.0, "settle_wide_s": 0.0, "speed": 100})
+    again.start("pick_once")
+    again.wait(60)
+    descent = [kw["speed_dps"] for m, _a, kw in world.calls if m == "follow" and kw.get("floor_clear")]
+    assert descent[0] == 30   # down the line at the setting

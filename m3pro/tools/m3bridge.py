@@ -20,12 +20,16 @@ board, the battery from /battery. The camera: /camera/color/image_raw into the M
 And the pick itself (roboarm.m3pick.Picker), here beside the arm and the camera so no picture
 crosses the network -- what the console's M3 arm card drives and watches:
 
-    POST /pick/start    {"kind": "cube"|"block"|null, "at": [x, y]|null}   one pick, then home
-    POST /pick/cleanup  {"kind": ...}   every kit thing in reach, one by one
+    POST /pick/start    {"kind": "cube"|"block"|null, "at": [x, y]|null, "drive": bool}   one pick, then home
+    POST /pick/cleanup  {"kind": ..., "drive": bool}   every kit thing in reach, one by one
+                        "drive": the base may drive up to what is out of reach -- forward and
+                        sideways, 10 cm at most a go at 5 cm/s, on /odom_raw (off unless asked)
     POST /pick/home     POST /pick/stop (the arm holds where it is, at once)
     GET  /pick/state    the job, its step, the counts, the last attempt, what the last look found
     GET  /pick/log?since=N    the narrated steps after N
     GET  /pick/frame.jpg      the last look, marked
+    GET  /pick/settings       the speeds and times the console may change: [{key, label, unit, min,
+                              max, step, default, value}]; POST {key: value, ...} changes them
     GET  /api/metrics         where the time went (roboarm.metrics: one run a job)
 
 No authentication: the lab network only, as the X3's bridge.
@@ -36,6 +40,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import math
 import subprocess
 import sys
 import threading
@@ -137,11 +142,16 @@ def make_handler(the_bridge: bridge.Bridge, frames: Frames, picker: m3pick.Picke
                 the_bridge.interrupt()
                 reply = {"ok": True}
             elif url.path == "/pick/start":
-                reply = picker.start("pick_once", kind=kind, at=body.get("at"))
+                reply = picker.start("pick_once", kind=kind, at=body.get("at"), drive=bool(body.get("drive")))
             elif url.path == "/pick/cleanup":
-                reply = picker.start("clean_up", kind=kind)
+                reply = picker.start("clean_up", kind=kind, drive=bool(body.get("drive")))
             elif url.path == "/pick/home":
                 reply = picker.start("home")
+            elif url.path == "/pick/settings":
+                try:
+                    reply = {"settings": picker.set_settings(body)}
+                except ValueError as e:
+                    reply = {"error": str(e)}
             else:
                 send_json(self, {"error": f"no {url.path}"}, 404)
                 return
@@ -155,6 +165,9 @@ def make_handler(the_bridge: bridge.Bridge, frames: Frames, picker: m3pick.Picke
             if picker is not None and url.path == "/pick/log":
                 since = parse_qs(url.query).get("since", ["0"])[0]
                 send_json(self, {"lines": picker.log(int(since) if since.isdigit() else 0)})
+                return
+            if picker is not None and url.path == "/pick/settings":
+                send_json(self, {"settings": picker.settings()})
                 return
             if picker is not None and url.path == "/pick/frame.jpg":
                 self.send_bytes(picker.frame or blank, "image/jpeg")
@@ -180,6 +193,8 @@ def make_handler(the_bridge: bridge.Bridge, frames: Frames, picker: m3pick.Picke
 def make_node(frames: Frames, stream: RosStream):
     """The ROS side: /arm6_joints out; /battery and the camera in."""
     from arm_msgs.msg import ArmJoints
+    from geometry_msgs.msg import Twist
+    from nav_msgs.msg import Odometry
     from rclpy.node import Node
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import CameraInfo, Image
@@ -189,6 +204,9 @@ def make_node(frames: Frames, stream: RosStream):
         def __init__(self):
             super().__init__("m3bridge")
             self.pub = self.create_publisher(ArmJoints, "/arm6_joints", 10)
+            self.wheels = self.create_publisher(Twist, "/cmd_vel", 10)
+            self.odom = None   # (x, y, yaw) of base_footprint in odom_raw, the board's wheel odometry
+            self.create_subscription(Odometry, "/odom_raw", self.on_odom, 10)
             self.volts = None
             self.create_subscription(Float32, "/battery", self.on_battery, 10)
             self.create_subscription(Image, "/camera/color/image_raw", self.on_color, qos_profile_sensor_data)
@@ -197,6 +215,16 @@ def make_node(frames: Frames, stream: RosStream):
 
         def on_battery(self, msg):
             self.volts = float(msg.data)
+
+        def on_odom(self, msg):
+            q = msg.pose.pose.orientation
+            yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+            self.odom = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw)
+
+        def wheel(self, vx, vy):
+            msg = Twist()
+            msg.linear.x, msg.linear.y = float(vx), float(vy)
+            self.wheels.publish(msg)
 
         @staticmethod
         def stamp(msg) -> float:
@@ -259,6 +287,42 @@ def snapshot(the_bridge: bridge.Bridge, frames: Frames):
     return color, depth, K, the_bridge.call("read", [], {})
 
 
+MAX_DRIVE = 0.15   # m one drive() may go, each way, whatever the settings say
+MAX_V = 0.10       # m/s, likewise
+
+
+def drive(node, dx: float, dy: float, speed: float = 0.05, stopping=lambda: False) -> tuple[float, float]:
+    """Drive the base (dx forward, dy left, m, in its own frame as it starts) on the board's wheel
+    odometry, 20 commands a second at `speed` m/s, slowing over the last 2 cm; stops at once when
+    `stopping()`. What the wheels say it went."""
+    speed = min(max(float(speed), 0.01), MAX_V)
+    if abs(dx) > MAX_DRIVE or abs(dy) > MAX_DRIVE:
+        raise ArmError(f"drive ({dx:+.3f}, {dy:+.3f}) m: at most {MAX_DRIVE} m each way in one go")
+    if node.odom is None:
+        raise ArmError("no wheel odometry (/odom_raw) from the board: not driving blind")
+    x0, y0, yaw0 = node.odom
+    c, s = math.cos(yaw0), math.sin(yaw0)
+    goal = np.array([dx, dy])
+    deadline = time.monotonic() + 2.0 * float(np.linalg.norm(goal)) / speed + 1.0
+    done = np.zeros(2)
+    try:
+        while time.monotonic() < deadline and not stopping():
+            x, y, _ = node.odom
+            done = np.array([c * (x - x0) + s * (y - y0), -s * (x - x0) + c * (y - y0)])
+            left = goal - done
+            far = float(np.linalg.norm(left))
+            if far < 0.004:
+                break
+            v = min(speed, 0.01 + 2.0 * far) * left / far
+            node.wheel(v[0], v[1])
+            time.sleep(0.05)
+    finally:
+        for _ in range(3):
+            node.wheel(0.0, 0.0)
+            time.sleep(0.02)
+    return float(done[0]), float(done[1])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--host", default="0.0.0.0")
@@ -285,7 +349,8 @@ def main() -> int:
         return m3arm.M3Arm(node.send, lambda: node.volts)
 
     the_bridge = bridge.Bridge(make_arm, lambda: stream, CALIBRATION)
-    picker = m3pick.Picker(arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT)
+    picker = m3pick.Picker(arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT,
+                           drive=lambda dx, dy, v: drive(node, dx, dy, v, lambda: picker.stopping()))
     metrics.REGISTRY.log_path = OUT / "metrics.jsonl"
     OUT.mkdir(parents=True, exist_ok=True)
     server = Server((args.host, args.port), make_handler(the_bridge, frames, picker))
