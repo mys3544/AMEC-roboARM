@@ -8,7 +8,9 @@ const DIRS = { w: [1, 0, 0], s: [-1, 0, 0], a: [0, 1, 0], d: [0, -1, 0], q: [0, 
 const STOPS = {   // what STOP means for each kind of robot
   m3: robot => call(robot, 'api/stop', {}),
   x3: robot => Promise.all([call(robot, 'api/auto/stop', {}), call(robot, 'api/arm/hold', {})]),
+  m3arm: robot => call(robot, 'pick/stop', {}),   // the M3's arm: the pick service on its bridge
 };
+const STATES = { m3arm: 'pick/state' };   // where a kind of robot says how it is, if not api/state
 const store = {   // per-viewer conveniences only; the page works without them
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
@@ -46,7 +48,7 @@ class Robot {
 
   async poll() {
     try {
-      this.state = await call(this, 'api/state');
+      this.state = await call(this, STATES[this.kind] ?? 'api/state');
       this.setUp(true);
     } catch (e) {
       this.state = null;
@@ -281,6 +283,97 @@ class X3Card extends Card {
   }
 }
 
+class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot (m3pro/roboarm/m3pick.py)
+  constructor(robot) {
+    super(robot, 'the arm camera, live');
+    const controls = $('#m3arm-controls').content.firstElementChild.cloneNode(true);
+    $('.controls', this.el).append(controls);
+    controls.querySelectorAll('[data-pick]').forEach(b => {
+      b.onclick = () => this.act(`${b.textContent}: started`, call(robot, 'pick/start', { kind: b.dataset.pick || null }));
+    });
+    $('.cleanup', controls).onclick = () => this.act('clean up: started', call(robot, 'pick/cleanup', {}));
+    $('.home', controls).onclick = () => this.act('home: started', call(robot, 'pick/home', {}));
+    this.timing = $('.timing tbody', controls);
+    this.total = $('.timing tfoot', controls);
+    this.armlog = $('.armlog', controls);
+    this.look = document.createElement('img');   // the last look, marked: what the robot made of it
+    this.look.className = 'look';
+    this.look.title = 'the last look, marked: click to swap with the live picture';
+    this.look.alt = `${robot.name}: the last look`;
+    this.look.onclick = () => $('.view', this.el).classList.toggle('swapped');
+    $('.view', this.el).append(this.look);
+    this.looks = null;
+    this.since = 0;
+    this.img.onload = () => this.img.classList.remove('broken');
+    this.img.onerror = () => {   // the stream broke or never came: try again shortly
+      this.img.classList.add('broken');
+      setTimeout(() => this.stream(), 3000);
+    };
+    this.stream();
+    this.follow();
+  }
+
+  stream() {
+    if (!this.closed) this.img.src = `${this.robot.url}/stream.mjpg?t=${Date.now()}`;
+  }
+
+  async follow() {   // the robot's narrated steps, and where the time went, while the card is open
+    let tick = 0;
+    while (!this.closed) {
+      try {
+        const { lines } = await call(this.robot, `pick/log?since=${this.since}`);
+        for (const line of lines) {
+          this.since = line.n;
+          const div = document.createElement('div');
+          div.textContent = `${new Date(line.t * 1000).toLocaleTimeString()}  ${line.text}`;
+          if (/NOT picked|stopped|failed|Error/.test(line.text)) div.className = 'err';
+          this.armlog.prepend(div);
+          while (this.armlog.childElementCount > 60) this.armlog.lastElementChild.remove();
+        }
+        if (tick++ % 3 === 0) this.showTiming(await call(this.robot, 'api/metrics?events=0'));
+      } catch { /* offline: the facts say so */ }
+      await new Promise(done => setTimeout(done, 700));
+    }
+  }
+
+  showTiming(m) {
+    const run = m.runs[0];
+    if (!run) return;
+    const rows = Object.entries(run.top).map(([name, t]) => {
+      const all = m.stages[name];
+      return `<tr><td>${name}</td><td>${t.total_s.toFixed(1)}</td><td>${all ? (all.mean_ms / 1000).toFixed(1) : '-'}</td>` +
+        `<td>${all ? all.count : ''}</td></tr>`;
+    });
+    this.timing.innerHTML = rows.join('');
+    const detect = m.stages.detect;
+    this.total.innerHTML = `<tr><td>${run.name}: ${run.status}</td><td>${run.total_s.toFixed(1)}</td>` +
+      `<td colspan="2">${detect ? `detect ${(detect.mean_ms / 1000).toFixed(2)} s a look` : ''}</td></tr>`;
+  }
+
+  show() {
+    const s = this.robot.state;
+    if (!s) {
+      this.offline();
+      return;
+    }
+    this.setPill(s.busy ? `${s.job.replace('_', ' ')}: ${s.step}` : 'idle', s.busy);
+    $('.note', this.el).textContent = s.busy ? `${Math.round(s.now - s.since)} s in this step` : (s.error || '');
+    if (s.looks !== this.looks) {
+      this.looks = s.looks;
+      if (s.looks) this.look.src = `${this.robot.url}/pick/frame.jpg?n=${s.looks}`;
+    }
+    const last = s.last;
+    const seen = s.found.filter(o => o.kind)
+      .map(o => `${o.name} ${(100 * o.x).toFixed(0)},${(100 * o.y).toFixed(0)} cm${o.reach ? '' : ' (out of reach)'}`);
+    $('.facts', this.el).textContent = [
+      `job      ${s.busy ? `${s.job.replace('_', ' ')} -- ${s.step}` : 'none'}     picked ${s.picked}, missed ${s.missed}`,
+      `last     ${last ? `${last.picked ? 'picked' : 'MISSED'} the ${last.kind} in ${last.seconds} s` +
+        ` (approach ${last.pitch} deg, fingers along ${last.yaw_deg} deg from the ${last.yaw_from} look, J5 ${last.j5})` : '-'}`,
+      `in view  ${seen.length ? seen.join('; ') : 'no cube or block'}`,
+    ].join('\n');
+  }
+}
+
 class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP of its own
   constructor() {
     this.el = $('#cloud-card').content.firstElementChild.cloneNode(true);
@@ -447,16 +540,17 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
   }
 }
 
-const CARDS = { m3: M3Card, x3: X3Card };
+const CARDS = { m3: M3Card, x3: X3Card, m3arm: M3ArmCard };
 
 async function main() {
   const robots = (await (await fetch('/robots.json')).json()).map(spec => new Robot(spec));
+  const carded = robots.filter(r => CARDS[r.kind]);
   const solo = new URLSearchParams(location.search).get('solo');
   let cards = [];
 
   function show(layout) {
     cards.forEach(c => c.close());
-    const visible = layout === 'both' ? robots : robots.filter(r => r.id === layout);
+    const visible = layout === 'both' ? carded : carded.filter(r => r.id === layout);
     cards = layout === 'cloud' ? [new CloudCard()] : visible.map(r => new CARDS[r.kind](r));
     $('#cards').replaceChildren(...cards.map(c => c.el));
     $('#cards').style.setProperty('--cols', cards.length);
@@ -468,7 +562,7 @@ async function main() {
       : `${layout === 'cloud' ? '3D scan' : visible[0].name} -- RoboARM console`;
   }
 
-  const layouts = [...robots.map(r => [r.name, r.id]), ['Both', 'both'], ['3D scan', 'cloud']];
+  const layouts = [...carded.map(r => [r.name, r.id]), ['Both', 'both'], ['3D scan', 'cloud']];
   for (const [label, layout] of layouts) {
     const b = document.createElement('button');
     b.textContent = label;
@@ -489,6 +583,38 @@ async function main() {
       ? `${r.name} ${Math.round(done[i].value)} ms` : `${r.name} FAILED (${done[i].reason.message})`).join(', '), failed);
   }
   $('#stopall').onclick = stopAll;
+
+  // What a voice command may do (voice.js calls these with the command it heard): each answers
+  // with what was done, or throws why not. The X3's are its card's buttons. The M3's arm is a
+  // robot of its own in robots.json -- id and kind "m3arm", the pick service on the M3's bridge
+  // (http://192.168.73.66:8761) -- and until it is listed there it is "not connected".
+  const JOBS = {   // [path, body, what it is called]
+    x3: {
+      pick: () => ['api/auto/oneclick', { detector: 'auto', job: 'pick' }, 'Pick one started'],
+      clean_up: () => ['api/auto/oneclick', { detector: 'auto', job: 'pickall' }, 'Clear the table started'],
+      home: () => ['api/arm/preset', { name: 'home' }, 'Home done'],
+    },
+    m3arm: {
+      pick: c => ['pick/start', { kind: c.kind, colour: c.colour, size_mm: c.size_mm }, 'pick started'],
+      clean_up: () => ['pick/cleanup', {}, 'clean up started'],
+      home: () => ['pick/home', {}, 'home'],
+    },
+  };
+  async function job(command) {
+    const kind = command.robot === 'x3' ? 'x3' : 'm3arm';
+    const robot = robots.find(r => r.id === kind);
+    if (!robot) throw new Error(kind === 'x3' ? 'no X3 in robots.json' : 'M3 arm not connected');
+    const [path, body, done] = JOBS[kind][command.action](command);
+    await call(robot, path, body);
+    const asked = kind === 'x3' && [command.colour, command.size_mm && `${command.size_mm} mm`].filter(Boolean);
+    return `${robot.name}: ${done}${asked?.length ? ` (it takes what it finds first, not "${asked.join(' ')}")` : ''}`;
+  }
+  window.consoleActions = {
+    stop: async () => { await stopAll(); return 'STOP ALL (the log has the times)'; },
+    pick: job,
+    clean_up: job,
+    home: job,
+  };
 
   const m3 = () => cards.find(c => c instanceof M3Card);
   addEventListener('keydown', e => {

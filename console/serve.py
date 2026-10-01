@@ -12,9 +12,11 @@ through here as /robot/<id>/<path> -- the X3's panel sends no CORS headers, and 
 the page simple; camera frames and maps come straight from the robots, which images may. The
 3D view gets the M3's exported scans from this laptop: /clouds.json lists the PLY files in
 m3pro/out/arena/rtab (where `arena_map.py rtab-export` puts them), each with its floor print if
-there is one, and /clouds/<name> is one of those files (.ply or .png). The
+there is one, and /clouds/<name> is one of those files (.ply or .png). Voice commands go to
+/api/voice: a WAV in, what was said and the command in it out (voice.py; the speech model loads
+the first time the page asks, GET /api/voice). The
 console listens on localhost only: it is this laptop's (and a microphone needs localhost).
-Standard library only.
+Standard library only (and sherpa-onnx for voice, when it is there).
 """
 
 import argparse
@@ -31,7 +33,9 @@ import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-HERE = pathlib.Path(__file__).resolve().parent
+import voice
+
+HERE =pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 PORT = 8099
 CLOUDS = ROOT / "m3pro" / "out" / "arena" / "rtab"   # the 3D scans, from arena_map.py rtab-export
@@ -45,8 +49,9 @@ CLOUD_TYPES = {".ply": "application/octet-stream", ".png": "image/png"}   # scan
 GET_TIMEOUT, POST_TIMEOUT = 3, 30   # s; a POST may move an arm before it answers
 
 
-def make_handler(robots, clouds=CLOUDS):
+def make_handler(robots, clouds=CLOUDS, recognizer=None):
     urls = {r["id"]: r["url"].rstrip("/") for r in robots}
+    recognizer = recognizer or voice.Recognizer()   # loads nothing until the page asks
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"   # keep-alive: the page polls several times a second
@@ -73,6 +78,8 @@ def make_handler(robots, clouds=CLOUDS):
                 return self.send(200, json.dumps(robots).encode(), TYPES[".json"])
             if path == "/clouds.json":
                 return self.send(200, json.dumps(list_clouds(clouds)).encode(), TYPES[".json"])
+            if path == "/api/voice":   # ready, loading, or why not; starts the model's load
+                return self.send(200, json.dumps(recognizer.status()).encode(), TYPES[".json"])
             if path.startswith("/clouds/"):
                 return self.cloud(urllib.parse.unquote(path[len("/clouds/"):]))
             file = (HERE / ("index.html" if path == "/" else path.lstrip("/"))).resolve()
@@ -95,7 +102,10 @@ def make_handler(robots, clouds=CLOUDS):
         def do_POST(self):
             if self.path.startswith("/robot/"):
                 return self.proxy("POST")
-            self.rfile.read(int(self.headers.get("Content-Length") or 0))   # keep-alive: drain
+            body = self.rfile.read(int(self.headers.get("Content-Length") or 0))   # drained, too
+            if self.path == "/api/voice":   # a WAV (or typed text) -> what was said, the command
+                code, reply = voice.answer(recognizer, body, self.headers.get("Content-Type", ""))
+                return self.send(code, json.dumps(reply).encode(), TYPES[".json"])
             self.error(404, "not found")
 
         def proxy(self, method):

@@ -37,10 +37,10 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .links .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
               background: var(--stop); margin-right: 4px; }
 .links .dot.up { background: #3ccf7a; }
-.hint { color: #aab3c3; font-size: 12px; margin-left: auto; }
-@media (max-width: 600px) { .hint { display: none; } .stopall { margin-left: auto; } }
+.hint { color: #aab3c3; font-size: 12px; }
+@media (max-width: 600px) { .hint { display: none; } }
 .stopall { background: var(--stop); border-color: var(--stop); color: #fff; font-weight: 700;
-           padding: 8px 18px; letter-spacing: 0.04em; }
+           padding: 8px 18px; letter-spacing: 0.04em; margin-left: auto; }   /* right, on any row */
 
 /* the robots */
 .cards { display: grid; gap: 16px; padding: 16px; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); }
@@ -83,6 +83,22 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 /* X3: jobs */
 .jobs { display: flex; flex-wrap: wrap; gap: 8px; }
 
+/* M3 arm: the pick */
+.view .look { position: absolute; top: 8px; right: 8px; width: 34%; border: 2px solid #fff;
+              border-radius: 4px; cursor: zoom-in; box-shadow: 0 2px 8px #0008; }
+.view.swapped > img:first-child { position: absolute; top: 8px; right: 8px; width: 34%; z-index: 1;
+                                  border: 2px solid #fff; border-radius: 4px; }
+.view.swapped .look { position: static; width: 100%; border: 0; box-shadow: none; cursor: zoom-out; }
+.arm { display: grid; gap: 10px; }
+.timing { border-collapse: collapse; font: 12px/1.5 ui-monospace, Consolas, monospace; width: 100%; max-width: 420px; }
+.timing th { text-align: left; color: var(--muted); font-weight: 600; }
+.timing td, .timing th { padding: 1px 8px 1px 0; }
+.timing td:nth-child(n+2), .timing th:nth-child(n+2) { text-align: right; }
+.timing tfoot td { border-top: 1px solid var(--line); font-weight: 600; }
+.armlog { margin: 0; max-height: 180px; overflow: auto; font: 12px/1.5 ui-monospace, Consolas, monospace;
+          color: var(--muted); }
+.armlog .err { color: var(--stop); }
+
 /* the 3D scan */
 .card.cloud { --robot: var(--muted); }
 .pick { font: inherit; font-size: 12px; color: var(--ink); background: var(--key);
@@ -111,10 +127,28 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .how { color: var(--muted); font-size: 12px; }
 .how kbd { border-color: var(--line); }
 
+/* voice: the button in the bar fills with the microphone's level while held */
+.talk { background: #2a3140; color: var(--bar-ink); border-color: #3a4252; touch-action: none;
+        min-width: 8.5em; font-variant-numeric: tabular-nums;
+        background-image: linear-gradient(90deg, rgba(60, 207, 122, 0.5) calc(var(--level, 0) * 100%), transparent 0); }
+.talk.on { border-color: #3ccf7a; color: #fff; }
+.voicebox .state { font-weight: 400; margin-left: 8px; }
+.voicebox .state.err, .voicebox .err { color: var(--stop); }
+.said { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; margin: 0 0 8px; }
+.said dt { color: var(--muted); font-size: 12px; line-height: 20px; }
+.said dd { margin: 0; overflow-wrap: anywhere; }
+.said code { font: 12px ui-monospace, Consolas, monospace; }
+.typed { display: flex; gap: 8px; margin-bottom: 8px; }
+.typed input { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--key);
+               border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.history { margin: 0; padding: 0; list-style: none; max-height: 140px; overflow: auto;
+           font: 12px/1.5 ui-monospace, Consolas, monospace; }
+body.solo #voice, body.solo #talk { display: none; }
+
 /* the log */
-.logbox { margin: 0 16px 16px; background: var(--panel); border: 1px solid var(--line);
-          border-radius: 10px; padding: 8px 12px; }
-.logbox h2 { font-size: 13px; margin: 0 0 4px; color: var(--muted); }
+.logbox, .voicebox { margin: 0 16px 16px; background: var(--panel); border: 1px solid var(--line);
+                     border-radius: 10px; padding: 8px 12px; }
+.logbox h2, .voicebox h2 { font-size: 13px; margin: 0 0 4px; color: var(--muted); }
 #log { margin: 0; max-height: 160px; overflow: auto; font: 12px/1.5 ui-monospace, Consolas, monospace; }
 #log .err { color: var(--stop); }
 

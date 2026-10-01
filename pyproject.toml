@@ -14,6 +14,10 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
+# The console's voice commands, on the laptop only (console/README.md): not installed by default.
+# sherpa-onnx's wheels need sherpa-onnx-core of the same version, but say so only dynamically,
+# and the lock missed it (uv 0.11.5, 2026-10-01): named here too.
+voice = ["sherpa-onnx==1.13.8", "sherpa-onnx-core==1.13.8"]
 
 [tool.ruff]
 line-length = 100

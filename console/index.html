@@ -11,10 +11,25 @@
   <h1>RoboARM console</h1>
   <nav id="layouts" class="segmented" aria-label="Which robots to show"></nav>
   <span id="links" class="links"></span>
+  <button id="talk" class="talk" title="hold, say a command, let go (or hold V)">Talk (hold V)</button>
   <span id="hint" class="hint">keys: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> drive, <kbd>Q</kbd><kbd>E</kbd> turn the M3 &middot; <kbd>Space</kbd> stops all</span>
   <button id="stopall" class="stopall" title="Space or Esc">STOP ALL</button>
 </header>
 <main id="cards" class="cards"></main>
+<section id="voice" class="voicebox">
+  <h2>Voice <span class="state">starting&hellip;</span></h2>
+  <dl class="said">
+    <dt>heard</dt><dd class="heard">&ndash;</dd>
+    <dt>command</dt><dd><code class="command">&ndash;</code></dd>
+    <dt>done</dt><dd class="done">&ndash;</dd>
+    <dt>time</dt><dd class="timing">&ndash;</dd>
+  </dl>
+  <form class="typed">
+    <input type="text" placeholder="or type one: pick up the red cube, X3 clear the table, go home, stop" aria-label="a command, typed">
+    <button>Do it</button>
+  </form>
+  <ol class="history"></ol>
+</section>
 <section class="logbox">
   <h2>Log</h2>
   <pre id="log"></pre>
@@ -73,6 +88,24 @@
   </div>
 </template>
 
+<template id="m3arm-controls">
+  <div class="arm">
+    <div class="jobs">
+      <button data-pick="">Pick nearest</button>
+      <button data-pick="cube">Pick a cube</button>
+      <button data-pick="block">Pick a block</button>
+      <button class="cleanup" title="every cube and block in reach, one by one, to the drop-off">Clean up all in reach</button>
+      <button class="home">Home</button>
+    </div>
+    <table class="timing">
+      <thead><tr><th>step, last job</th><th>s</th><th>mean s</th><th>n</th></tr></thead>
+      <tbody></tbody>
+      <tfoot></tfoot>
+    </table>
+    <pre class="armlog"></pre>
+  </div>
+</template>
+
 <template id="cloud-card">
   <article class="card cloud">
     <header class="card-head">
@@ -100,5 +133,6 @@
 </template>
 
 <script src="console.js"></script>
+<script src="voice.js"></script>
 </body>
 </html>
