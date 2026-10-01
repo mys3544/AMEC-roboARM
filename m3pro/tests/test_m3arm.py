@@ -77,8 +77,10 @@ def test_what_is_not_safe_is_refused_before_anything_is_sent():
         arm.move_to({2: 200})
     with pytest.raises(ArmError, match="chassis"):      # folding the arm down onto the robot
         arm.move_to({3: 180, 4: 90})
-    with pytest.raises(ArmError, match="chassis|floor"):   # the way down to the floor in front
-        arm.move_to({2: 60, 3: 30, 4: 20})
+    with pytest.raises(ArmError, match="chassis"):   # down onto the front deck and its lidar
+        arm.move_to({2: 60, 3: 10, 4: 10})
+    with pytest.raises(ArmError, match="floor"):     # the fingertips into the floor in front
+        arm.move_to({2: 0, 3: 30, 4: 60})
     assert board.sent == [] and arm.read() == HOME
 
 
@@ -130,7 +132,7 @@ def test_the_guard_passes_the_poses_the_arm_has_been_in_on_the_robot():
     for pose in (m3arm.POSES["home"], m3arm.POSES["survey"], (90, 150, 12, 20, 90, 0), (90, 90, 90, 90, 90, 0)):
         assert m3kinematics.problem(dict(zip(m3arm.JOINTS, pose))) is None
     _position, down = m3kinematics.camera(SURVEY)
-    assert 28 < down < 32   # the URDF's 30 (measured on the robot: 34.9)
+    assert 33 < down < 37   # measured on the robot: 34.9 (the URDF alone: 30; the SAG adds the rest)
 
 
 def test_threads_are_not_left_behind():
