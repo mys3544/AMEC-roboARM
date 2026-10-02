@@ -39,6 +39,7 @@ class World:
         self.pose, self.boxes, self.move_s = dict(HOME), list(boxes), move_s
         self.held, self.dropped, self.calls, self.driven = None, [], [], []
         self.base = np.zeros(2)   # where the base is from where it began
+        self.refuse = None        # a spot the arm refuses to come down to
         self.dropped_at = []
 
     def call(self, method, *args, **kwargs):
@@ -51,6 +52,10 @@ class World:
             self.pose = goal
         elif method == "follow":
             time.sleep(self.move_s)
+            last = {**self.pose, **{int(j): v for j, v in args[0][-1].items()}}
+            point, _ = m3kinematics.grip(last)
+            if self.refuse is not None and np.hypot(*(point[:2] - self.refuse)) < 0.02:
+                raise RuntimeError("follow: refused: as the arm's guard would")
             for pose in args[0]:
                 goal = {**self.pose, **{int(j): v for j, v in pose.items()}}
                 why = m3kinematics.problem(goal, kwargs.get("floor_clear") or m3kinematics.FLOOR_CLEAR)
@@ -214,3 +219,34 @@ def test_the_settings_are_held_to_their_ranges_kept_and_count(tmp_path):
     again.wait(60)
     descent = [kw["speed_dps"] for m, _a, kw in world.calls if m == "follow" and kw.get("floor_clear")]
     assert descent[0] == 30   # down the line at the setting
+
+
+def test_the_fingertips_keep_their_height_over_the_table_the_grip_rises_instead():
+    """2026-10-01: at 3 mm they sometimes touched the table -- 8 mm now, the grip higher on the cube."""
+    for centre in ((0.20, 0.03, 0.015), (0.25, -0.05, 0.015), (0.16, 0.0, 0.015)):
+        low = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003)
+        high = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.008)
+        for _pitch, poses, _lift in (low, high):
+            assert m3kinematics.grip(poses[-1])[0][2] <= 0.03 + 1e-6   # never above the cube's top
+        assert min(m3kinematics.outline(p)[:, 2].min() for p in high[1]) >= 0.008
+        assert m3kinematics.grip(high[1][-1])[0][2] > m3kinematics.grip(low[1][-1])[0][2]
+    assert m3pick.SETTINGS["fingertips_mm"][5] == 8
+
+
+def test_a_plan_is_one_the_arm_will_glide_down_and_back_up():
+    """2026-10-01: lines whose points all passed, the glide between them refused by the arm (the
+    forearm 17 cm over its base) -- the job failed. The planner checks the glides as the arm does."""
+    for centre, top in (((0.171, 0.081, 0.015), 0.03), ((0.169, -0.115, 0.015), 0.03), ((0.167, -0.032, 0.015), 0.03),
+                        ((0.225, 0.051, 0.02), 0.04), ((0.26, -0.062, 0.015), 0.03)):
+        for clear in (0.003, 0.008):
+            _pitch, poses, _lift = m3pick.plan_grasp(np.array(centre), top, floor_clear=clear)
+            assert m3arm.glide_problem(poses[0], poses[1:], clear) is None
+            assert m3arm.glide_problem(poses[-1], poses[-2::-1], clear) is None
+
+
+def test_a_refused_way_leaves_that_one_and_the_clean_up_goes_on():
+    world = World([(0.20, 0.05, 0, 0.03, 0.03), (0.21, -0.05, 20, 0.03, 0.03)])
+    world.refuse = np.array([0.20, 0.05])
+    picker = run(world, "clean_up")
+    assert picker.state["error"] is None and picker.state["picked"] == 1
+    assert world.boxes == [(0.20, 0.05, 0, 0.03, 0.03)] and len(world.dropped) == 1

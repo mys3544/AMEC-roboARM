@@ -53,7 +53,12 @@ FOLDED = {1: 90, 2: 180, 3: 5, 4: 0, 5: 90}   # home, without the gripper: it ke
 CARRIES = ((130, 40, 40), (150, 30, 30), (160, 10, 10), (180, 5, 0))   # (J2, J3, J4) to carry at, lowest
                                                                        # first: the last is FOLDED
 BACK = 0.12                 # m the fingertips stop short along the approach: the camera ~24 cm off
-FLOOR_CLEAR_PLACE = 0.003   # m the fingertips may come to the floor on the last descent, the floor just measured
+GUARD_SLACK = 0.0015        # m the arm's own guard lets the fingertips come lower than the plan has them:
+                            # the wrist's turn after planning moves them up to ~1 mm (2026-10-02: a plan at
+                            # 8.0 mm, J5 35, refused at 7.9)
+FLOOR_CLEAR_PLACE = 0.008   # m the fingertips stay above the floor on the descent (the floor just measured):
+                            # the "fingertips_mm" setting's default -- 3 mm until 2026-10-01, when they
+                            # sometimes touched the table: the model is a few mm off; the grip rises instead
 OPEN_MM = 55        # the fingers apart at the wide look; at the pre-grasp opened_for() the target
 SPARE_MM = 25       # the opening over the target's width (2026-10-01: a 40 mm cube -- 57 mm across
                     # its diagonal -- missed at 55; it opens to ~67 now, the gripper's widest)
@@ -89,6 +94,7 @@ SETTINGS = {
     "driven_s": ("still after driving, before the look", "s", 0.0, 2.0, 0.05, 0.4),
     "nudge_cm": ("driving per move, at most", "cm", 1, 15, 1, 10),
     "right_cm": ("driving right, at most (the drop-off box is there)", "cm", 0, 15, 1, 3),
+    "fingertips_mm": ("fingertips above the table at the grip, at least", "mm", 2, 25, 1, round(FLOOR_CLEAR_PLACE * 1000)),
 }
 MATCH_M = 0.03   # the close look's thing is the wide look's when within this
 MAX_MISSES = 2   # clean_up gives a spot up after this many misses in a row
@@ -104,6 +110,27 @@ class Stopped(Exception):
 
 class NothingToPick(Exception):
     """No kit thing in view, or none in reach."""
+
+
+class Refused(Exception):
+    """The arm refused a move to it (before moving): the thing at `spot` is left for now."""
+
+    def __init__(self, spot: np.ndarray, why: str):
+        super().__init__(why)
+        self.spot, self.why = np.asarray(spot[:2], float), why
+
+
+@contextlib.contextmanager
+def refusable(spot):
+    """The arm's guard refusing a move -- always before it moves -- as Refused(spot)."""
+    try:
+        yield
+    except Stopped:
+        raise
+    except Exception as exc:   # the bridge's ArmError, or the HTTP wrapper's error
+        if "refused" not in str(exc):
+            raise
+        raise Refused(spot, str(exc)) from exc
 
 
 # ------------------------------------------------------------------------------------- geometry --
@@ -219,7 +246,8 @@ def furthest(z: float) -> float:
     return m3kinematics.SHOULDER_R + m3kinematics.L2 + math.sqrt(max(0.0, span * span - drop * drop))
 
 
-def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float, float] | None = None):
+def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float, float] | None = None,
+               floor_clear: float = FLOOR_CLEAR_PLACE):
     """(pitch, the line's poses pre-grasp -> grip, lift) with the grip point in the object's middle
     (centre: base, m, at half its height) -- or higher, up to its `top`, where the middle is out of
     reach: the shoulder's end (J2 0) bounds the reach, and a grip higher up is a grip further out
@@ -237,12 +265,15 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
         if (top is not None and z > top + 1e-6) or radius > furthest(z) + 0.005:   # no pitch reaches it
             continue
         grip = np.array([centre[0], centre[1], z])
-        if m3kinematics.reach(grip, pitch, floor_clear=FLOOR_CLEAR_PLACE) is None:   # the grip first: cheap
+        if m3kinematics.reach(grip, pitch, floor_clear=floor_clear) is None:   # the grip first: cheap
             continue
         r = math.radians(pitch)
         along = np.array([math.cos(yaw) * math.cos(r), math.sin(yaw) * math.cos(r), -math.sin(r)])
-        poses = line(grip - BACK * along, grip, pitch, FLOOR_CLEAR_PLACE)
-        if poses and m3kinematics.problem(poses[0]) is None:   # the pre-grasp pose: the usual margin
+        poses = line(grip - BACK * along, grip, pitch, floor_clear)
+        if poses and m3kinematics.problem(poses[0]) is None                 and m3arm.glide_problem(poses[0], poses[1:], floor_clear) is None                 and m3arm.glide_problem(poses[-1], poses[-2::-1], floor_clear) is None:
+            # the pre-grasp pose with the usual margin, and the glides down and back up as the arm
+            # checks them -- every 5 deg, corners cut -- not only at the line's points: in between
+            # the forearm came down to 17 cm over the arm's base, refused, the job failed (2026-10-01)
             return pitch, poses, lift
     return None
 
@@ -346,6 +377,9 @@ class Picker:
             self._seq += 1
             self._log.append({"n": self._seq, "t": round(time.time(), 2), "text": text})
         print(text, flush=True)
+        if self.out is not None:   # a restart loses the one above
+            with contextlib.suppress(OSError), open(self.out / "log.txt", "a", encoding="utf-8") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {text}\n")
 
     def log(self, since: int = 0) -> list[dict]:
         with self._lock:
@@ -377,6 +411,14 @@ class Picker:
             self.out.mkdir(parents=True, exist_ok=True)
             (self.out / "settings.json").write_text(json.dumps(self.cfg, indent=1))
         return self.settings()
+
+    def floor_clear(self) -> float:
+        """m the fingertips keep above the measured floor on the descent: grips rise to keep it."""
+        return self.cfg["fingertips_mm"] / 1000
+
+    def arm_clear(self) -> float:
+        """What the arm's guard is asked to keep on the descent: the plan's, less GUARD_SLACK."""
+        return max(self.floor_clear() - GUARD_SLACK, m3kinematics.MIN_FLOOR_CLEAR)
 
     def dps(self, key: str) -> float:
         return self.cfg[key] * self.cfg["speed"] / 100
@@ -526,25 +568,28 @@ class Picker:
         self.say("wide look: " + describe(found))
         return found
 
-    def pick(self, kind: str | None = None, at=None, found: list[dict] | None = None) -> tuple[dict, list[dict]]:
+    def pick(self, kind: str | None = None, at=None, found: list[dict] | None = None,
+             skip: list[np.ndarray] = ()) -> tuple[dict, list[dict]]:
         """Pick the nearest kit thing in reach (of `kind`, or the one nearest `at`, base x, y m),
         drop it off and look again from the wide look: (the record of the attempt, what that look
         found -- the next pick's wide look). `found`: the wide look already taken, the arm there
-        and the gripper open."""
+        and the gripper open. Things at the `skip` spots are left; a move the arm refuses on the
+        way to the grip raises Refused."""
         started = time.monotonic()
         if found is None:
             with self.step("look.wide"):
                 found = self.wide_look()
         at = None if at is None else np.asarray(at, float)
         for approach in range(APPROACHES + 1):
-            kit = [o for o in found if o["kind"] and (kind is None or o["kind"] == kind)]
+            kit = [o for o in found if o["kind"] and (kind is None or o["kind"] == kind)
+                   and all(np.linalg.norm(o["centre"][:2] - spot) > MATCH_M for spot in skip)]
             if not kit:
                 raise NothingToPick(f"no kit {kind or 'cube or block'} in view")
             target = planned = None
             with metrics.span("plan"):
                 for o in sorted((o for o in kit if o["reach"]),
                                 key=lambda o: float(np.linalg.norm(o["centre"][:2] - (at if at is not None else [0, 0])))):
-                    planned = plan_grasp(o["centre"], o["height"])
+                    planned = plan_grasp(o["centre"], o["height"], floor_clear=self.floor_clear())
                     if planned:
                         target = o
                         break
@@ -565,7 +610,7 @@ class Picker:
         others = [o for o in found if o is not target]
         guess = wrist_for(planned[1][-1], target["yaw"], target["period"], opening_m(opening), others) \
             if target["whole"] else 90
-        with self.step("pregrasp"):   # the wrist turned and the fingers opened on the way, as the wide look has it
+        with self.step("pregrasp"), refusable(target["centre"]):   # the wrist turned, the fingers opened on the way
             self.go({**planned[1][0], 5: guess, m3arm.GRIPPER: opening}, speed=self.dps("near_dps"))
         with self.step("look.close"):
             _camera, close = self.look("close", target["centre"])
@@ -576,21 +621,30 @@ class Picker:
             centre = np.r_[centre[:2], reading["centre"][2]]
         self.say(f"close look: {'found it' if again else 'not found, the wide look kept'}, moved "
                  f"{1000 * np.linalg.norm(centre[:2] - target['centre'][:2]):.1f} mm")
-        planned = plan_grasp(centre, reading["height"], prefer=(planned[0], planned[2])) or planned
+        planned = plan_grasp(centre, reading["height"], prefer=(planned[0], planned[2]),
+                             floor_clear=self.floor_clear()) or planned
         pitch, poses, _lift = planned
         others = [o for o in close if np.linalg.norm(o["centre"][:2] - centre[:2]) > MATCH_M] + others   # and the wide look's: the close one sees less round it
         j5 = wrist_for(poses[-1], reading["yaw"], reading["period"], opening_m(opened_for(reading["size"])), others)
         poses = [{**p, 5: j5} for p in poses]
         self.say(f"the {name(reading)}: fingers along {reading['yaw']:.0f} deg ({yaw_from} look), wrist J5 {j5}")
-        with self.step("descend"):   # to the line's top, then down it in one glide
+        with self.step("descend"), refusable(centre):   # to the line's top, then down it in one glide
             self.go(poses[0], speed=self.dps("near_dps"))
-            self.through(poses[1:], floor_clear=FLOOR_CLEAR_PLACE, speed=self.dps("descend_dps"))
+            self.through(poses[1:], floor_clear=self.arm_clear(), speed=self.dps("descend_dps"))
         with self.step("close"):
-            self.call("close_gripper", width_mm=round(reading["size"] * 1000), floor_clear=FLOOR_CLEAR_PLACE,
+            self.call("close_gripper", width_mm=round(reading["size"] * 1000), floor_clear=self.arm_clear(),
                       speed_dps=self.dps("gripper_dps"), settle=False)
             time.sleep(self.cfg["grip_s"])
         with self.step("lift"):
-            self.through(list(reversed(poses[:-1])), floor_clear=FLOOR_CLEAR_PLACE, speed=self.dps("lift_dps"))
+            try:
+                self.through(list(reversed(poses[:-1])), floor_clear=self.arm_clear(), speed=self.dps("lift_dps"))
+            except Stopped:
+                raise
+            except Exception as exc:   # refused back up the line: up by another way
+                if "refused" not in str(exc):
+                    raise
+                self.say(f"back up the line refused ({exc}): up another way")
+                self.go(poses[0], speed=self.dps("lift_dps"))
         self.drop()
         with self.step("look.after"):   # the next pick's wide look, too
             after = self.wide_look()
@@ -652,13 +706,18 @@ class Picker:
         self.may_drive = drive and self.drive is not None
         self.offset = np.zeros(2)
         self.engaged()
-        found, misses = None, []
+        found, misses, skip = None, [], []
         for _ in range(limit):
             try:
-                record, found = self.pick(kind, found=found)
+                record, found = self.pick(kind, found=found, skip=skip)
             except NothingToPick as exc:
-                self.say(f"clean-up done: {exc}")
+                self.say(f"clean-up done: {exc}" + (f" ({len(skip)} left: the arm refused the way)" if skip else ""))
                 break
+            except Refused as exc:   # nothing moved: on with the others, that one left
+                self.say(f"left the one at x {exc.spot[0]:.3f} y {exc.spot[1]:+.3f}: {exc.why}")
+                skip.append(exc.spot)
+                found = None
+                continue
             if record["picked"]:
                 misses = []
                 continue
