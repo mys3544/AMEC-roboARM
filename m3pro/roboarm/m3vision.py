@@ -158,3 +158,68 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
                       "yaw": float(long_deg + 90) % 180 if lying else float(angle) % 90,
                       "period": 180 if lying else 90, "whole": whole, "points": len(members)})
     return sorted(found, key=lambda o: float(np.linalg.norm(o["centre"][:2] - camera[:2, 3])))
+
+
+TOPDOWN_MM = 0.25   # mm a pixel of the picture laid onto a top face
+
+
+def colour_turn(image: np.ndarray, K, camera: np.ndarray, o: dict, inside: float = 0.004, outside: float = 0.0015,
+                window: float = 15.0) -> tuple[float, float] | None:
+    """The thing's turn from the colour picture: (yaw deg, how sure), or None. The picture is laid
+    onto the plane of its top face as seen from straight above, blurred over a camera pixel (laid
+    out 2-4x larger, its pixels' steps pulled the edges 4-5 deg towards the picture's own axes), and
+    the brightness edges from `inside` within to `outside` beyond where the depth puts its outline
+    (the depth's rectangle, its turn and size: what lies beyond -- a chessboard's edges -- has no
+    vote) vote for their direction, modulo 90; the strongest within `window` deg of the depth's wins. The
+    depth's outline of a 30 mm square is a few noisy pixels: its turn wandered 6-16 deg from one
+    look to the next where the colour's held to 1-5 (2026-10-02, a clean-up's wide looks). "How
+    sure": the winning direction's votes over the average direction's."""
+    if not o["kind"]:
+        return None
+    K = np.asarray(K, float).reshape(3, 3)
+    across, along = o["size"] / 2, o["length"] / 2 if o["length"] > o["size"] else o["size"] / 2
+    half = max(across, along) * 1.6
+    n = int(2 * half * 1000 / TOPDOWN_MM)
+    rows, cols = np.mgrid[0:n, 0:n]
+    dx = half - rows * TOPDOWN_MM / 1000          # up the patch: +x (forward)
+    dy = half - cols * TOPDOWN_MM / 1000          # left in the patch: +y (left)
+    world = np.stack([o["centre"][0] + dx, o["centre"][1] + dy, np.full_like(dx, o["top"]), np.ones_like(dx)], axis=-1)
+    seen = world @ np.linalg.inv(camera).T
+    if np.any(seen[..., 2] <= 0.05):
+        return None
+    u = K[0, 0] * seen[..., 0] / seen[..., 2] + K[0, 2]
+    v = K[1, 1] * seen[..., 1] / seen[..., 2] + K[1, 2]
+    if u.min() < 0 or v.min() < 0 or u.max() > image.shape[1] - 1 or v.max() > image.shape[0] - 1:
+        return None   # the top face runs off the picture
+    patch = cv2.remap(image, u.astype(np.float32), v.astype(np.float32), cv2.INTER_LINEAR)
+    step = float(np.median(np.hypot(np.diff(u, axis=1), np.diff(v, axis=1))))   # camera pixels a patch pixel
+    grey = cv2.GaussianBlur(cv2.cvtColor(patch, cv2.COLOR_BGR2GRAY).astype(np.float32), (0, 0),
+                            max(1.5, 1.3 / max(step, 1e-6)))
+    gx, gy = cv2.Sobel(grey, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(grey, cv2.CV_32F, 0, 1, ksize=3)
+    # the outline the depth found: `yaw` is the line across (the fingers'), `along` the other way
+    a = np.radians(o["yaw"])
+    p_across = dx * np.cos(a) + dy * np.sin(a)
+    p_along = -dx * np.sin(a) + dy * np.cos(a)
+    edge = np.maximum(np.abs(p_across) - across, np.abs(p_along) - along)   # 0 on the outline
+    ring_mask = (edge > -inside) & (edge < outside)
+    direction = np.degrees(np.arctan2(-gx, -gy)) % 90   # a gradient in base: rows go -x, columns -y
+    votes = (np.hypot(gx, gy) * ring_mask).ravel() ** 2
+    hist = np.bincount((direction.ravel() * 2).astype(int) % 180, weights=votes, minlength=180)
+    smooth = np.convolve(np.r_[hist[-6:], hist, hist[:6]], np.ones(7) / 7, "same")[6:-6]
+    near = [i for i in range(180) if abs((i / 2 - o["yaw"] + 45) % 90 - 45) <= window]
+    best = max(near, key=lambda i: smooth[i])
+    sure = float(smooth[best] / max(smooth.mean(), 1e-12))
+    turn = o["yaw"] + ((best / 2 - o["yaw"] + 45) % 90 - 45)   # near the depth's: a block keeps its period
+    return turn % o["period"], sure
+
+
+def refine_turns(image: np.ndarray, K, camera: np.ndarray, found: list[dict], sure: float = 1.5) -> None:
+    """Each whole kit thing's turn from the colour picture where it is sure (colour_turn); the
+    depth's kept as "yaw_depth", and "turn_from" says which counts."""
+    for o in found:
+        o["yaw_depth"], o["turn_from"] = o["yaw"], "depth"
+        if not (o["kind"] and o["whole"]):
+            continue
+        got = colour_turn(image, K, camera, o)
+        if got is not None and got[1] >= sure:
+            o["yaw"], o["turn_from"] = got[0], "colour"

@@ -112,3 +112,40 @@ def test_the_blocks_lying_and_standing_are_named_and_gripped_across():
     standing = m3vision.objects(render(cam, cube=(0.42, -0.03, 10, 0.03, 0.06)), K, cam)[0]
     assert (standing["kind"], standing["size"], standing["height"], standing["period"]) == ("block", 0.030, 0.060, 90)
     assert abs(standing["centre"][2] - 0.030) < 1e-9
+
+
+def picture(cam, x, y, turn, fine=4):
+    """The colour picture to render()'s depth: a white 30 mm cube's top face turned `turn` deg on a
+    chessboard of 30 mm squares square to the robot -- edges at 0 and 90 deg all round it. Drawn
+    `fine` times finer and averaged down: a camera's optics soften its edges, no hard steps."""
+    v, u = np.mgrid[0:480 * fine, 0:640 * fine]
+    u, v = (u + 0.5) / fine - 0.5, (v + 0.5) / fine - 0.5
+    d = np.stack([(u - 320) / 480.0, (v - 240) / 480.0, np.ones_like(u, float)], axis=-1) @ cam[:3, :3].T
+    o = cam[:3, 3]
+    dz = np.where(np.abs(d[..., 2]) > 1e-9, d[..., 2], -1e-9)
+    floor = o + d * (-o[2] / dz)[..., None]
+    board = ((np.floor(floor[..., 0] / 0.03) + np.floor(floor[..., 1] / 0.03)) % 2) * 255
+    top = o + d * ((0.03 - o[2]) / dz)[..., None]
+    t = math.radians(turn)
+    dx, dy = top[..., 0] - x, top[..., 1] - y
+    on = (np.abs(dx * math.cos(t) + dy * math.sin(t)) < 0.015) & (np.abs(-dx * math.sin(t) + dy * math.cos(t)) < 0.015)
+    grey = cv2.resize(np.where(on, 200.0, board), (640, 480), interpolation=cv2.INTER_AREA).astype(np.uint8)
+    return cv2.cvtColor(grey, cv2.COLOR_GRAY2BGR)
+
+
+def test_the_turn_from_the_colour_edges_beats_the_depths_and_ignores_the_board():
+    cam = camera(0.33, 52, 1.0)
+    for true in (5, 37, 60, 85):   # near the board's own edges too
+        cube = m3vision.objects(render(cam, cube=(0.40, -0.02, true)), K, cam)[0]
+        image = picture(cam, 0.40, -0.02, true)
+        for off in (-8, 8):        # the depth's turn, 8 deg out -- as it wandered on the robot
+            turn, sure = m3vision.colour_turn(image, K, cam, {**cube, "yaw": (true + off) % 90})
+            assert abs((turn - true + 45) % 90 - 45) <= 2 and sure > 1.5, (true, off, turn)
+    image = picture(cam, 0.40, -0.02, 37)
+    found = m3vision.objects(render(cam, cube=(0.40, -0.02, 37)), K, cam)
+    m3vision.refine_turns(image, K, cam, found)
+    assert found[0]["turn_from"] == "colour" and abs((found[0]["yaw"] - 37 + 45) % 90 - 45) < 1.5
+    blank = np.zeros_like(image)                 # nothing to see: the depth's turn stands
+    found = m3vision.objects(render(cam, cube=(0.40, -0.02, 37)), K, cam)
+    m3vision.refine_turns(blank, K, cam, found)
+    assert found[0]["turn_from"] == "depth"

@@ -42,8 +42,7 @@ POSES = {
     "home": (90, 180, 5, 0, 90, 0),     # Yahboom's mapping pose: folded over the base, camera level
     "survey": (90, 120, 30, 0, 90, 0),  # the camera 34.9 deg down, 0.358 m up (measured)
 }
-# Yahboom's table, object width (mm) -> the gripper angle that just holds it; 0 is widest open
-GRIPPER_WIDTH = {0: 180, 20: 152, 30: 134, 40: 115, 50: 95, 60: 57}
+GRIPPER_WIDTH = m3kinematics.GRIPPER_WIDTH   # Yahboom's table, object width (mm) -> the gripper angle
 GRIPPER_OPEN = 30          # wider than the 60 mm entry: the kit's biggest piece is 40 mm
 ENGAGE_MS = 3000           # the first command, from wherever the limp arm is
 MIN_BATTERY_V = 10.5       # the M3's board went silent at ~10.4 V under load (2026-09-30)
@@ -59,10 +58,11 @@ def glide_problem(start: Pose, poses: list[Pose], floor_clear: float | None = No
     clear = m3kinematics.FLOOR_CLEAR if floor_clear is None else floor_clear
     last = start
     for i, goal in enumerate(poses):
-        biggest = max(abs(goal[j] - last[j]) for j in (1, 2, 3, 4, 5))
+        joints = (1, 2, 3, 4, 5, 6) if 6 in goal and 6 in last else (1, 2, 3, 4, 5)   # the gripper: its fingers too
+        biggest = max(abs(goal[j] - last[j]) for j in joints)
         n = max(1, math.ceil(biggest / step_deg))
         for k in range(1, n + 1):
-            why = m3kinematics.problem({j: round(last[j] + (goal[j] - last[j]) * k / n) for j in (1, 2, 3, 4, 5)}, clear)
+            why = m3kinematics.problem({j: round(last[j] + (goal[j] - last[j]) * k / n) for j in joints}, clear)
             if why:
                 return why
         if i < len(poses) - 1:

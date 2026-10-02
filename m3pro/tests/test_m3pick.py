@@ -60,19 +60,26 @@ class World:
                 goal = {**self.pose, **{int(j): v for j, v in pose.items()}}
                 why = m3kinematics.problem(goal, kwargs.get("floor_clear") or m3kinematics.FLOOR_CLEAR)
                 assert why is None, why
+                if self.held and goal.get(6, 180) < 110:   # opened wider than 40 mm: it falls where it is
+                    point, _ = m3kinematics.grip(goal)
+                    self.boxes.append((float(point[0]), float(point[1]), *self.held[2:]))
+                    self.held = None
                 self.pose = goal
         elif method in ("home", "engage"):
             self.pose = dict(HOME)
         elif method == "close_gripper":
+            self.pose[6] = m3arm.gripper_angle(kwargs["width_mm"])
             point, _ = m3kinematics.grip(self.pose)
             near = [b for b in self.boxes if math.hypot(b[0] - point[0], b[1] - point[1]) < 0.012]
             if near:
                 self.held = near[0]
                 self.boxes.remove(near[0])
-        elif method == "set_gripper" and self.held and args[0] <= 40:   # opened wide: let go
-            self.dropped.append(self.held)
-            self.dropped_at.append(self.base.copy())
-            self.held = None
+        elif method == "set_gripper":
+            self.pose[6] = args[0]
+            if self.held and args[0] <= 40:   # opened wide: let go
+                self.dropped.append(self.held)
+                self.dropped_at.append(self.base.copy())
+                self.held = None
         return dict(self.pose) if method == "read" else None
 
     def drive(self, dx, dy, speed=0.05):
@@ -108,7 +115,7 @@ def test_a_turned_cube_is_picked_square_and_dropped_off():
     record = picker.state["last"]
     assert record["kind"] == "30 mm cube" and record["yaw_from"] == "close"
     off = (closing(record["grip_pose"]) - 30 + 45) % 90 - 45
-    assert abs(off) < 4, off
+    assert abs(off) < m3pick.WRIST_SLACK[90] + 4, off   # square, or off it towards straight: the fingers' tilt
     width = next(kw["width_mm"] for m, _, kw in world.calls if m == "close_gripper")
     assert width == 30
 
@@ -118,7 +125,7 @@ def test_a_lying_block_is_gripped_across_its_length():
     picker = run(world, "pick_once", kind="block")
     assert picker.state["error"] is None and picker.state["picked"] == 1
     off = (closing(picker.state["last"]["grip_pose"]) - 110 + 90) % 180 - 90   # across 20 deg: 110
-    assert abs(off) < 4, off
+    assert abs(off) < m3pick.WRIST_SLACK[180] + 4, off
 
 
 def test_out_of_reach_is_left_and_said():
@@ -250,3 +257,26 @@ def test_a_refused_way_leaves_that_one_and_the_clean_up_goes_on():
     picker = run(world, "clean_up")
     assert picker.state["error"] is None and picker.state["picked"] == 1
     assert world.boxes == [(0.20, 0.05, 0, 0.03, 0.03)] and len(world.dropped) == 1
+
+
+def test_with_the_wrist_turned_both_fingertips_keep_off_the_table():
+    """2026-10-02: J5 45 at 60 deg tilted the open fingers -- one 4 mm into the table while the hand's
+    middle was 8.5 mm over it; it touched and pushed the robot. Planned with the wrist it will use."""
+    opening = m3pick.opened_for(0.030)
+    for centre in ((0.25, 0.0, 0.015), (0.21, -0.13, 0.015), (0.175, -0.07, 0.015), (0.20, 0.05, 0.015)):
+        for yaw in (0, 20, 45, 70):
+            def wrist(grip, yaw=yaw):
+                return m3pick.wrist_choices(grip, yaw, 90, m3pick.opening_m(opening))
+            planned = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.008, wrist=wrist, gripper=opening)
+            if centre[0] >= 0.25 and yaw in (20, 45, 70):
+                # at the far edge the hand comes in at ~55 deg: a cube turned much tilts the fingers more
+                # than a grip at its very top makes up -- no plan, rather than one into the table (the
+                # robot drives closer when it may)
+                assert planned is None or min(m3kinematics.outline(p)[:, 2].min() for p in planned[1]) >= 0.008 - 1e-9
+                continue
+            assert planned is not None, (centre, yaw)
+            for pose in planned[1]:
+                assert pose[6] == opening and m3kinematics.outline(pose)[:, 2].min() >= 0.008 - 1e-9, (centre, yaw)
+    turned = {1: 90, 2: 20, 3: 40, 4: 60, 5: 45, 6: opening}
+    tips = m3kinematics.outline(turned)[-5:-1]          # the fingers, as the guard sees them
+    assert np.ptp(tips[[1, 3], 2]) > 0.01               # the turned wrist: one fingertip well below the other

@@ -46,6 +46,9 @@ GRIPPING = ((-0.00062499, 0.00023987, 0.093235), (-0.041648, -1.5708, 0.041619))
 # (their EndToCamMat), where the object sits between the fingertips; the pads reach a little
 # past it. Provisional: the touch test measures it.
 FINGERS = 0.015   # m the fingertips reach past the Gripping point
+# Yahboom's table, object width (mm) -> the gripper angle (J6) that just holds it; 0 is widest open
+GRIPPER_WIDTH = {0: 180, 20: 152, 30: 134, 40: 115, 50: 95, 60: 57}
+FINGER_SIDE = 0.008   # m a finger's outer edge past the opening's edge (its thickness, and a margin)
 
 # The chassis, from Yahboom's own model of it (meshes/base_link.STL, 2026-09-30): x -0.153..+0.124,
 # y +-0.112 (+-0.12 with the wheels); its top 0.196 over the arm's base, 0.133 on the front deck
@@ -138,9 +141,24 @@ def camera(pose: dict[int, float]) -> tuple[np.ndarray, float]:
     return f[:3, 3], -math.degrees(math.asin(f[2, 0]))
 
 
+def finger_span(angle: float) -> float:
+    """m between the fingers at gripper angle `angle` (J6): Yahboom's table inverted, its last
+    stretch carried on past 60 mm (GRIPPER_OPEN, 30, is ~67)."""
+    table = sorted(GRIPPER_WIDTH.items())
+    for (w0, a0), (w1, a1) in itertools.pairwise(table):
+        if a1 <= angle <= a0:
+            return (w0 + (angle - a0) * (w1 - w0) / (a1 - a0)) / 1000
+    (w0, a0), (w1, a1) = table[-2], table[-1]
+    return max(0.0, (w1 + (angle - a1) * (w1 - w0) / (a1 - a0)) / 1000) if angle < a1 else 0.0
+
+
 def outline(pose: dict[int, float]) -> np.ndarray:
     """Points along the arm, shoulder to fingertips, every ~2 cm, and the camera: what the guard
-    checks (n x 3, in that order)."""
+    checks (n x 3, in that order). With the gripper's angle (6) in the pose, both fingers too --
+    either side of the hand by half the opening, along the line they close on: with the wrist
+    turned and the hand not pointing straight down that line tilts, one finger lower than the
+    middle by up to half the opening (2026-10-02: J5 45 at 60 deg, a finger 4 mm into the table
+    with the middle 8.5 mm over it; it touched and pushed the robot)."""
     f = frames(pose)
     joints = [f[f"arm{j}"][:3, 3] for j in (2, 3, 4, 5)] + [f["gripping"][:3, 3]]
     along = joints[-1] - joints[-2]   # the fingers go on the way the wrist reaches the Gripping point
@@ -149,6 +167,10 @@ def outline(pose: dict[int, float]) -> np.ndarray:
     for a, b in itertools.pairwise(joints):
         n = max(1, int(np.linalg.norm(b - a) / 0.02))
         stretches.append(a + (b - a) * (np.arange(n + 1)[:, None] / n))
+    if pose.get(6) is not None:
+        side = (finger_span(pose[6]) / 2 + FINGER_SIDE) * f["arm5"][:3, 1]   # the fingers close along arm5's y
+        root, tip = joints[-2], joints[-1]
+        stretches.append(np.array([root + side, tip + side, root - side, tip - side]))
     return np.vstack([*stretches, f["camera"][:3, 3][None]])
 
 
