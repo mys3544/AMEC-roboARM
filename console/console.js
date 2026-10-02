@@ -430,6 +430,8 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
       `last     ${last ? `${last.picked ? 'picked' : 'MISSED'} the ${last.kind} in ${last.seconds} s` +
         ` (approach ${last.pitch} deg, fingers along ${last.yaw_deg} deg from the ${last.yaw_from} look, J5 ${last.j5})` : '-'}`,
       `in view  ${seen.length ? seen.join('; ') : 'no cube or block'}`,
+      `box      ${s.box ? `at ${(100 * s.box.x).toFixed(1)}, ${(100 * s.box.y).toFixed(1)} cm, turned ${s.box.turn.toFixed(0)} deg;` +
+        ` ${s.box.in_it} in it when seen, ${s.box.drops} dropped in since` : 'not seen: drops go on the line out on the right'}`,
       `base     ${s.moved_cm && (s.moved_cm[0] || s.moved_cm[1])
         ? `${s.moved_cm[0]} cm forward, ${s.moved_cm[1]} cm left of where the job began` : 'where the job began'}`,
     ].join('\n');

@@ -149,3 +149,27 @@ def test_the_turn_from_the_colour_edges_beats_the_depths_and_ignores_the_board()
     found = m3vision.objects(render(cam, cube=(0.40, -0.02, 37)), K, cam)
     m3vision.refine_turns(blank, K, cam, found)
     assert found[0]["turn_from"] == "depth"
+
+
+def test_a_printed_marker_is_found_where_it_stands_and_which_way_it_faces():
+    """The drop-off box's marker (DICT_4X4_50, 10, 64 mm), standing up and leaning back 21 deg as the
+    lid does, drawn into the picture of a camera 0.31 m up looking at it from 28 cm."""
+    cam = camera(0.31, 40, 0.0)
+    lean = math.radians(21)
+    face = np.array([-math.cos(lean), 0.0, math.sin(lean)])      # towards the camera, and up a little
+    right = np.array([0.0, -1.0, 0.0])
+    up = np.cross(face, right)                                     # the marker's up, along the lid
+    centre = np.array([0.45, 0.02, 0.10])
+    corners = [centre + 0.032 * (sx * right + sy * up) for sx, sy in ((-1, 1), (1, 1), (1, -1), (-1, -1))]
+    inv = np.linalg.inv(cam)
+    px = np.array([(K @ ((inv @ np.r_[c, 1])[:3] / (inv @ np.r_[c, 1])[2]))[:2] for c in corners], np.float32)
+    art = cv2.aruco.generateImageMarker(cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50), 10, 360)
+    art = cv2.copyMakeBorder(art, 60, 60, 60, 60, cv2.BORDER_CONSTANT, value=255)   # the paper's white edge
+    src = np.array([[60, 60], [420, 60], [420, 420], [60, 420]], np.float32)
+    warp = cv2.warpPerspective(art, cv2.getPerspectiveTransform(src, px), (640, 480), borderValue=90)
+    found = m3vision.find_marker(cv2.cvtColor(warp, cv2.COLOR_GRAY2BGR), K, cam, "DICT_4X4_50", 10, 0.064)
+    assert found is not None
+    where, axes = found
+    assert np.linalg.norm(where - centre) < 0.004
+    assert math.degrees(math.acos(min(1.0, float(axes[:, 2] @ face)))) < 3
+    assert m3vision.find_marker(cv2.cvtColor(warp, cv2.COLOR_GRAY2BGR), K, cam, "DICT_4X4_50", 11, 0.064) is None

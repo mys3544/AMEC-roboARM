@@ -37,7 +37,7 @@ class World:
 
     def __init__(self, boxes, move_s=0.0):
         self.pose, self.boxes, self.move_s = dict(HOME), list(boxes), move_s
-        self.held, self.dropped, self.calls, self.driven = None, [], [], []
+        self.held, self.dropped, self.calls, self.driven, self.released = None, [], [], [], []
         self.base = np.zeros(2)   # where the base is from where it began
         self.refuse = None        # a spot the arm refuses to come down to
         self.dropped_at = []
@@ -77,6 +77,7 @@ class World:
         elif method == "set_gripper":
             self.pose[6] = args[0]
             if self.held and args[0] <= 40:   # opened wide: let go
+                self.released.append(m3kinematics.grip(self.pose)[0])
                 self.dropped.append(self.held)
                 self.dropped_at.append(self.base.copy())
                 self.held = None
@@ -295,3 +296,53 @@ def test_the_way_back_up_is_planned_with_the_fingers_shut_on_the_thing():
         _pitch, poses, _lift = planned
         lifted = [{**q, 6: shut} for q in poses]
         assert m3arm.glide_problem(lifted[-1], lifted[-2::-1], 0.003) is None, yaw
+
+
+def test_the_carry_goes_round_low_just_over_the_drop_off_height():
+    """2026-10-02, the user: not up high and down again -- just over the drop-off's height and round."""
+    for here in ({1: 80, 2: 76, 3: 15, 4: 19, 5: 90, 6: 134}, {1: 60, 2: 72, 3: 20, 4: 25, 5: 120, 6: 115},
+                 {1: 136, 2: 59, 3: 34, 4: 18, 5: 44, 6: 134}):
+        for extra in (0.0, 0.05, 0.10):
+            way = m3pick.carry_arc(here, extra)
+            assert way is not None and m3arm.glide_problem(here, way) is None
+            grips = [m3kinematics.grip(q)[0] for q in way]
+            assert max(g[2] for g in grips) <= m3pick.DROP_UP + m3pick.CARRY_OVER + 0.005
+            assert way[-1][1] == 180 and abs(grips[-1][2] - m3pick.DROP_UP) < 0.006
+            axis = np.asarray(m3kinematics.CHAIN[0][0][:2])
+            assert all(np.hypot(*(g[:2] - axis)) > 0.17 for g in grips[1:])   # round, clear of the chassis
+            assert all(q[6] == here[6] for q in way)                          # still holding it
+
+
+def box_here():
+    """The drop-off box as the user put it: its inside 15 x 11 cm, centred 10 cm ahead and 21 cm out on
+    the right, the lid's hinge along x at the far side."""
+    return {"centre": np.array([0.10, -0.21]), "along": np.array([-1.0, 0.0]), "into": np.array([0.0, 1.0]),
+            "turn": 180.0, "items": []}
+
+
+def test_into_the_box_its_marker_puts_it_clear_of_the_walls_and_spread_out():
+    world = World([(0.20, 0.06, 0, 0.03, 0.03), (0.21, -0.05, 30, 0.03, 0.03), (0.24, 0.01, 60, 0.03, 0.03)])
+    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
+    picker.box_look = lambda: setattr(picker, "box", box_here()) or picker.box   # the look, as if it saw marker 10
+    picker.start("clean_up")
+    picker.wait(120)
+    assert picker.state["error"] is None and picker.state["picked"] == 3 and len(world.released) == 3
+    box = box_here()
+    for point in world.released:
+        rel = point[:2] - box["centre"]
+        assert abs(rel @ box["along"]) <= 0.075 - m3pick.BOX_MARGIN + 1e-6
+        assert abs(rel @ box["into"]) <= 0.055 - m3pick.BOX_MARGIN + 1e-6
+        assert abs(point[2] - (m3pick.BOX_INSIDE[2] + m3pick.BOX_DROP_OVER)) < 0.006   # over the walls
+    gaps = [np.linalg.norm(a[:2] - b[:2]) for i, a in enumerate(world.released) for b in world.released[i + 1:]]
+    assert min(gaps) > 0.03   # not a tower: spread over the inside
+
+
+def test_the_box_from_its_marker():
+    lean = math.radians(21)
+    face = np.array([0.0, math.cos(lean), math.sin(lean)])   # towards the robot (+y), leaning back
+    right = np.array([-1.0, 0.0, 0.0])
+    up = np.cross(face, right)
+    box = m3pick.box_from_marker(np.array([0.10, -0.31, 0.10]), np.column_stack([right, up, face]))
+    assert np.allclose(box["into"], [0.0, 1.0]) and np.allclose(box["along"], [-1.0, 0.0])
+    hinge_y = -0.31 + (0.10 - m3pick.BOX_INSIDE[2]) * math.tan(lean)   # down the lid to the walls' top
+    assert abs(box["centre"][1] - (hinge_y + m3pick.BOX_INSIDE[1] / 2)) < 0.002 and abs(box["centre"][0] - 0.10) < 1e-9

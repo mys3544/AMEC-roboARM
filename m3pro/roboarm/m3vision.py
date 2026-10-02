@@ -160,6 +160,29 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
     return sorted(found, key=lambda o: float(np.linalg.norm(o["centre"][:2] - camera[:2, 3])))
 
 
+def find_marker(image: np.ndarray, K, camera: np.ndarray, family: str, ident: int,
+                side: float) -> tuple[np.ndarray, np.ndarray] | None:
+    """Where the printed marker `ident` of the OpenCV ArUco family `family` (e.g. "DICT_4X4_50"),
+    `side` m square, is: (its centre, base m; its axes as the columns of a rotation -- x right, y
+    up, z out of its face towards whoever reads it), in base through the levelled `camera`; None if
+    not seen."""
+    grey = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    family = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, family))
+    if hasattr(cv2.aruco, "ArucoDetector"):   # OpenCV 4.7 on: this laptop
+        corners, ids, _ = cv2.aruco.ArucoDetector(family, cv2.aruco.DetectorParameters()).detectMarkers(grey)
+    else:                                     # the robot's 4.5.4
+        corners, ids, _ = cv2.aruco.detectMarkers(grey, family, parameters=cv2.aruco.DetectorParameters_create())
+    if ids is None or ident not in ids.ravel():
+        return None
+    seen = corners[list(ids.ravel()).index(ident)].reshape(4, 2)
+    square = np.array([[-1, 1, 0], [1, 1, 0], [1, -1, 0], [-1, -1, 0]], float) * side / 2
+    ok, rvec, tvec = cv2.solvePnP(square, seen, np.asarray(K, float).reshape(3, 3), None,
+                                  flags=cv2.SOLVEPNP_IPPE_SQUARE)
+    if not ok:
+        return None
+    return (camera @ np.r_[tvec.ravel(), 1.0])[:3], camera[:3, :3] @ cv2.Rodrigues(rvec)[0]
+
+
 TOPDOWN_MM = 0.25   # mm a pixel of the picture laid onto a top face
 
 
