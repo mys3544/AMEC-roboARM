@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from pathlib import Path
 
 import numpy as np
 
@@ -70,6 +71,24 @@ MIN_FLOOR_CLEAR = 0.002   # m: never less, whoever asks
 SAG = {2: 4.0, 3: -8.5}   # degrees the joints really sit off their command (see SAG above)
 MIRRORED = (1,)           # joints that turn against the URDF's axis (see SIGNS above)
 
+# The steps above keep a line through the joints out of the chassis; the arm is thicker than that:
+# its parts reach up to 5 cm past the line, the DCW2 4.5 cm to either side of it. 2026-10-02: the
+# arm had hit the front-right lidar (the user), and poses the steps allowed put the camera into it
+# -- reaching front-right, the camera rides over that corner. So the arm's own shell (Yahboom's
+# meshes, roboarm/m3body.npz from tools/m3_body_model.py) is kept off what sticks out into its
+# space: the lidars by LIDAR_ROOM, the body in front of BODY_FROM_X by BODY_ROOM. Behind it the
+# folded arm rests ~1 mm over the body by design (home): the steps alone guard that.
+# The lidars, measured: no part of Yahboom's model. (name, x from-to, y from-to, top), base_link m;
+# the front-right one reaches 14.5 cm from the arm's axis at its outer corner, 13.5 cm tall (the
+# user, 2026-10-02); the rear-left one taken alike.
+LIDARS = (("front-right lidar", (0.060, 0.124), (-0.112, -0.070), 0.135),
+          ("rear-left lidar", (-0.140, -0.090), (0.090, 0.112), 0.135))
+LIDAR_ROOM = 0.025   # m the arm keeps from a lidar, every way (the user: 2.5 cm after the hit)
+BODY_ROOM = 0.0      # m from the rest: the shell must not go in; the steps keep their own margins
+BODY_FROM_X = 0.0    # m: the body in front of this, less the arm's own turntable (ARM_COLUMN round its axis)
+ARM_COLUMN = 0.05
+SHELL_REACH = 0.06   # m the shell can be from the outline's nearest point: 5.0 cm over 3000 poses
+
 
 def _rot(axis, q):
     a = np.asarray(axis, float)
@@ -102,6 +121,68 @@ _ORIGINS = [_frame(xyz, _rpy(*rpy)) for xyz, rpy, _ in CHAIN]
 _AXES = [_axis(axis) for *_, axis in CHAIN]
 _TO_CAMERA = _frame(CAMERA[0], _rpy(*CAMERA[1]))
 _TO_GRIPPING = _frame(GRIPPING[0], _rpy(*GRIPPING[1]))
+
+# The shell and what it keeps clear of (see LIDARS): each cell of the body's height map holds the
+# height a shell point over it stays above -- its own top grown by the room, sideways and up.
+_MODEL = np.load(Path(__file__).with_name("m3body.npz"))
+_SHELL = tuple((part, frame, _MODEL[f"shell_{frame}"].astype(float)) for part, frame in (
+    ("forearm", "arm3"), ("wrist", "arm4"), ("hand", "arm5"), ("camera", "camera"), ("gripper", "gripping")))
+_BOUNDS = tuple(np.array(list(itertools.product(*zip(points.min(0), points.max(0), strict=True))))
+                for _part, _frame, points in _SHELL)   # each part's box's 8 corners, in its frame
+_CELL = float(_MODEL["body_cell"])
+_X0, _Y0 = (float(v) for v in _MODEL["body_origin"])
+_TOPS = np.where(_MODEL["body_mm"] >= 0, _MODEL["body_mm"] / 1000.0, -np.inf)
+
+
+def _grow(h: np.ndarray, r: float, square: bool = False) -> np.ndarray:
+    """Each cell: the highest within `r` of it (a disc; a square when `square`, cheaper and wider)."""
+    n = math.ceil(r / _CELL - 1e-9)
+    if n == 0:
+        return h.copy()
+    pad = np.pad(h, n, constant_values=-np.inf)
+    out = h.copy()
+    for dx, dy in itertools.product(range(-n, n + 1), repeat=2):
+        if square or (dx * dx + dy * dy) * _CELL * _CELL <= r * r + 1e-12:
+            out = np.maximum(out, pad[n + dx:n + dx + h.shape[0], n + dy:n + dy + h.shape[1]])
+    return out
+
+
+def _keep_out() -> tuple[list[tuple[str, float, np.ndarray]], np.ndarray, np.ndarray]:
+    gx, gy = np.meshgrid(_X0 + (np.arange(_TOPS.shape[0]) + 0.5) * _CELL,
+                         _Y0 + (np.arange(_TOPS.shape[1]) + 0.5) * _CELL, indexing="ij")
+    parts, lidar = [], np.zeros(_TOPS.shape, bool)
+    for name, (x0, x1), (y0, y1), top in LIDARS:
+        inside = (gx > x0) & (gx < x1) & (gy > y0) & (gy < y1)
+        lidar |= inside
+        parts.append((name, LIDAR_ROOM, _grow(np.where(inside, np.maximum(_TOPS, top), -np.inf), LIDAR_ROOM) + LIDAR_ROOM))
+    column = np.hypot(gx - CHAIN[0][0][0], gy - CHAIN[0][0][1]) < ARM_COLUMN
+    front = np.where((gx >= BODY_FROM_X) & ~lidar & ~column, _TOPS, -np.inf)
+    parts.append(("robot's front", BODY_ROOM, _grow(front, BODY_ROOM) + BODY_ROOM))
+    limit = np.maximum.reduce([grid for *_, grid in parts])
+    # where the outline must be for any shell point to be in the way: SHELL_REACH, and a cell more
+    near = _grow(limit, SHELL_REACH + _CELL, square=True) + SHELL_REACH
+    return parts, limit, near
+
+
+_PARTS, _LIMIT, _NEAR = _keep_out()
+
+
+def _clear_above(corners: np.ndarray) -> bool:
+    """A part's box (its corners, base_link) wholly over the highest keep-out under it: all of it clear."""
+    ix0, iy0 = np.floor((corners[:, :2].min(0) - (_X0, _Y0)) / _CELL).astype(int)
+    ix1, iy1 = np.floor((corners[:, :2].max(0) - (_X0, _Y0)) / _CELL).astype(int)
+    under = _LIMIT[max(ix0, 0):max(ix1 + 1, 0), max(iy0, 0):max(iy1 + 1, 0)]
+    return under.size == 0 or corners[:, 2].min() >= under.max()
+
+
+def _over(grid: np.ndarray, points: np.ndarray) -> np.ndarray:
+    """The grid's value under each point (-inf off the map)."""
+    ix = np.floor((points[:, 0] - _X0) / _CELL).astype(int)
+    iy = np.floor((points[:, 1] - _Y0) / _CELL).astype(int)
+    ok = (ix >= 0) & (ix < grid.shape[0]) & (iy >= 0) & (iy < grid.shape[1])
+    out = np.full(len(points), -np.inf)
+    out[ok] = grid[ix[ok], iy[ok]]
+    return out
 
 
 def frames(pose: dict[int, float]) -> dict[str, np.ndarray]:
@@ -152,14 +233,14 @@ def finger_span(angle: float) -> float:
     return max(0.0, (w1 + (angle - a1) * (w1 - w0) / (a1 - a0)) / 1000) if angle < a1 else 0.0
 
 
-def outline(pose: dict[int, float]) -> np.ndarray:
+def outline(pose: dict[int, float], f: dict[str, np.ndarray] | None = None) -> np.ndarray:
     """Points along the arm, shoulder to fingertips, every ~2 cm, and the camera: what the guard
     checks (n x 3, in that order). With the gripper's angle (6) in the pose, both fingers too --
     either side of the hand by half the opening, along the line they close on: with the wrist
     turned and the hand not pointing straight down that line tilts, one finger lower than the
     middle by up to half the opening (2026-10-02: J5 45 at 60 deg, a finger 4 mm into the table
-    with the middle 8.5 mm over it; it touched and pushed the robot)."""
-    f = frames(pose)
+    with the middle 8.5 mm over it; it touched and pushed the robot). `f`: frames(pose), if had."""
+    f = frames(pose) if f is None else f
     joints = [f[f"arm{j}"][:3, 3] for j in (2, 3, 4, 5)] + [f["gripping"][:3, 3]]
     along = joints[-1] - joints[-2]   # the fingers go on the way the wrist reaches the Gripping point
     joints.append(joints[-1] + FINGERS * along / np.linalg.norm(along))
@@ -175,9 +256,11 @@ def outline(pose: dict[int, float]) -> np.ndarray:
 
 
 def problem(pose: dict[int, float], floor_clear: float = FLOOR_CLEAR) -> str | None:
-    """Why the pose would put the arm into the chassis, the lidars or the floor; None if it
-    would not. The first point along the arm that is in the way says why."""
-    p = outline(pose)
+    """Why the pose would put the arm into the chassis or the floor, or its shell near a lidar or
+    into the robot's front; None if it would not. The first point along the arm that is in the
+    way says why."""
+    f = frames(pose)
+    p = outline(pose, f)
     step = np.full(len(p), -1)
     for i, (x0, x1, top) in enumerate(CHASSIS):
         over = (p[:, 0] > x0) & (p[:, 0] < x1) & (np.abs(p[:, 1]) < CHASSIS_Y) & (p[:, 2] < top)
@@ -185,7 +268,7 @@ def problem(pose: dict[int, float], floor_clear: float = FLOOR_CLEAR) -> str | N
     low = p[:, 2] < FLOOR + max(floor_clear, MIN_FLOOR_CLEAR)
     bad = (step >= 0) | low
     if not bad.any():
-        return None
+        return too_near(f, p)
     first = int(np.argmax(bad))
     x, z = p[first, 0], p[first, 2]
     if step[first] >= 0:
@@ -194,6 +277,25 @@ def problem(pose: dict[int, float], floor_clear: float = FLOOR_CLEAR) -> str | N
                 f" the chassis (x {x:+.2f} m): keep it above {100 * (top - FLOOR):.0f} cm there")
     return (f"the arm would reach {100 * (z - FLOOR):.1f} cm above the floor"
             f" (x {x:+.2f} m): the fingertips stay {100 * floor_clear:.1f} cm clear of it")
+
+
+def too_near(f: dict[str, np.ndarray], line: np.ndarray) -> str | None:
+    """Why the arm's shell (frames `f`) or its outline (`line`) would come nearer a lidar than
+    LIDAR_ROOM, or into the robot's front; None if not. Most poses are nowhere near: the outline
+    tells that, the shell's points are only looked at when it is within SHELL_REACH."""
+    if np.all(line[:, 2] >= _over(_NEAR, line)):
+        return None
+    shells = ((part, points @ f[frame][:3, :3].T + f[frame][:3, 3]) for (part, frame, points), corners in zip(_SHELL, _BOUNDS, strict=True)
+              if not _clear_above(corners @ f[frame][:3, :3].T + f[frame][:3, 3]))
+    for part, points in itertools.chain(shells, [("arm", line)]):
+        low = points[:, 2] < _over(_LIMIT, points)
+        if not low.any():
+            continue
+        x, y, z = points[np.argmax(low)]
+        what, room = next((name, room) for name, room, grid in _PARTS if z < _over(grid, np.array([[x, y, z]]))[0])
+        near = f"within {100 * room:.1f} cm of" if room else "into"
+        return f"the arm's {part} would come {near} the {what} (x {x:+.2f} m, y {y:+.2f} m, {100 * z:.0f} cm up)"
+    return None
 
 
 def grip(pose: dict[int, float]) -> tuple[np.ndarray, float]:
