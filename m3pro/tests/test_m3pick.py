@@ -229,7 +229,7 @@ def test_the_settings_are_held_to_their_ranges_kept_and_count(tmp_path):
 
 
 def test_the_fingertips_keep_their_height_over_the_table_the_grip_rises_instead():
-    """2026-10-01: at 3 mm they sometimes touched the table -- 8 mm now, the grip higher on the cube."""
+    """Asked for more room over the table, the grip rises on the cube (8 mm here; the default is 3)."""
     for centre in ((0.20, 0.03, 0.015), (0.25, -0.05, 0.015), (0.16, 0.0, 0.015)):
         low = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003)
         high = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.008)
@@ -237,7 +237,7 @@ def test_the_fingertips_keep_their_height_over_the_table_the_grip_rises_instead(
             assert m3kinematics.grip(poses[-1])[0][2] <= 0.03 + 1e-6   # never above the cube's top
         assert min(m3kinematics.outline(p)[:, 2].min() for p in high[1]) >= 0.008
         assert m3kinematics.grip(high[1][-1])[0][2] > m3kinematics.grip(low[1][-1])[0][2]
-    assert m3pick.SETTINGS["fingertips_mm"][5] == 8
+    assert m3pick.SETTINGS["fingertips_mm"][5] == 3   # the default: the lower finger, so 3 will do
 
 
 def test_a_plan_is_one_the_arm_will_glide_down_and_back_up():
@@ -280,3 +280,18 @@ def test_with_the_wrist_turned_both_fingertips_keep_off_the_table():
     turned = {1: 90, 2: 20, 3: 40, 4: 60, 5: 45, 6: opening}
     tips = m3kinematics.outline(turned)[-5:-1]          # the fingers, as the guard sees them
     assert np.ptp(tips[[1, 3], 2]) > 0.01               # the turned wrist: one fingertip well below the other
+
+
+def test_the_way_back_up_is_planned_with_the_fingers_shut_on_the_thing():
+    """2026-10-02: a 40 mm cube by the right front corner -- up the line with the fingers open passed,
+    with them shut on it the arm refused, and the arm stood at the bottom holding it."""
+    cube, opened, shut = np.array([0.163, -0.115, 0.02]), m3pick.opened_for(0.040), m3arm.gripper_angle(40)
+    for yaw in (75, 30, 0):
+        def wrist(grip, yaw=yaw):
+            return m3pick.wrist_choices(grip, yaw, 90, m3pick.opening_m(opened))
+        planned = m3pick.plan_grasp(cube, 0.04, floor_clear=0.003, wrist=wrist, gripper=opened, held=shut)
+        if planned is None:
+            continue
+        _pitch, poses, _lift = planned
+        lifted = [{**q, 6: shut} for q in poses]
+        assert m3arm.glide_problem(lifted[-1], lifted[-2::-1], 0.003) is None, yaw

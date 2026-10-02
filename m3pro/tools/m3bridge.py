@@ -350,7 +350,8 @@ def main() -> int:
 
     the_bridge = bridge.Bridge(make_arm, lambda: stream, CALIBRATION)
     picker = m3pick.Picker(arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT,
-                           drive=lambda dx, dy, v: drive(node, dx, dy, v, lambda: picker.stopping()))
+                           drive=lambda dx, dy, v: drive(node, dx, dy, v, lambda: picker.stopping()),
+                           battery=lambda: node.volts)
     metrics.REGISTRY.log_path = OUT / "metrics.jsonl"
     OUT.mkdir(parents=True, exist_ok=True)
     server = Server((args.host, args.port), make_handler(the_bridge, frames, picker))

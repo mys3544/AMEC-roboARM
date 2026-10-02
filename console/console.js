@@ -10,7 +10,8 @@ const STOPS = {   // what STOP means for each kind of robot
   x3: robot => Promise.all([call(robot, 'api/auto/stop', {}), call(robot, 'api/arm/hold', {})]),
   m3arm: robot => call(robot, 'pick/stop', {}),   // the M3's arm: the pick service on its bridge
 };
-const STATES = { m3arm: 'pick/state' };   // where a kind of robot says how it is, if not api/state
+const STATES = { m3arm: 'pick/state' };
+const LOW_V = 10.8;   // the M3's battery: its arm refuses below 10.5 V, the board went silent at ~10.4   // where a kind of robot says how it is, if not api/state
 const store = {   // per-viewer conveniences only; the page works without them
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
@@ -303,6 +304,10 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
     this.timing = $('.timing tbody', controls);
     this.total = $('.timing tfoot', controls);
     this.armlog = $('.armlog', controls);
+    const volts = document.createElement('span');   // the battery, in the card's head
+    volts.className = 'pill volts';
+    volts.title = "the M3's battery (the arm refuses below 10.5 V)";
+    $('.mode', this.el).after(volts);
     this.look = document.createElement('img');   // the last look, marked: what the robot made of it
     this.look.className = 'look';
     this.look.title = 'the last look, marked: click to swap with the live picture';
@@ -408,6 +413,8 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
       return;
     }
     this.setPill(s.busy ? `${s.job.replace('_', ' ')}: ${s.step}` : 'idle', s.busy);
+    $('.volts', this.el).textContent = s.battery_v == null ? '' : `${s.battery_v.toFixed(1)} V`;
+    $('.volts', this.el).classList.toggle('low', s.battery_v != null && s.battery_v < LOW_V);
     $('.note', this.el).textContent = s.busy ? `${Math.round(s.now - s.since)} s in this step` : (s.error || '');
     if (s.looks !== this.looks) {
       this.looks = s.looks;
@@ -418,6 +425,8 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
       .map(o => `${o.name} ${(100 * o.x).toFixed(0)},${(100 * o.y).toFixed(0)} cm${o.reach ? '' : ' (out of reach)'}`);
     $('.facts', this.el).textContent = [
       `job      ${s.busy ? `${s.job.replace('_', ' ')} -- ${s.step}` : 'none'}     picked ${s.picked}, missed ${s.missed}`,
+      `battery  ${s.battery_v == null ? '-' : `${s.battery_v.toFixed(2)} V`}` +
+        `${s.battery_v != null && s.battery_v < LOW_V ? '   LOW: below ' + LOW_V + ' V the arm stops -- charge it' : ''}`,
       `last     ${last ? `${last.picked ? 'picked' : 'MISSED'} the ${last.kind} in ${last.seconds} s` +
         ` (approach ${last.pitch} deg, fingers along ${last.yaw_deg} deg from the ${last.yaw_from} look, J5 ${last.j5})` : '-'}`,
       `in view  ${seen.length ? seen.join('; ') : 'no cube or block'}`,

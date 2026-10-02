@@ -96,6 +96,8 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .timing td:nth-child(n+2), .timing th:nth-child(n+2) { text-align: right; }
 .timing tfoot td { border-top: 1px solid var(--line); font-weight: 600; }
 .armspeed { max-width: 420px; }
+.pill.volts:empty { display: none; }
+.pill.volts.low { background: var(--stop); color: #fff; }
 .arm .jobs .stepwise { display: inline-flex; align-items: center; gap: 6px; }
 .tuning summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .tuning .fields { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 8px; align-items: center;
