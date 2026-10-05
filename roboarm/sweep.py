@@ -73,7 +73,7 @@ of distances, and no amount of turning moves that band. The result:
 So the ring delivers the whole angular range and about three quarters of the
 radial one. The missing 189..210 mm rim is a third of the area, and closing it
 needs a SECOND calibrated look with the arm tilted further out -- see
-`tools/calibrate_table.py --outer`. That is a real calibration, not a rotation,
+`tools/calibrate_table.py --look outer`. That is a real calibration, not a rotation,
 because tilting the camera does not map the table to itself the way yawing does.
 The machinery to carry more than one calibrated look is already here (`stations()`
 takes as many as the calibration file holds); what is missing is the calibration
@@ -126,7 +126,7 @@ OBJECT_HEIGHT_M = 0.040
 OBJECT_SPAN_M = 0.040
 
 # What has to be wholly in shot differs by rung: the tag rung needs only the
-# printed square, change detection needs the entire silhouette -- which is why it
+# printed square, a silhouette rung needs the entire silhouette -- which is why it
 # reaches about 7 mm less far.
 TAG_SPAN_M = cfg.OBJECT_TAG_M
 
@@ -417,43 +417,43 @@ def frame_sides(matrix: np.ndarray) -> dict[str, str]:
     little turned: at the primary look the top row is the far edge, but nothing
     downstream should have to know that.
     """
-    width, height = cfg.WRIST_CAM_SIZE
-    middles = {
-        "top": (width / 2, 0.0), "bottom": (width / 2, height - 1.0),
-        "left": (0.0, height / 2), "right": (width - 1.0, height / 2),
-    }
-    on_table = {side: ws.apply(matrix, [pixel])[0] for side, pixel in middles.items()}
+    on_table = _edge_middles(matrix)
     radius = {side: math.hypot(*point) for side, point in on_table.items()}
     bearing = {side: math.atan2(point[1], point[0]) for side, point in on_table.items()}
     far = max(radius, key=radius.get)
     near = min(radius, key=radius.get)
-    across = [side for side in middles if side not in (far, near)]
+    across = [side for side in on_table if side not in (far, near)]
     # +y is left on the table, so the larger bearing is the left-hand side.
     left = max(across, key=bearing.get)
     right = next(side for side in across if side != left)
     return {"far": far, "near": near, "left": left, "right": right}
 
 
-def reach_of(matrix: np.ndarray) -> float:
-    """How far out, in metres from the base, the far edge of this look's picture lies."""
+def _edge_middles(matrix: np.ndarray) -> dict[str, np.ndarray]:
+    """Where the middle of each picture edge lands on the table, for one look."""
     width, height = cfg.WRIST_CAM_SIZE
-    sides = frame_sides(matrix)
     middles = {
         "top": (width / 2, 0.0), "bottom": (width / 2, height - 1.0),
         "left": (0.0, height / 2), "right": (width - 1.0, height / 2),
     }
-    return float(math.hypot(*ws.apply(matrix, [middles[sides["far"]]])[0]))
+    return {side: ws.apply(matrix, [pixel])[0] for side, pixel in middles.items()}
+
+
+def _edge_radius(matrix: np.ndarray, edge: str) -> float:
+    """How far from the base, in metres, this look's "far" or "near" picture
+    edge lies: the furthest or nearest of the edge middles, as in frame_sides()."""
+    radii = [math.hypot(*point) for point in _edge_middles(matrix).values()]
+    return float(max(radii) if edge == "far" else min(radii))
+
+
+def reach_of(matrix: np.ndarray) -> float:
+    """How far out, in metres from the base, the far edge of this look's picture lies."""
+    return _edge_radius(matrix, "far")
 
 
 def nearest_of(matrix: np.ndarray) -> float:
     """How close in, in metres from the base, the near edge of this look's picture lies."""
-    width, height = cfg.WRIST_CAM_SIZE
-    sides = frame_sides(matrix)
-    middles = {
-        "top": (width / 2, 0.0), "bottom": (width / 2, height - 1.0),
-        "left": (0.0, height / 2), "right": (width - 1.0, height / 2),
-    }
-    return float(math.hypot(*ws.apply(matrix, [middles[sides["near"]]])[0]))
+    return _edge_radius(matrix, "near")
 
 
 def hints(look: Look, clipped: list, calibrated: list[tuple[np.ndarray, Pose, str]],

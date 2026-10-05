@@ -43,20 +43,6 @@ def read_all(bot: Rosmaster) -> dict[int, int | None]:
     return arm.read_pose(bot, attempts=1)
 
 
-def read_pose(bot: Rosmaster) -> dict[int, int]:
-    """Joints that are readable AND inside their limits. Missing key = one or the other."""
-    pose = {}
-    for _ in range(3):
-        for sid, value in read_all(bot).items():
-            lo, hi = cfg.HARD_LIMITS[sid]
-            if value is not None and lo <= value <= hi:
-                pose[sid] = value
-        if len(pose) == len(cfg.JOINT_IDS):
-            break
-        time.sleep(0.05)
-    return pose
-
-
 def engage(bot: Rosmaster) -> None:
     """Re-stiffen, pulling any joint that has drifted out of range back inside.
 

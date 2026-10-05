@@ -12,6 +12,7 @@ import sys
 import urllib.error
 import urllib.request
 import wave
+from http.server import ThreadingHTTPServer
 
 import pytest
 
@@ -146,12 +147,12 @@ def make_wav(samples, rate=16000, channels=1, width=2):
     return out.getvalue()
 
 
-def test_a_wav_is_read_as_mono_floats():
-    samples, rate = voice.read_wav(make_wav([0, 16384, -32768, 32767], rate=22050))
-    assert rate == 22050 and samples == [0.0, 0.5, -1.0, 32767 / 32768]
-    samples, rate = voice.read_wav(make_wav([16384, 0, -16384, -16384], channels=2))
-    assert rate == 16000 and samples == [0.25, -0.5]   # the channels averaged
-    with pytest.raises(ValueError, match="16-bit"):
+def test_a_wav_is_read_as_floats():
+    samples, rate = voice.read_wav(make_wav([0, 16384, -32768, 32767], rate=48000))
+    assert rate == 48000 and samples == [0.0, 0.5, -1.0, 32767 / 32768]
+    with pytest.raises(ValueError, match="16-bit PCM mono only"):
+        voice.read_wav(make_wav([16384, 0, -16384, -16384], channels=2))
+    with pytest.raises(ValueError, match="16-bit PCM mono only"):
         voice.read_wav(make_wav([0, 1, 2], width=1))
     with pytest.raises(ValueError, match="not a WAV"):
         voice.read_wav(b"RIFF nonsense")
@@ -167,7 +168,7 @@ class Pretend:
         self.got = []
 
     def status(self):
-        return {"ready": True, "model": "pretend", "load_s": 0}
+        return {"ready": True, "load_s": 0}
 
     def text(self, samples, rate):
         self.got.append((len(samples), rate))
@@ -193,7 +194,7 @@ def post(url, body, kind):
 
 def test_the_console_hears_a_wav_and_answers_with_the_command():
     ears = Pretend()
-    port = start(serve.Server(("127.0.0.1", 0), serve.make_handler([], recognizer=ears)))
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler([], recognizer=ears)))
     base = f"http://127.0.0.1:{port}"
 
     status, reply = post(f"{base}/api/voice", make_wav([0] * 24000), "audio/wav")
@@ -218,7 +219,7 @@ def test_the_console_hears_a_wav_and_answers_with_the_command():
 
 
 def test_without_a_model_the_console_says_how_to_get_one_and_goes_on():
-    port = start(serve.Server(("127.0.0.1", 0), serve.make_handler([], recognizer=Missing())))
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler([], recognizer=Missing())))
     base = f"http://127.0.0.1:{port}"
     status, reply = post(f"{base}/api/voice", make_wav([0] * 1600), "audio/wav")
     assert status == 503 and reply == {"error": "no speech model", "fix": voice.FETCH}

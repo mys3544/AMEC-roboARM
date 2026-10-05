@@ -25,16 +25,15 @@ class CameraError(RuntimeError):
     """The camera gave us nothing usable."""
 
 
-def open_capture(device: int, size: tuple[int, int] | None = cfg.WRIST_CAM_SIZE):
-    """VideoCapture on `device` at `size`, with the fitted camera's settings applied
-    (cfg.WRIST_CAM_PROPS: the C930e's focus is fixed, see there)."""
+def open_capture(device: int):
+    """VideoCapture on `device` at cfg.WRIST_CAM_SIZE, with the fitted camera's
+    settings applied (cfg.WRIST_CAM_PROPS: the C930e's focus is fixed, see there)."""
     capture = cv2.VideoCapture(device, cv2.CAP_V4L2)
     props = dict(cfg.WRIST_CAM_PROPS)
     if "CAP_PROP_FOURCC" in props:  # before the size: the sizes on offer depend on it
         capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*props.pop("CAP_PROP_FOURCC")))
-    if size:
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
+    capture.set(cv2.CAP_PROP_FRAME_WIDTH, cfg.WRIST_CAM_SIZE[0])
+    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.WRIST_CAM_SIZE[1])
     for name, value in props.items():
         capture.set(getattr(cv2, name), value)
     return capture
@@ -77,9 +76,8 @@ class Stream:
     after the arm has stopped, then return the freshest.
     """
 
-    def __init__(self, device: int | None = None, size: tuple[int, int] | None = None):
+    def __init__(self, device: int | None = None):
         self.device = cfg.WRIST_CAM if device is None else device
-        self.size = size or cfg.WRIST_CAM_SIZE
         self._frame = None
         self._seq = 0
         self._cond = threading.Condition()
@@ -102,7 +100,7 @@ class Stream:
             self._thread = None
 
     def _open(self):
-        return open_capture(self.device, self.size)
+        return open_capture(self.device)
 
     def _run(self) -> None:
         capture = self._open()
@@ -157,13 +155,12 @@ class Stream:
                 return None, seen
             return self._frame, self._seq
 
-    def settled(self, settle_s: float = 1.2, count: int = 1) -> list:
-        """The freshest `count` frames after waiting `settle_s` for exposure to
-        settle. Raises CameraError if the camera is not producing anything."""
+    def settled(self, settle_s: float = 1.2):
+        """The first new frame after waiting `settle_s` for exposure to settle.
+        Raises CameraError if the camera is not producing anything."""
         _frame, seen = self.latest()
         deadline = time.monotonic() + settle_s
-        frames: list = []
-        while len(frames) < count:
+        while True:
             frame, seen = self.wait(seen, timeout=1.0)
             if frame is None:
                 if self.error or time.monotonic() > deadline + 3.0:
@@ -172,8 +169,7 @@ class Stream:
                     )
                 continue
             if time.monotonic() >= deadline:
-                frames.append(frame)
-        return frames
+                return frame
 
     @property
     def fps(self) -> float:
@@ -184,9 +180,9 @@ class Stream:
             return (len(self._stamps) - 1) / span if span > 0 else 0.0
 
 
-def grab(count: int = 1, device: int | None = None) -> list:
+def grab(count: int = 1) -> list:
     """Return `count` frames, after discarding the ones taken while exposure settles."""
-    index = cfg.WRIST_CAM if device is None else device
+    index = cfg.WRIST_CAM
     capture = open_capture(index)
     undistort = Undistort()
     frames = []

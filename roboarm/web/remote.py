@@ -66,8 +66,8 @@ class RemoteArm:
     """roboarm.arm.Arm's interface, executed on the robot.
 
     Every method the bridge ALLOWS (read, move_to, home, set_gripper, grasped,
-    hold, release, engage, ...) is one POST, resolved by `__getattr__`; only the
-    lifecycle and the battery need spelling out.
+    hold, release, engage, battery, ...) is one POST, resolved by `__getattr__`;
+    only the lifecycle needs spelling out.
     """
 
     def __init__(self, url: str):
@@ -123,13 +123,6 @@ class RemoteArm:
                     _request(self.url + "/arm/interrupt", {}, timeout=5.0)
                 return
 
-    @property
-    def bot(self) -> RemoteArm:
-        return self
-
-    def get_battery_voltage(self) -> float:
-        return float(self._call("battery"))
-
 
 class RemoteStream(camera.Stream):
     """A camera.Stream whose frames arrive as the bridge's MJPEG."""
@@ -179,7 +172,3 @@ def calibration(url: str):
     if "error" in reply and "homography" not in reply:
         raise FileNotFoundError(reply["error"])
     return ws.parse(reply)
-
-
-def health(url: str) -> dict:
-    return _request(url.rstrip("/") + "/health", timeout=5.0)

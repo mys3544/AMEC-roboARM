@@ -113,9 +113,7 @@ and the `home` / `survey pose` presets. Manual moves are refused while an
 automatic job is running -- that is deliberate.
 
 **Automatic** mode runs the jobs: `sweep & detect` (yaw the base through a few
-stations and range everything it sees), `pick & place`, `go to survey pose`, and
-`capture background` (a photo of the empty table, which the colour detector
-subtracts -- retake it if the lighting changes).
+stations and range everything it sees), `pick & place` and `go to survey pose`.
 
 The **view** selector switches the live image between `raw`, `detect`, `mask`
 and `edges`; the **detector** selector picks which rung of the ladder is used.
@@ -123,16 +121,12 @@ The name in the menu and the name the API takes are not always the same -- the
 API value is the one in backticks:
 
 * `auto` -- tags, colour and the neural service together, best first. Needs no
-  tag, no background photo and no declared size. Use this unless you are
+  tag and no declared size. Use this unless you are
   studying one rung in particular.
-* `markers` (the menu says *tags*) -- an ArUco marker. The most accurate. Given
-  an empty-table photo it fuses the tag's position with the silhouette's
-  measured size; without one the size comes from the tag's own magnification,
-  and anything wider than its tag is refused.
+* `markers` (the menu says *tags*) -- an ArUco marker. The most accurate. The
+  size comes from the tag's own magnification.
 * `colour` -- a coloured blob, read on the table plane. Wants a saturated
   object.
-* `changes` -- whatever is on the table that was not in the empty-table photo.
-  Run `capture background` first, or this one fails outright.
 * `yolo` (the menu says *neural*) -- a prompt-free YOLOE-26 segmentation model
   (YOLOE built on YOLO26, `yoloe-26s-seg-pf`) in its own container on the
   robot. Its *label* is nonsense ("stop sign"); the outline is what counts. An

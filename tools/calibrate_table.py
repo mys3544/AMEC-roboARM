@@ -3,7 +3,7 @@
 
     ... calibrate_table.py                 # fit and save the PRIMARY look
     ... calibrate_table.py --verify        # drive the fingertip to a board corner
-    ... calibrate_table.py --look outer    # fit the OUTER look as well (--outer works too)
+    ... calibrate_table.py --look outer    # fit the OUTER look as well
     ... calibrate_table.py --look near --yaws=-20,-10,0,10,20   # the NEAR look
     ... calibrate_table.py --look outer --verify
 
@@ -39,7 +39,6 @@ placement is off, and only the arm can tell us that.
 """
 
 import argparse
-import math
 import sys
 import time
 
@@ -51,9 +50,17 @@ from roboarm import kinematics as kin
 from roboarm import workspace as ws
 from roboarm.arm import Arm, ArmError
 
-SURVEY_FWD = 0.150
-SURVEY_LIFT = 0.090
-
+# Each look's fingertip target: (forward, lift above the table, tool pitch), the
+# pitch None to let solve() search for one. The pose is solved with the default
+# (closed) tool length and THEN the gripper is opened. Its exact height does not
+# matter -- the homography absorbs wherever the camera actually ended up -- but
+# its REPEATABILITY does, and so does never changing it, because a saved
+# calibration is only valid from the joint angles it was taken at: solving with
+# the open tool would move the pose whenever the gripper table is re-measured
+# and silently invalidate the saved fit.
+#
+# The PRIMARY look: 150 mm forward, 90 mm up.
+#
 # The OUTER look. Chosen 2026-09-10 by searching fingertip targets for the one that
 # carries the lens furthest from the base while keeping the tool within 10 degrees
 # of straight down (past that the camera starts looking at the room rather than the
@@ -74,63 +81,32 @@ SURVEY_LIFT = 0.090
 # J2 floor at 5 and tilt allowed to 20 deg: 190 fwd / 125 up -> lens ~241 mm up,
 # nadir ~155, near edge ~185 (overlaps the primary band), and a 40 mm cube stays
 # whole to ~260 mm by the model, past the arm's reach. Fit it with --yaws.
-OUTER_FWD = 0.190
-OUTER_LIFT = 0.125
-
-# What the outer look is called in the calibration file. sweep.stations() rings
-# every look it finds, so the name is only for humans and for re-fitting in place.
-OUTER_NAME = "outer"
-
+#
 # The NEAR look, 2026-09-22 (see the module docstring). Searched the same way as
 # the outer: fingertip targets 20..150 mm out, 40..230 mm up, tool 150..180 deg,
 # inside the safe limits and clear of the mast, ranked by how near the picture's
 # near edge lands with the lens at least 150 mm up. 100/110 sees 42..151 mm but
-# sits at J3 = 1; 110/110 straight down is the next and keeps J3 at 11.
-NEAR_FWD = 0.110
-NEAR_LIFT = 0.110
-NEAR_NAME = "near"
-LOOKS = ("primary", OUTER_NAME, NEAR_NAME)
-
-
-def survey_pose() -> dict[int, int]:
-    """The pose the homography is fitted from. Its exact height does not matter --
-    the homography absorbs wherever the camera actually ended up -- but its
-    REPEATABILITY does, and so does never changing it, because a saved calibration
-    is only valid from the joint angles it was taken at. So this deliberately solves
-    with the default (closed) tool length even though it then opens the gripper:
-    changing that would move the pose and silently invalidate the saved fit."""
-    pose, _pitch = kin.solve(SURVEY_FWD, 0.0, -cfg.TABLE_BELOW_PLATE + SURVEY_LIFT)
-    pose[6] = cfg.GRIPPER_OPEN
-    return pose
-
-
-def outer_pose() -> dict[int, int]:
-    """The second look, further out. Same reasoning as survey_pose() about the
-    closed tool length: solved closed, then the gripper is opened, so that the pose
-    never moves when the gripper table is re-measured."""
-    pose, _pitch = kin.solve(OUTER_FWD, 0.0, -cfg.TABLE_BELOW_PLATE + OUTER_LIFT)
-    pose[6] = cfg.GRIPPER_OPEN
-    return pose
-
-
-def near_pose() -> dict[int, int]:
-    """The third look, close in and straight down. Solved with the tool at 180
-    (down) rather than solve()'s pitch search, so the picture is as square to
-    the table as the arm can hold it; the closed tool length, as above."""
-    pose = kin.inverse(NEAR_FWD, 0.0, -cfg.TABLE_BELOW_PLATE + NEAR_LIFT, 180.0)
-    pose[6] = cfg.GRIPPER_OPEN
-    return pose
+# sits at J3 = 1; 110/110 straight down is the next and keeps J3 at 11. Solved
+# with the tool at 180 (down) rather than a pitch search, so the picture is as
+# square to the table as the arm can hold it.
+#
+# The names are what the calibration file calls each look. sweep.stations() rings
+# every look it finds, so they are only for humans and for re-fitting in place.
+LOOK_TARGETS = {
+    "primary": (0.150, 0.090, None),
+    "outer": (0.190, 0.125, None),
+    "near": (0.110, 0.110, 180.0),
+}
+LOOKS = tuple(LOOK_TARGETS)
 
 
 def look_pose(name: str) -> dict[int, int]:
-    return {"primary": survey_pose, OUTER_NAME: outer_pose, NEAR_NAME: near_pose}[name]()
-
-
-def _spun(points: np.ndarray, degrees: float) -> np.ndarray:
-    """Table points turned about the base by `degrees` (+ = left)."""
-    turn = math.radians(degrees)
-    spin = np.array([[math.cos(turn), -math.sin(turn)], [math.sin(turn), math.cos(turn)]])
-    return np.asarray(points, dtype=float).reshape(-1, 2) @ spin.T
+    """The pose a look's homography is fitted from (see LOOK_TARGETS)."""
+    fwd, lift, pitch = LOOK_TARGETS[name]
+    pose, _pitch = kin.solve(fwd, 0.0, -cfg.TABLE_BELOW_PLATE + lift,
+                             pitches=kin.GRASP_PITCHES if pitch is None else (pitch,))
+    pose[6] = cfg.GRIPPER_OPEN
+    return pose
 
 
 def do_fit(arm: Arm, look: str = "primary", yaws: tuple[float, ...] = (0.0,)) -> int:
@@ -164,7 +140,7 @@ def do_fit(arm: Arm, look: str = "primary", yaws: tuple[float, ...] = (0.0,)) ->
         print(f"yaw {yaw:+5.1f}: {len(pixels)} marker corners ({len(pixels) // 4} whole markers)")
         if len(pixels):
             pooled_px.append(pixels)
-            pooled_tb.append(_spun(table, -yaw))
+            pooled_tb.append(ws.apply(sweep.rotate(np.eye(3), -yaw), table))
     if reached is None:
         reached = arm.move_to(pose, speed_dps=15, repeatable=True)
     # SAVED IS THE COMMAND, not the readback: the sweep drives to the saved pose,
@@ -264,13 +240,11 @@ def main() -> int:
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--look", choices=LOOKS, default="primary",
                         help="which look to fit (or verify): primary, outer or near")
-    parser.add_argument("--outer", action="store_true",
-                        help="the same as --look outer")
     parser.add_argument("--yaws", default="0",
                         help="comma-separated base yaws (deg, + = left) to pool the fit "
                              "over, e.g. -24,-12,0,12,24 for a look that sees one marker")
     args = parser.parse_args()
-    look = OUTER_NAME if args.outer else args.look
+    look = args.look
     yaws = tuple(float(v) for v in args.yaws.split(",") if v.strip())
     if 0.0 not in yaws:
         yaws = (0.0,) + yaws

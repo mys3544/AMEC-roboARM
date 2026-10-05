@@ -24,11 +24,10 @@ stream open does not block the JSON calls the same page is making.
     POST /api/arm/release       torque off (the arm sags)
     POST /api/arm/engage        torque on
     POST /api/arm/connect       (re)open the serial port
-    POST /api/auto/start        {"job": "sweep"|"pick"|"place"|"background"|"survey", ...params}
+    POST /api/auto/start        {"job": "sweep"|"pick"|"pickall"|"place"|"survey", ...params}
     POST /api/auto/oneclick     {detector, object_mm, job?}: set up, go automatic, pick & drop at
                                 cfg.DROP_POSE; job "pickall" clears the whole table
     POST /api/auto/stop
-    POST /api/calibration/reload
     GET  /api/metrics?events=1  where the time goes: per-stage statistics, and the finished
                                 job runs with their breakdown (roboarm.metrics)
     POST /api/metrics/reset
@@ -58,14 +57,18 @@ BOUNDARY = "roboarmframe"
 JPEG_QUALITY = 80
 
 
-def send_json(handler: BaseHTTPRequestHandler, payload, status: int = 200) -> None:
-    body = json.dumps(payload).encode()
+def send_bytes(handler: BaseHTTPRequestHandler, body: bytes, ctype: str,
+               status: int = 200) -> None:
     handler.send_response(status)
-    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Type", ctype)
     handler.send_header("Content-Length", str(len(body)))
     handler.send_header("Cache-Control", "no-store")
     handler.end_headers()
     handler.wfile.write(body)
+
+
+def send_json(handler: BaseHTTPRequestHandler, payload, status: int = 200) -> None:
+    send_bytes(handler, json.dumps(payload).encode(), "application/json", status)
 
 
 def send_mjpeg(handler: BaseHTTPRequestHandler, wait_frame,
@@ -138,8 +141,6 @@ def _routes(session: Session) -> dict:
         ("POST", "/api/auto/oneclick"): lambda p: session.one_click(
             p.get("detector") or "auto", p.get("object_mm"), p.get("job") or "pick").snapshot(),
         ("POST", "/api/auto/stop"): lambda p: (session.stop(), {"ok": True})[1],
-        ("POST", "/api/calibration/reload"): lambda p: (
-            session.reload_calibration(), session.snapshot()["calibration"])[1],
         ("GET", "/api/metrics"): lambda p: metrics.snapshot(events=p.get("events", "1") != "0"),
         ("POST", "/api/metrics/reset"): lambda p: (metrics.reset(), {"ok": True})[1],
     }
@@ -158,13 +159,7 @@ class Handler(BaseHTTPRequestHandler):
         if not path.is_file():
             send_json(self, {"error": "not found"}, 404)
             return
-        body = path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        send_bytes(self, path.read_bytes(), content_type)
 
     def _params(self) -> dict:
         length = int(self.headers.get("Content-Length") or 0)
@@ -234,13 +229,7 @@ class Handler(BaseHTTPRequestHandler):
         if not ok:
             send_json(self, {"error": "could not encode the frame"}, 500)
             return
-        body = jpeg.tobytes()
-        self.send_response(200)
-        self.send_header("Content-Type", "image/jpeg")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
-        self.end_headers()
-        self.wfile.write(body)
+        send_bytes(self, jpeg.tobytes(), "image/jpeg")
 
     def _stream(self, view: str | None = None) -> None:
         send_mjpeg(self, lambda seen, timeout=1.0: self.session.wait_frame(seen, timeout, view),

@@ -157,10 +157,7 @@ def _resolve_model(path: str) -> str:
 def _load_model(path: str):
     # YOLOE weights need the YOLOE loader; anything else is a plain YOLO.
     if "yoloe" in os.path.basename(path).lower():
-        try:
-            from ultralytics import YOLOE as Loader
-        except ImportError:
-            from ultralytics import YOLO as Loader
+        from ultralytics import YOLOE as Loader
     else:
         from ultralytics import YOLO as Loader
     try:

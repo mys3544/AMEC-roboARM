@@ -7,5 +7,16 @@ is tested in test_cameras.py, in fresh interpreters.
 """
 
 import os
+import time
 
 os.environ["ROBOARM_CAMERA"] = "sonix"
+
+
+def _wait(condition, timeout: float = 5.0):
+    """Poll `condition` until it holds; the web and bridge tests drive threads."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if condition():
+            return True
+        time.sleep(0.02)
+    raise AssertionError("timed out waiting")

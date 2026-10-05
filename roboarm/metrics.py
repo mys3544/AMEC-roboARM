@@ -5,7 +5,7 @@
     metrics.record("vision.raised.server", 0.031)   # a duration measured elsewhere
 
 Every duration lands in the session-wide statistics for its name -- count,
-total, mean, p50, p90, max, last (the panel's Timing card, GET /api/metrics).
+total, mean, p90, max (the panel's Timing card, GET /api/metrics).
 While a RUN is open on a thread -- Session._run_job opens one round every job
 -- each span on that thread also goes into the run's timeline, so a finished
 run says where its time went from start to finish, and how much of it no span
@@ -28,7 +28,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import json
-import math
+import statistics
 import threading
 import time
 from pathlib import Path
@@ -42,41 +42,35 @@ EVENTS_KEPT = 5000  # timeline entries kept per run (the ride polls the arm ~10 
 
 
 class _Stage:
-    __slots__ = ("count", "last", "max", "recent", "total")
+    __slots__ = ("count", "max", "recent", "total")
 
     def __init__(self) -> None:
         self.count = 0
         self.total = 0.0
         self.max = 0.0
-        self.last = 0.0
         self.recent: collections.deque[float] = collections.deque(maxlen=RECENT)
 
     def add(self, seconds: float) -> None:
         self.count += 1
         self.total += seconds
         self.max = max(self.max, seconds)
-        self.last = seconds
         self.recent.append(seconds)
 
     def summary(self) -> dict:
-        ordered = sorted(self.recent)
         return {
             "count": self.count,
             "total_s": round(self.total, 3),
             "mean_ms": round(1000 * self.total / self.count, 1),
-            "p50_ms": round(1000 * _percentile(ordered, 50), 1),
-            "p90_ms": round(1000 * _percentile(ordered, 90), 1),
+            "p90_ms": round(1000 * _p90(list(self.recent)), 1),
             "max_ms": round(1000 * self.max, 1),
-            "last_ms": round(1000 * self.last, 1),
         }
 
 
-def _percentile(ordered: list[float], p: float) -> float:
-    if not ordered:
-        return 0.0
-    k = (len(ordered) - 1) * p / 100
-    lo, hi = math.floor(k), math.ceil(k)
-    return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
+def _p90(samples: list[float]) -> float:
+    # quantiles() wants two samples on Python 3.10, the robot's.
+    if len(samples) < 2:
+        return samples[0] if samples else 0.0
+    return statistics.quantiles(samples, n=10, method="inclusive")[-1]
 
 
 class Registry:

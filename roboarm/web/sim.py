@@ -114,13 +114,6 @@ class SimArm:
     def __exit__(self, *exc) -> None:
         self._connected = False
 
-    @property
-    def bot(self) -> SimArm:
-        return self
-
-    def get_battery_voltage(self) -> float:
-        return self.voltage
-
     def battery(self) -> float:
         return self.voltage
 
@@ -312,12 +305,11 @@ class SimStream(camera.Stream):
     station, because table coordinates mean nothing there.
     """
 
-    def __init__(self, arm: SimArm, fps: float = 8.0,
-                 calibrated: list[tuple[np.ndarray, Pose, str]] | None = None):
+    def __init__(self, arm: SimArm, fps: float = 8.0):
         super().__init__(device=-1)
         self.arm = arm
         self.frame_period = 1.0 / fps
-        self.calibrated = calibrated or calibration()
+        self.calibrated = calibration()
         self._rng = np.random.default_rng(0)
 
     def _run(self) -> None:
@@ -325,17 +317,17 @@ class SimStream(camera.Stream):
             self.publish(self.render())
             time.sleep(self.frame_period)
 
-    def settled(self, settle_s: float = 1.2, count: int = 1) -> list:
+    def settled(self, settle_s: float = 1.2):
         """A frame asked for with no settle time is rendered right now, from the
         pose the arm is at this instant. The robot's camera hands over a frame
         at most 60 ms old (16 fps), under a degree of yaw during a scan; the
         simulated arm sweeps a station in that time, which would make its
         frames far staler than the real ones."""
         if settle_s > 0:
-            return super().settled(settle_s, count)
+            return super().settled(settle_s)
         frame = self.render()
         self.publish(frame)
-        return [frame] * count
+        return frame
 
     def render(self):
         width, height = cfg.WRIST_CAM_SIZE

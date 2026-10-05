@@ -6,21 +6,17 @@
 #   sudo bash tools/display_setup.sh uninstall [--restart]
 #
 # install: puts tools/20-headless-virtual.conf in /etc/X11/xorg.conf.d and
-#   tools/monitors.xml in /etc/xdg (Mutter's system-wide fallback), restores
-#   the stock /etc/X11/xorg.conf if an earlier version edited it, and drops the
-#   earlier DP-0 headless entry from the per-user monitors.xml files. PORT is
+#   tools/monitors.xml in /etc/xdg (Mutter's system-wide fallback). PORT is
 #   the X name of the physical DisplayPort head, DP-1 on this robot (see the
 #   .conf). Nothing takes effect until the display manager restarts: pass
 #   --restart, or `sudo systemctl restart gdm3`, or reboot. That ends the
 #   current desktop session; the docker containers are not affected.
 # check: prints what the kernel, Xorg, Mutter and the VNC ports see. Run it
 #   after the restart, once with nothing plugged in and once with the monitor.
-# uninstall: removes both files, restores the stock xorg.conf.
+# uninstall: removes both files.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-XORG_CONF=/etc/X11/xorg.conf
-BACKUP=/etc/X11/xorg.conf.backup-roboarm
 SNIPPET=/etc/X11/xorg.conf.d/20-headless-virtual.conf
 SYSTEM_MONITORS=/etc/xdg/monitors.xml
 MARK="RoboARM"
@@ -42,48 +38,9 @@ as_login_user() {
     fi
 }
 
-restore_vendor_xorg_conf() {
-    grep -q "$MARK" "$XORG_CONF" 2>/dev/null || return 0
-    if [ -f "$BACKUP" ]; then
-        cp "$BACKUP" "$XORG_CONF"
-        echo "restored the stock $XORG_CONF from $BACKUP"
-    else
-        sed -i "/^# --- headless support (added for the $MARK project)/,/\"ModeValidation\"/d" "$XORG_CONF"
-        echo "removed the $MARK block from $XORG_CONF"
-    fi
-}
-
-drop_headless_user_entries() {
-    # Headless configurations now come from $SYSTEM_MONITORS. An entry whose
-    # monitors are all vendor "unknown" in a per-user file is the earlier DP-0
-    # attempt; it never matches again and only confuses the next reader.
-    local f
-    for f in "$LOGIN_HOME/.config/monitors.xml" /var/lib/gdm3/.config/monitors.xml; do
-        [ -f "$f" ] || continue
-        python3 - "$f" <<'EOF'
-import sys
-import xml.etree.ElementTree as ET
-
-path = sys.argv[1]
-tree = ET.parse(path)
-root = tree.getroot()
-dropped = 0
-for conf in list(root.findall("configuration")):
-    specs = conf.findall(".//monitorspec")
-    if specs and all(s.findtext("vendor") == "unknown" for s in specs):
-        root.remove(conf)
-        dropped += 1
-if dropped:
-    tree.write(path)  # same inode, so the owner stays the same
-    print(f"dropped {dropped} headless configuration(s) from {path}")
-EOF
-    done
-}
-
 install() {
     need_root
     local port=$1
-    restore_vendor_xorg_conf
     mkdir -p "$(dirname "$SNIPPET")"
     sed -E "s/^(\s*Option\s+\"ConnectedMonitor\"\s+\")DP-1\"/\1$port\"/" \
         "$HERE/20-headless-virtual.conf" > "$SNIPPET"
@@ -93,7 +50,6 @@ install() {
     fi
     sed "s#<connector>DP-1</connector>#<connector>$port</connector>#" \
         "$HERE/monitors.xml" > "$SYSTEM_MONITORS"
-    drop_headless_user_entries
     echo "installed $SNIPPET and $SYSTEM_MONITORS, forcing $port"
 }
 
@@ -106,7 +62,6 @@ uninstall() {
     if [ -f "$SYSTEM_MONITORS.backup-roboarm" ]; then
         mv "$SYSTEM_MONITORS.backup-roboarm" "$SYSTEM_MONITORS"
     fi
-    restore_vendor_xorg_conf
     echo "removed; the desktop is stock again once the display manager restarts"
 }
 
@@ -123,13 +78,6 @@ check() {
     for f in "$SNIPPET" "$SYSTEM_MONITORS"; do
         if [ -f "$f" ]; then echo "present: $f"; else echo "absent:  $f"; fi
     done
-    if [ ! -f "$XORG_CONF" ]; then
-        echo "absent:  $XORG_CONF"
-    elif grep -q "$MARK" "$XORG_CONF"; then
-        echo "$XORG_CONF still carries the old $MARK block (install restores it)"
-    else
-        echo "$XORG_CONF is stock"
-    fi
     grep -E 'Option\s+"ConnectedMonitor"' "$SNIPPET" 2>/dev/null
 
     echo "== Xorg log (what the driver decided)"
@@ -196,7 +144,7 @@ case $cmd in
     install) install "$port" ;;
     uninstall) uninstall ;;
     check) check; exit 0 ;;
-    *) sed -n '2,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
+    *) sed -n '2,16p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
 if [ "$restart" -eq 1 ]; then
     echo "restarting gdm3 (this ends the current desktop session)"

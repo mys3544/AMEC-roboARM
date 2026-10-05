@@ -31,51 +31,9 @@ def target(width_m=0.030, length_m=0.030, x=GOOD_X, y=GOOD_Y, label="test"):
                          angle_deg=0.0, label=label)
 
 
-def scene(boxes):
-    """A black table with white boxes on it. Returns (frame, background)."""
-    background = np.zeros((480, 640, 3), np.uint8)
-    frame = background.copy()
-    for x, y, w, h in boxes:
-        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 255, 255), -1)
-    return frame, background
-
-
 # ---------------------------------------------------------------- detection --
-def test_a_box_on_the_table_is_found_at_the_right_size():
-    frame, background = scene([(200, 150, 30, 40)])
-    found = detect.changes(frame, background, MM_PER_PIXEL)
-    assert len(found) == 1
-    assert found[0].width_m == pytest.approx(0.030, abs=0.003)
-    assert found[0].length_m == pytest.approx(0.040, abs=0.003)
-    # Centre of the drawn box, in "metres" under this deliberately trivial mapping.
-    assert found[0].x == pytest.approx(0.215, abs=0.003)
-    assert found[0].y == pytest.approx(0.170, abs=0.003)
-
-
-def test_an_unchanged_table_yields_nothing():
-    _frame, background = scene([])
-    assert detect.changes(background, background, MM_PER_PIXEL) == []
-
-
-def test_several_objects_are_reported_nearest_first():
-    frame, background = scene([(400, 100, 30, 30), (100, 100, 30, 30), (250, 100, 30, 30)])
-    found = detect.changes(frame, background, MM_PER_PIXEL)
-    assert len(found) == 3
-    assert [round(t.x, 3) for t in found] == sorted(round(t.x, 3) for t in found)
-
-
-def test_speckle_is_not_reported_as_an_object():
-    """Sensor noise survives thresholding; it must not survive the morphology."""
-    frame, background = scene([])
-    rng = np.random.default_rng(0)
-    for x, y in rng.integers(20, 400, size=(60, 2)):
-        frame[y, x] = 255
-    assert detect.changes(frame, background, MM_PER_PIXEL) == []
-
-
 def test_something_far_too_small_is_seen_but_refused():
-    frame, background = scene([(200, 150, 16, 16)])
-    found = detect.changes(frame, background, MM_PER_PIXEL)
+    found = detect.coloured(colour_scene([(200, 150, 16, 16)]), MM_PER_PIXEL)
     assert len(found) == 1, "it should be detected..."
     assert not found[0].graspable, "...and then refused on size"
     assert "too thin" in found[0].why_not()
@@ -83,13 +41,11 @@ def test_something_far_too_small_is_seen_but_refused():
 
 def test_annotation_puts_the_marker_back_where_the_object_was():
     """Round-trips through the inverse homography, so a mapping error would show."""
-    frame, background = scene([(200, 150, 30, 30)])
-    found = detect.changes(frame, background, MM_PER_PIXEL)
-    drawn = detect.annotate(frame, MM_PER_PIXEL, found)
+    frame = colour_scene([(200, 150, 30, 30)])
+    drawn = detect.annotate(frame, MM_PER_PIXEL, detect.coloured(frame, MM_PER_PIXEL))
     assert drawn.shape == frame.shape
     # The green circle lands on the box, not somewhere else in the image.
-    patch = drawn[150:181, 200:231]
-    assert (patch[:, :, 1] > 150).any()
+    assert (drawn[150:181, 200:231] == (0, 200, 0)).all(axis=2).any()
 
 
 # ----------------------------------------------------------------- planning --
@@ -237,80 +193,6 @@ def test_the_squeeze_is_relaxed_rather_than_left_at_full_travel():
     assert 0 < grasp.SQUEEZE_DEG < cfg.READBACK_TOLERANCE_DEG * 3
 
 
-# ------------------------------------------------------------- shadows --
-def shadowed_scene(box, shadow, shade=0.55):
-    """White paper, a coloured box, and a soft shadow beside it.
-
-    The shadow is the background SCALED DOWN in brightness, which is what a real one
-    is -- it must not be a flat grey patch, or the test would pass on a filter that
-    only rejects one specific colour.
-    """
-    background = np.full((480, 640, 3), 235, np.uint8)
-    frame = background.copy()
-    x, y, w, h = shadow
-    frame[y:y + h, x:x + w] = (background[y:y + h, x:x + w] * shade).astype(np.uint8)
-    x, y, w, h = box
-    cv2.rectangle(frame, (x, y), (x + w, y + h), (200, 90, 30), -1)  # a blue-ish box
-    return frame, background
-
-
-def test_a_shadow_is_not_reported_as_part_of_the_object():
-    """The failure that stopped a real pick: a 40 mm cube measured 55 x 113 mm and
-    was refused as wider than the gripper opens -- rejected on its own shadow."""
-    frame, background = shadowed_scene(box=(200, 150, 40, 40), shadow=(200, 190, 40, 70))
-    found = detect.changes(frame, background, MM_PER_PIXEL)
-    assert len(found) == 1
-    assert found[0].length_m == pytest.approx(0.040, abs=0.008), "the box, not box+shadow"
-    assert found[0].graspable
-
-
-def test_the_shadow_would_have_ruined_it_without_the_filter():
-    """Guards the guard: if the scene were not actually shadowed, the test above
-    would pass for the wrong reason."""
-    frame, background = shadowed_scene(box=(200, 150, 40, 40), shadow=(200, 190, 40, 70))
-    lit = detect.foreground(frame, background)
-    naive = cv2.absdiff(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),
-                        cv2.cvtColor(background, cv2.COLOR_BGR2GRAY))
-    assert (naive > detect.CHANGE_THRESHOLD).sum() > lit.sum() / 255 * 1.5
-
-
-def test_a_dark_object_survives_the_shadow_filter():
-    """Shadows dim; they do not blacken. An object darker than SHADOW_DARKEST is
-    kept, which is the only thing protecting a colourless dark object."""
-    background = np.full((480, 640, 3), 235, np.uint8)
-    frame = background.copy()
-    cv2.rectangle(frame, (200, 150), (240, 190), (20, 20, 20), -1)
-    found = detect.changes(frame, background, MM_PER_PIXEL)
-    assert len(found) == 1
-    assert found[0].graspable
-
-
-def test_a_brighter_room_is_not_a_table_full_of_objects():
-    """The reference photo ages. Measured: bare paper read 12% brighter than its own
-    reference a few hours later, which widens every silhouette."""
-    background = np.full((480, 640, 3), 190, np.uint8)
-    brighter = np.full((480, 640, 3), 214, np.uint8)   # the 1.12 actually measured
-    assert detect.light_scale(brighter, background) == pytest.approx(1.12, abs=0.02)
-    assert detect.changes(brighter, background, MM_PER_PIXEL) == []
-
-
-def test_brightness_matching_does_not_hide_a_real_object():
-    background = np.full((480, 640, 3), 190, np.uint8)
-    frame = np.full((480, 640, 3), 214, np.uint8)
-    cv2.rectangle(frame, (200, 150), (240, 190), (200, 90, 30), -1)
-    found = detect.changes(frame, background, MM_PER_PIXEL)
-    assert len(found) == 1
-    assert found[0].width_m == pytest.approx(0.040, abs=0.006)
-
-
-def test_light_scale_ignores_the_objects_themselves():
-    """Median, not mean: a big dark object must not drag the estimate down."""
-    background = np.full((480, 640, 3), 200, np.uint8)
-    frame = background.copy()
-    cv2.rectangle(frame, (0, 0), (250, 250), (10, 10, 10), -1)   # a sixth of the frame
-    assert detect.light_scale(frame, background) == pytest.approx(1.0, abs=0.02)
-
-
 # ------------------------------------------------- reaching a point, not a pose --
 # MEASURED on the robot 2026-09-10 at 176 mm reach, tool 10 degrees off vertical:
 # the joints land within ONE degree of the commanded pose -- converged by any
@@ -384,7 +266,7 @@ def test_reaching_a_point_fixes_the_height_too():
     z = -cfg.TABLE_BELOW_PLATE + grasp.GRASP_HEIGHT_M
     _pose, pitch = kin.solve(x, y, z, gripper=opening)
     arm = SaggingArm()
-    grasp._reach_to(arm, x, y, z, pitch, opening, speed_dps=8, passes=2)
+    grasp._reach_to(arm, x, y, z, pitch, opening, speed_dps=8)
     assert reached(arm, opening)[2] == pytest.approx(z, abs=0.003)
 
 
@@ -424,10 +306,9 @@ def test_correcting_off_the_edge_of_the_workspace_stops_rather_than_raising():
 
 
 # ------------------------------------------------------------ the colour rung --
-# The rung that needs neither an empty-table photograph nor the tag facing up. It
-# earned its place on 2026-09-10, when the box was knocked onto its side mid-demo:
-# the tag went face-down, and change detection cannot sweep a ring because its
-# background is per-station. Colour could still find it from every station.
+# The rung that does not need the tag facing up. It earned its place on
+# 2026-09-10, when the box was knocked onto its side mid-demo: the tag went
+# face-down, and colour could still find it from every station.
 
 def colour_scene(boxes, bgr=(190, 60, 40)):
     """A near-neutral table with strongly coloured boxes on it.
@@ -475,32 +356,6 @@ def test_two_boxes_come_back_nearest_first():
     assert len(found) == 2
     first, second = found
     assert math.hypot(first.x, first.y) < math.hypot(second.x, second.y)
-
-
-def test_standing_above_the_table_is_corrected_towards_the_nadir():
-    """Same relation as _unlift, for an object that cannot measure its own size."""
-    frame = colour_scene([(300, 200, 40, 40)])
-    nadir = (0.100, 0.100)
-    flat = detect.coloured(frame, MM_PER_PIXEL)[0]
-    lifted = detect.coloured(frame, MM_PER_PIXEL, nadir=nadir, height_m=0.028)[0]
-    assert (math.dist((lifted.x, lifted.y), nadir)
-            < math.dist((flat.x, flat.y), nadir)), "must move TOWARDS the lens"
-    # and stay on the line between the two, not wander off it
-    along = (flat.x - nadir[0], flat.y - nadir[1])
-    moved = (lifted.x - nadir[0], lifted.y - nadir[1])
-    assert along[0] * moved[1] - along[1] * moved[0] == pytest.approx(0.0, abs=1e-9)
-
-
-def test_correcting_for_height_without_a_nadir_is_refused():
-    """Silently correcting about the middle of the picture is the 20 mm bug."""
-    frame = colour_scene([(300, 200, 40, 40)])
-    with pytest.raises(ValueError, match="nadir"):
-        detect.coloured(frame, MM_PER_PIXEL, height_m=0.028)
-
-
-def test_nothing_on_the_table_needs_no_nadir():
-    frame = colour_scene([(300, 200, 40, 40)])
-    assert len(detect.coloured(frame, MM_PER_PIXEL, height_m=0.0)) == 1
 
 
 # ------------------------------------------------------------- cube ranging --
@@ -643,15 +498,6 @@ def test_cubes_of_every_size_come_out_their_own_size():
     assert sizes == pytest.approx([0.025, 0.040, 0.055], abs=0.0015)
 
 
-def test_the_fixed_height_path_is_still_there_for_things_that_are_not_cubes():
-    frame = hull_scene([(0.300, 0.250, 0.040)])
-    ranged = detect.coloured(frame, MM_PER_PIXEL, nadir=NADIR, lens_m=LENS_M)[0]
-    fixed = detect.coloured(frame, MM_PER_PIXEL, nadir=NADIR, height_m=0.040)[0]
-    assert fixed.height_m is None
-    # Both undo the parallax; the fixed path keeps the side faces in the width.
-    assert fixed.width_m > ranged.width_m
-
-
 def test_objects_ranges_a_neural_outline_when_told_the_lens(monkeypatch):
     outline = cube_outline(0.300, 0.250, 0.040)
     pixels = ws.apply(np.linalg.inv(MM_PER_PIXEL), outline)
@@ -716,8 +562,7 @@ def test_everything_survives_a_down_vision_service(monkeypatch):
     assert any("vision service down" in n for n in notes)
 
 
-def test_ladder_auto_needs_no_tag_no_background_and_no_vision(monkeypatch, tmp_path):
-    monkeypatch.setattr(detect, "BACKGROUND_PATH", tmp_path / "table_background.png")
+def test_ladder_auto_needs_no_tag_and_no_vision():
     frame = hull_scene([(0.300, 0.250, 0.040)])
     found = detect.ladder(frame, "auto", MM_PER_PIXEL, nadir=NADIR, lens_m=LENS_M, url=None)
     assert len(found) == 1
@@ -867,7 +712,7 @@ def test_drop_goes_a_random_distance_out_and_opens(monkeypatch):
     monkeypatch.setattr(grasp.time, "sleep", lambda _s: None)
     monkeypatch.setattr(grasp.random, "uniform", lambda lo, hi: hi)
     arm = _Recorder()
-    grasp.drop(arm, verbose=False)
+    grasp.drop(arm)
     assert arm.moves == [grasp.drop_pose(cfg.DROP_SPREAD_M), {cfg.GRIPPER_ID: cfg.GRIPPER_OPEN}]
 
 
@@ -892,6 +737,6 @@ def test_a_drop_lets_go_in_one_quick_move(monkeypatch):
             calls.append((angle, speed_dps, settle))
 
     monkeypatch.setattr(grasp.time, "sleep", lambda _s: None)
-    grasp.drop(Arm(), verbose=False, extra_m=0.0)
+    grasp.drop(Arm(), extra_m=0.0)
     assert calls == [(cfg.GRIPPER_OPEN, grasp.DROP_OPEN_DPS, False)]
     assert grasp.DROP_OPEN_DPS >= 4 * grasp.GRIPPER_DPS

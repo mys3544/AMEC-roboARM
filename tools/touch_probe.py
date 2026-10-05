@@ -2,7 +2,6 @@
 """Is the object really where the camera says? Ask the arm, by touching it.
 
     ... touch_probe.py                   # probe the coloured object it can see
-    ... touch_probe.py --height-mm 45    # if the object stands taller than 28 mm
     ... touch_probe.py --at 155,24       # probe a point you name instead
     ... touch_probe.py --staircase --at 230,0 --offsets-mm 0,10,20
                                          # where is the table really, out at the rim?
@@ -57,11 +56,12 @@ LOWEST_M = -0.035          # how far under its own table the model may be sent l
 CONTACT_LAG_M = 0.008      # the readback trailing this much further behind = touching
 
 
-def find(arm: Arm, look: sweep.Look, height_m: float) -> tuple[float, float]:
+def find(arm: Arm, look: sweep.Look) -> tuple[float, float]:
     arm.move_to(look.pose, speed_dps=20)
     time.sleep(2.0)
     frame = camera.grab(8)[-1]
-    found = detect.coloured(frame, look.matrix, nadir=look.nadir, height_m=height_m)
+    found = detect.coloured(frame, look.matrix, nadir=look.nadir,
+                            lens_m=kin.camera_height(look.pose))
     if not found:
         raise ValueError("no coloured object in view -- put one on the table, "
                          "or name a point with --at")
@@ -142,8 +142,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--at", default=None,
                         help="probe 'x,y' in mm instead of what the camera finds")
-    parser.add_argument("--height-mm", type=float, default=28.0,
-                        help="how tall the object is, for undoing its parallax")
     parser.add_argument("--offsets-mm", default="-20,-10,0,10,20",
                         help="radial offsets to probe, comma separated")
     parser.add_argument("--staircase", action="store_true",
@@ -160,7 +158,7 @@ def main() -> int:
                 x, y = (float(v) / 1000 for v in args.at.split(","))
                 print(f"probing the point given: {x * 1000:.1f}, {y * 1000:+.1f} mm")
             else:
-                x, y = find(arm, look, args.height_mm / 1000)
+                x, y = find(arm, look)
 
             radius, bearing = math.hypot(x, y), math.degrees(math.atan2(y, x))
             arm.set_gripper(cfg.GRIPPER_CLOSED, speed_dps=60)

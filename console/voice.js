@@ -1,19 +1,18 @@
 'use strict';
 // Voice commands: hold Talk (or V), say a command, let go. The page records the microphone and
-// sends what was said, as a 16 kHz mono 16-bit WAV, to /api/voice (serve.py -> voice.py:
-// Parakeet on this laptop, then a small grammar), and carries out the command it gets back
-// through window.consoleActions (console.js): stop, pick, clean_up, home. A typed command takes
-// the same path without the recogniser. Loaded after console.js, whose $ and log it uses; not in
-// a popped-out window (one microphone, one page that listens).
+// sends what was said, as a mono 16-bit WAV at the microphone's own rate (sherpa-onnx resamples),
+// to /api/voice (serve.py -> voice.py: Parakeet on this laptop, then a small grammar), and
+// carries out the command it gets back through window.consoleActions (console.js): stop, pick,
+// clean_up, home. A typed command takes the same path without the recogniser. Loaded after
+// console.js, whose $ and log it uses; not in a popped-out window (one microphone, one page that
+// listens).
 
 (() => {
   if (new URLSearchParams(location.search).has('solo')) return;
-  const RATE = 16000;      // what the recogniser wants
   const KEY = 'v';         // hold to talk (W/A/S/D/Q/E drive, Space and Esc stop)
   const PREROLL_S = 0.3;   // kept from before the press: a word begun a moment early is not cut
   const SHORTEST_S = 0.25; // a tap is not a command
   const LONGEST_S = 15;    // a key held longer is sent as it is
-  const KEPT = 12;         // commands in the history
   // The microphone's samples, as they come (128 at a time), from a worklet: no library, no file.
   const TAP = `registerProcessor('tap', class extends AudioWorkletProcessor {
     process([input]) { if (input[0]) this.port.postMessage(input[0].slice()); return true; }
@@ -119,8 +118,7 @@
     }
     show({ heard: 'hearing...', command: '...', done: '...', timing: '...' });
     try {
-      const samples = await to16k(audio, rate);
-      const reply = await fetch('/api/voice', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav(samples) });
+      const reply = await fetch('/api/voice', { method: 'POST', headers: { 'Content-Type': 'audio/wav' }, body: wav(audio, rate) });
       const data = await reply.json();
       if (!reply.ok) throw new Error(data.fix ? `${data.error} -- ${data.fix}` : data.error || `HTTP ${reply.status}`);
       await carry(data, released);
@@ -137,24 +135,12 @@
     return all;
   }
 
-  async function to16k(samples, from) {   // the browser's own resampler, offline
-    if (from === RATE) return samples;
-    const offline = new OfflineAudioContext(1, Math.ceil(samples.length * RATE / from), RATE);
-    const buffer = offline.createBuffer(1, samples.length, from);
-    buffer.copyToChannel(samples, 0);
-    const source = offline.createBufferSource();
-    source.buffer = buffer;
-    source.connect(offline.destination);
-    source.start();
-    return (await offline.startRendering()).getChannelData(0);
-  }
-
-  function wav(samples) {   // 16-bit PCM, mono, RATE
+  function wav(samples, rate) {   // 16-bit PCM, mono
     const view = new DataView(new ArrayBuffer(44 + samples.length * 2));
     const text = (at, s) => [...s].forEach((c, i) => view.setUint8(at + i, c.charCodeAt(0)));
     text(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); text(8, 'WAVE');
     text(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
-    view.setUint32(24, RATE, true); view.setUint32(28, RATE * 2, true); view.setUint16(32, 2, true);
+    view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true);
     view.setUint16(34, 16, true); text(36, 'data'); view.setUint32(40, samples.length * 2, true);
     samples.forEach((s, i) => view.setInt16(44 + i * 2, Math.max(-1, Math.min(1, s)) * 0x7fff, true));
     return view.buffer;
@@ -191,7 +177,6 @@
       error = true;
     }
     show({ done, error });
-    remember(`${heard} -> ${describe(command)} -> ${done}  (${ms} ms)`, error);
     log(`voice: ${heard} -> ${describe(command)} -> ${done}`, error);
   }
 
@@ -203,14 +188,6 @@
       $('.done', box).classList.toggle('err', error);
     }
     if (timing !== undefined) $('.timing', box).textContent = timing;
-  }
-
-  function remember(text, error) {
-    const item = document.createElement('li');
-    item.textContent = `${new Date().toLocaleTimeString()}  ${text}`;
-    if (error) item.className = 'err';
-    $('.history', box).prepend(item);
-    while ($('.history', box).childElementCount > KEPT) $('.history', box).lastElementChild.remove();
   }
 
   $('.typed', box).onsubmit = async e => {

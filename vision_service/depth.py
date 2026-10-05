@@ -16,8 +16,7 @@ Orin, output matches the CPU model to 0.1 %). No engine, no rung: /raised
 answers 503 and the client skips it. One engine per wrist camera, at that
 camera's aspect: the Sonix's 640x480 is 4:3 (518x686), the C930e's 848x480 is
 16:9 (518x910, 2026-09-24). A frame of another shape is stretched to fit.
-
-    ROBOARM_DEPTH_ENGINE   path to the engine; default by ROBOARM_CAMERA, see ENGINES
+ROBOARM_CAMERA picks the engine, see ENGINES.
 
 `raised_regions()` is pure numpy + OpenCV so the core environment can test it.
 """
@@ -159,7 +158,7 @@ class Depth:
     @classmethod
     def from_env(cls) -> Depth | None:
         camera = os.environ.get("ROBOARM_CAMERA", "c930e")
-        path = os.environ.get("ROBOARM_DEPTH_ENGINE", ENGINES.get(camera, ENGINES["c930e"]))
+        path = ENGINES.get(camera, ENGINES["c930e"])
         if not os.path.exists(path):
             print(f"vision: no depth engine at {path}; the depth rung is off", flush=True)
             return None

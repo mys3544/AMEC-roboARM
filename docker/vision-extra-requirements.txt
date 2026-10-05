@@ -19,9 +19,4 @@ polars>=1.0
 # onnx itself and the tensorrt python package are already in the l4t base.
 onnxslim>=0.1.48
 
-# What the CLIP fork (stage 1) imports at runtime. All pure Python.
-ftfy>=6.0
-regex>=2023.0
-wcwidth>=0.2
-
 # The HTTP layer is the standard library (vision_service/serve.py): nothing to install.

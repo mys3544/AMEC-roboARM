@@ -10,7 +10,7 @@ keep the arm safe with several browser tabs and threads all talking at once:
      move it cannot see -- otherwise a burst of jog clicks queues up and the arm
      keeps moving after the operator has let go.
 
-  2. ONE JOB AT A TIME, AND ONLY IN AUTO MODE. Sweep, pick, place and background
+  2. ONE JOB AT A TIME, AND ONLY IN AUTO MODE. Sweep, pick, place and the rest
      run on a worker thread that holds the arm for the duration. Manual moves are
      refused while it runs; the mode switch is refused too. Stop is the one thing
      always allowed: it trips `Arm.interrupt`, which abandons the glide in progress
@@ -57,10 +57,6 @@ PICTURE_WANTED_S = 3.0
 # disagree by, tight enough that it cannot lock on to a different object: two
 # graspable objects cannot physically sit closer than 30 mm.
 REFIND_M = 0.030
-# How many rounds of the ring "clear the table" rides at most; a round that picks
-# nothing ends it early. 1 since 2026-09-22 evening (user): the confirming ride
-# after a productive round cost a minute to find nothing.
-PICKALL_ROUNDS = 1
 # Anything within this of where drops land (cfg.DROP_POSE, and up to
 # cfg.DROP_SPREAD_M further out) is what we dropped there.
 # The pile is in view from the ring's end stations (J1 180/165), and on
@@ -216,7 +212,6 @@ class Session:
         self.arm_error: str | None = None
         self._lock = threading.RLock()
         self._pose: Pose | None = None
-        self._pose_when = 0.0
         self._battery: float | None = None
         self._torque = True
         self._holding = False
@@ -328,7 +323,6 @@ class Session:
 
     def _note_pose(self, pose: Pose) -> None:
         self._pose = dict(pose)
-        self._pose_when = time.time()
 
     def _refresh(self, read_battery: bool = False) -> None:
         """Re-read the pose (and battery) from the arm. Caller holds the lock."""
@@ -337,7 +331,7 @@ class Session:
         try:
             self.arm.read()  # PoseTracking notes the answer
             if read_battery:
-                self._battery = float(self.arm.bot.get_battery_voltage())
+                self._battery = float(self.arm.battery())
         except ArmError as exc:
             self.arm_error = str(exc)
             self.log(f"arm: {exc}")
@@ -543,7 +537,6 @@ class Session:
             "mode": self.mode,
             "view": self.view,
             "detector": self.detector,
-            "detectors": list(detect.MODES),
             "object_mm": self.object_mm,
             "step_deg": self.step_deg,
             "speed_dps": self.speed_dps,
@@ -554,7 +547,6 @@ class Session:
                 "connected": self.arm is not None,
                 "error": self.arm_error,
                 "pose": {str(j): a for j, a in pose.items()} if pose else None,
-                "pose_age_s": round(time.time() - self._pose_when, 1) if pose else None,
                 "battery": self._battery,
                 "tip_mm": tip,
                 "pitch": pitch,
@@ -562,7 +554,6 @@ class Session:
                 "torque": self._torque,
                 "busy": self._lock_held(),
                 "limits": {str(j): list(cfg.SAFE_LIMITS[j]) for j in cfg.JOINT_IDS},
-                "gripper": {"open": cfg.GRIPPER_OPEN, "closed": cfg.GRIPPER_CLOSED},
             },
             "job": self.job.snapshot() if self.job else None,
             "detection": {
@@ -581,7 +572,7 @@ class Session:
                 "looks": [name for _m, _p, name in self.calibrated],
                 "error": self.calibration_error,
             },
-            "vision": {"available": self.vision_ok, "url": self.detector_url},
+            "vision": {"available": self.vision_ok},
             "log_seq": log_seq,
         }
 
@@ -610,12 +601,8 @@ class Session:
             "label": target.label,
             "x_mm": round(target.x * 1000, 1),
             "y_mm": round(target.y * 1000, 1),
-            "range_mm": round(math.hypot(target.x, target.y) * 1000),
-            "bearing_deg": round(math.degrees(math.atan2(target.y, target.x))),
             "width_mm": round(target.width_m * 1000),
             "length_mm": round(target.length_m * 1000),
-            "height_mm": round(target.height_m * 1000) if target.height_m else None,
-            "angle_deg": round(target.angle_deg),
             "confidence": round(target.confidence, 2),
             "graspable": target.graspable and plan_error is None,
             "why_not": target.why_not() or plan_error or "",
@@ -697,11 +684,11 @@ class Session:
         look = sweep.at_look(self.calibrated, pose) if (pose and self.calibrated) else None
         at_station = look is not None
         if look is not None:
-            matrix, dyaw = look.matrix, look.dyaw
+            matrix = look.matrix
         elif self.calibrated:
-            matrix, dyaw = self.calibrated[0][0], 0.0
+            matrix = self.calibrated[0][0]
         else:
-            matrix, dyaw = np.diag([0.001, 0.001, 1.0]), 0.0
+            matrix = np.diag([0.001, 0.001, 1.0])
         nadir = kin.camera_nadir(pose) if pose else (0.0, 0.0)
         lens_m = kin.camera_height(pose) if pose else None
 
@@ -709,19 +696,16 @@ class Session:
         notes: list[str] = []
         try:
             targets = detect.ladder(frame, self.detector, matrix,
-                                    nadir=nadir, dyaw=dyaw, object_mm=self.object_mm,
+                                    nadir=nadir, object_mm=self.object_mm,
                                     url=self._vision_url(), lens_m=lens_m,
-                                    look_name=look.name if look else "primary",
                                     note=notes.append)
-        except FileNotFoundError as exc:
-            targets, error = [], str(exc)
         except ValueError as exc:
             targets, error = [], f"detector: {exc}"
         if notes and not error:
             error = " ".join(n.strip() for n in notes)
 
         self._annotated = detect.annotate(frame, matrix, targets)
-        self._mask = self._mask_for(frame, dyaw, targets)
+        self._mask = self._mask_for(frame, targets)
         # The two diagnostic pictures, only while a client is watching them:
         # each costs a vision round trip (and the mixed one runs every rung).
         now = time.time()
@@ -754,20 +738,14 @@ class Session:
             "when": time.time(),
         }
 
-    def _mask_for(self, frame, dyaw: float, targets: list[detect.Target] = ()):
+    def _mask_for(self, frame, targets: list[detect.Target] = ()):
         """How the detector saw the frame: its intermediate picture (the colour
-        mask, the change mask, the tags it read) with every outline it drew on
-        top -- filled green when the object is graspable, red when it is cut
-        off or refused. The thing to look at when a pick misbehaves."""
+        mask, the tags it read) with every outline it drew on top -- filled
+        green when the object is graspable, red when it is cut off or refused.
+        The thing to look at when a pick misbehaves."""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         if self.detector in ("colour", "auto"):
             out = cv2.cvtColor(detect.colour_mask(frame), cv2.COLOR_GRAY2BGR) // 2
-        elif self.detector == "changes":
-            try:
-                background = detect.load_background(dyaw)
-            except FileNotFoundError:
-                return None
-            out = cv2.cvtColor(detect.foreground(frame, background), cv2.COLOR_GRAY2BGR) // 2
         else:
             out = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR) // 2
         if self.detector in ("markers", "auto"):
@@ -830,7 +808,6 @@ class Session:
             "pick": self._job_pick,
             "pickall": self._job_pickall,
             "place": self._job_place,
-            "background": self._job_background,
             "survey": self._job_survey,
         }.get(name)
         if runner is None:
@@ -911,7 +888,7 @@ class Session:
             self._refresh()
         settle = min(self.settle_s, YAW_SETTLE_S) if yaw_only else self.settle_s
         with metrics.span("camera.settle"):
-            frame = self.stream.settled(settle, count=1)[-1]
+            frame = self.stream.settled(settle)
         return self._detect_at(look, frame, hints)
 
     def _detect_at(self, look: sweep.Look, frame,
@@ -919,9 +896,9 @@ class Session:
         """What `frame`, taken from `look`, shows: (measurable, clipped) as _look_all."""
         with metrics.span("detect"):
             found = detect.ladder(frame, self.detector, look.matrix,
-                                  nadir=look.nadir, dyaw=look.dyaw, object_mm=self.object_mm,
+                                  nadir=look.nadir, object_mm=self.object_mm,
                                   url=self._vision_url(), lens_m=kin.camera_height(look.pose),
-                                  look_name=look.name, note=self.log, hints=hints)
+                                  note=self.log, hints=hints)
         kept = [t for t in found if not t.clipped
                 and sweep.sees(look, t.x, t.y, self._span(t), self._height(t))]
         clipped = [t for t in found if t.clipped]
@@ -1024,7 +1001,7 @@ class Session:
             self.arm.move_to(first, speed_dps=STATION_DPS, repeatable=True)
             self._refresh()
         with metrics.span("camera.settle"):
-            frame = self.stream.settled(self.settle_s, count=1)[-1]
+            frame = self.stream.settled(self.settle_s)
         result = on_frame(sweep.Look(dyaws[0], first, sweep.rotate(matrix, dyaws[0]), name), frame)
         if result or len(dyaws) == 1:
             return result
@@ -1057,7 +1034,7 @@ class Session:
                     time.sleep(SCAN_POLL_S)
                     continue
                 reached = [pending[0]]
-            frame = self.stream.settled(0.0, count=1)[-1]
+            frame = self.stream.settled(0.0)
             after = before if ended else self.arm.read()
             look = self._look_from(entry, (before[1] + after[1]) / 2)
             pending = [s for s in pending if s not in reached]
@@ -1274,7 +1251,7 @@ class Session:
         even when the last round had done its job (5 held out of 6, 330 s).
         2026-09-21: the search stops at the first find, so a tagged cube that
         the first station could not see was still on the table afterwards."""
-        picked = 0
+        picked = missed = 0
 
         def on_frame(look: sweep.Look, frame):
             found, clipped = self._detect_at(look, frame)
@@ -1285,47 +1262,42 @@ class Session:
             return (look, max(todo, key=lambda t: t.confidence)) if todo else None
 
         # ONE round (user, 2026-09-22 evening): the confirming second ride cost a
-        # minute to find nothing. PICKALL_ROUNDS stays for anyone who wants it back.
-        for round_ in range(1, PICKALL_ROUNDS + 1):
-            started = time.monotonic()  # not _lap(): the picks inside restart that
-            before, missed = picked, 0
-            looks = sweep.stations(self._scan_calibrated(), self.step_deg)
-            self.log(f"round {round_}: {len(looks)} stations {self.step_deg:.0f} deg apart in "
-                     f"one motion per look, detector = {self.detector}, picking as it goes")
-            for entry, dyaws in self._passes(looks):
-                ahead = 1 if dyaws[-1] >= dyaws[0] else -1
-                misses_here: dict[int, int] = {}
-                while dyaws:
-                    with metrics.span("scan"):
-                        hit = self._ride(entry, dyaws, on_frame)
-                    if hit is None:
-                        break
-                    look, target = hit
-                    held = self._pick_one(target, refine, back_to=look.pose, force_refine=True)
-                    station = round(look.dyaw / 5)
-                    if held:
-                        picked += 1
-                    else:
-                        missed += 1
-                        misses_here[station] = misses_here.get(station, 0) + 1
-                    # Carry on from here: look again from this station (the grasp
-                    # may have shoved a neighbour, more may be in view, and a miss
-                    # gets one retry -- the cube usually moved and the new look
-                    # says where to), then the stations still ahead.
-                    again = held or misses_here[station] < 2
-                    if not again:
-                        self.log("  missed twice from here; leaving it for the next round")
-                    dyaws = ([look.dyaw] if again else []) + [
-                        d for d in dyaws if ahead * (d - look.dyaw) > 0.5]
-            self.log(f"  [round {round_} took {time.monotonic() - started:.1f} s, "
-                     f"{picked - before} picked up"
-                     + (f", {missed} missed" if missed else "") + "]")
-            if (picked == before and not missed) or round_ == PICKALL_ROUNDS:
-                self.log(f"the ring is done: {picked} picked up in all"
-                         + (f", {missed} missed" if missed else "") + "; going home")
-                with metrics.span("home"):
-                    self.arm.home(speed_dps=STATION_DPS)
-                return
+        # minute to find nothing.
+        started = time.monotonic()  # not _lap(): the picks inside restart that
+        looks = sweep.stations(self._scan_calibrated(), self.step_deg)
+        self.log(f"round 1: {len(looks)} stations {self.step_deg:.0f} deg apart in "
+                 f"one motion per look, detector = {self.detector}, picking as it goes")
+        for entry, dyaws in self._passes(looks):
+            ahead = 1 if dyaws[-1] >= dyaws[0] else -1
+            misses_here: dict[int, int] = {}
+            while dyaws:
+                with metrics.span("scan"):
+                    hit = self._ride(entry, dyaws, on_frame)
+                if hit is None:
+                    break
+                look, target = hit
+                held = self._pick_one(target, refine, back_to=look.pose, force_refine=True)
+                station = round(look.dyaw / 5)
+                if held:
+                    picked += 1
+                else:
+                    missed += 1
+                    misses_here[station] = misses_here.get(station, 0) + 1
+                # Carry on from here: look again from this station (the grasp
+                # may have shoved a neighbour, more may be in view, and a miss
+                # gets one retry -- the cube usually moved and the new look
+                # says where to), then the stations still ahead.
+                again = held or misses_here[station] < 2
+                if not again:
+                    self.log("  missed twice from here; leaving it for the next round")
+                dyaws = ([look.dyaw] if again else []) + [
+                    d for d in dyaws if ahead * (d - look.dyaw) > 0.5]
+        missed_note = f", {missed} missed" if missed else ""
+        self.log(f"  [round 1 took {time.monotonic() - started:.1f} s, "
+                 f"{picked} picked up{missed_note}]")
+        self.log(f"the ring is done: {picked} picked up in all{missed_note}; going home")
+        with metrics.span("home"):
+            self.arm.home(speed_dps=STATION_DPS)
 
     def _refine(self, target: detect.Target, force: bool = False) -> detect.Target:
         try:
@@ -1357,19 +1329,6 @@ class Session:
         grasp.place(self.arm, float(x) / 1000, float(y) / 1000,
                     reach_offset_m=self.reach_offset_mm / 1000)
         self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
-
-    def _job_background(self, **_ignored) -> None:
-        looks = sweep.stations(self._all_calibrated(), self.step_deg)
-        self.log(f"photographing the empty table from {len(looks)} stations")
-        for look in looks:
-            self.arm.move_to(look.pose, speed_dps=STATION_DPS, repeatable=True)
-            self._refresh()
-            detect.save_background(self.stream.settled(self.settle_s)[-1],
-                                   look.dyaw, look.name)
-            self.log(f"  {look.name} dyaw {look.dyaw:+6.1f} -> "
-                     f"{detect.background_path(look.dyaw, look.name).name}")
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
-        self.log("do not move the board, the lamp or the robot before detecting")
 
 
 class LogTee(io.TextIOBase):

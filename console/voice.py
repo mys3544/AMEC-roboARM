@@ -2,7 +2,6 @@
 and the command in it (a small grammar, no language model: that comes later, on a lab server).
 
     python console/voice.py fetch                  # the speech model, once (487 MB, GitHub)
-    python console/voice.py hear [WAV...]          # what the model hears in each file, how fast
     python console/voice.py parse pick up the red cube    # the command in a sentence
 
 The recogniser is NVIDIA's Parakeet TDT 0.6B v3 (int8 ONNX; 25 European languages, English,
@@ -10,7 +9,8 @@ Slovak and Czech among them), run by sherpa-onnx on the CPU. serve.py keeps one,
 helper thread the first time it is asked for (the page asks as it opens: GET /api/voice), and
 answers POST /api/voice:
 
-    Content-Type: audio/wav    a WAV, 16-bit PCM, any rate (the page sends 16 kHz mono)
+    Content-Type: audio/wav    a WAV, 16-bit PCM mono, any rate (the page sends the
+                               microphone's own; sherpa-onnx resamples to 16 kHz)
                                -> {"text", "intent", "audio_s", "asr_ms"}
     Content-Type: text/plain   a typed command: the grammar only, no recogniser needed
                                -> {"text", "intent"}
@@ -25,7 +25,6 @@ import importlib.util
 import io
 import pathlib
 import re
-import sys
 import tarfile
 import threading
 import time
@@ -189,9 +188,8 @@ class Recognizer:
     """Parakeet through sherpa-onnx, loaded once, on a helper thread, the first time it is asked
     for. One utterance at a time; each waits for the load if it is not done yet."""
 
-    def __init__(self, folder=MODELS / MODEL, threads=THREADS):
+    def __init__(self, folder=MODELS / MODEL):
         self.folder = folder
-        self.threads = threads
         self.engine = None
         self.load_s = None
         self.failed = None   # (why, fix) if the load failed
@@ -224,7 +222,7 @@ class Recognizer:
             self.engine = sherpa_onnx.OfflineRecognizer.from_transducer(
                 encoder=str(self.folder / FILES[0]), decoder=str(self.folder / FILES[1]),
                 joiner=str(self.folder / FILES[2]), tokens=str(self.folder / FILES[3]),
-                num_threads=self.threads, model_type="nemo_transducer",
+                num_threads=THREADS, model_type="nemo_transducer",
                 decoding_method="greedy_search")
             self.load_s = round(time.perf_counter() - t0, 1)
         except Exception as e:   # noqa: BLE001 -- a broken download, say: the page must hear it
@@ -237,11 +235,11 @@ class Recognizer:
         """For the page: ready, loading, or why not and the fix. Starts the load."""
         self.start()
         if self.engine is not None:
-            return {"ready": True, "model": MODEL, "load_s": self.load_s, "threads": self.threads}
+            return {"ready": True, "load_s": self.load_s}
         why = self.failed or (None if self.loader else self.missing())
         if why:
             return {"ready": False, "error": why[0], "fix": why[1]}
-        return {"ready": False, "loading": True, "model": MODEL}
+        return {"ready": False, "loading": True}
 
     def text(self, samples, rate):
         """What was said in these samples (mono floats in -1..1 at this rate)."""
@@ -259,22 +257,17 @@ class Recognizer:
 
 
 def read_wav(data):
-    """A WAV's samples, mono floats in -1..1, and its rate. 16-bit PCM only (what the page sends,
-    and what the model's test_wavs are); more than one channel is averaged."""
+    """A WAV's samples, floats in -1..1, and its rate. 16-bit PCM mono only: what the page sends
+    (and what the model's test_wavs are)."""
     try:
         with wave.open(io.BytesIO(data)) as w:
             width, channels, rate = w.getsampwidth(), w.getnchannels(), w.getframerate()
             frames = w.readframes(w.getnframes())
     except (wave.Error, EOFError) as e:
         raise ValueError(f"not a WAV this reads: {e}") from None
-    if width != 2:
-        raise ValueError(f"{8 * width}-bit samples: 16-bit PCM only")
-    pcm = array.array("h", frames[:len(frames) // (2 * channels) * 2 * channels])
-    if sys.byteorder == "big":
-        pcm.byteswap()
-    if channels > 1:
-        pcm = [sum(frame) / channels for frame in zip(*(pcm[c::channels] for c in range(channels)))]
-    return [s / 32768 for s in pcm], rate
+    if (width, channels) != (2, 1):
+        raise ValueError(f"{8 * width}-bit, {channels} channels: 16-bit PCM mono only")
+    return [s / 32768 for s in array.array("h", frames)], rate
 
 
 def answer(recognizer, body, content_type):
@@ -291,11 +284,8 @@ def answer(recognizer, body, content_type):
         text = recognizer.text(samples, rate)
     except Unavailable as e:
         return 503, {"error": str(e), "fix": e.fix}
-    heard = time.perf_counter()
-    intent = parse(text)
-    return 200, {"text": text, "intent": intent, "audio_s": round(len(samples) / rate, 2),
-                 "asr_ms": round((heard - t0) * 1000),
-                 "parse_ms": round((time.perf_counter() - heard) * 1000, 2)}
+    return 200, {"text": text, "intent": parse(text), "audio_s": round(len(samples) / rate, 2),
+                 "asr_ms": round((time.perf_counter() - t0) * 1000)}
 
 
 # --- from the command line -------------------------------------------------------------------
@@ -307,61 +297,23 @@ def fetch(folder=MODELS):
         print(f"already here: {target}")
         return
     folder.mkdir(parents=True, exist_ok=True)
-    part = folder / f"{MODEL}.tar.bz2.part"
-    print(f"from  {URL}", flush=True)
-    with urllib.request.urlopen(URL, timeout=60) as reply, part.open("wb") as out:
-        size = int(reply.headers.get("Content-Length") or 0)
-        print(f"size  {size / 1e6:.0f} MB, into {folder}", flush=True)
-        done, tenths = 0, 0
-        while chunk := reply.read(1 << 20):
-            out.write(chunk)
-            done += len(chunk)
-            if size and done * 10 // size > tenths:
-                tenths = done * 10 // size
-                print(f"      {done / 1e6:.0f} MB", flush=True)
-    print("unpacking...", flush=True)
-    with tarfile.open(part, "r:bz2") as tar:
+    print(f"from  {URL}\ninto  {folder}, unpacked as it comes (487 MB: minutes)", flush=True)
+    with (urllib.request.urlopen(URL, timeout=60) as reply,
+          tarfile.open(fileobj=reply, mode="r|bz2") as tar):
         tar.extractall(folder, filter="data")
-    part.unlink()
     for f in FILES:
         print(f"      {f}  {(target / f).stat().st_size / 1e6:.1f} MB")
-
-
-def hear(files, threads, repeats=3):
-    """Load the model, then hear each WAV a few times: the text, the command, the time."""
-    recognizer = Recognizer(threads=threads)
-    if why := recognizer.missing():
-        sys.exit(f"{why[0]} -- {why[1]}")
-    recognizer.start()
-    recognizer.loaded.wait()
-    if recognizer.engine is None:
-        sys.exit(" -- ".join(recognizer.failed))
-    print(f"loaded in {recognizer.load_s} s, {threads} threads")
-    for file in files or sorted((recognizer.folder / "test_wavs").glob("*.wav")):
-        samples, rate = read_wav(pathlib.Path(file).read_bytes())
-        times = []
-        for _ in range(repeats):
-            t0 = time.perf_counter()
-            text = recognizer.text(samples, rate)
-            times.append((time.perf_counter() - t0) * 1000)
-        print(f"{pathlib.Path(file).name}: {len(samples) / rate:.1f} s of audio, heard in "
-              f"{min(times):.0f} ms (first {times[0]:.0f})\n  {text!r}\n  {parse(text)}")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("fetch", help="download the speech model into console/models/")
-    heard = commands.add_parser("hear", help="what the model hears in WAV files, and how fast")
-    heard.add_argument("files", nargs="*", help="16-bit PCM WAVs (default: the model's test_wavs)")
-    heard.add_argument("--threads", type=int, default=THREADS)
     said = commands.add_parser("parse", help="the command in a sentence")
     said.add_argument("words", nargs="+")
     args = parser.parse_args()
     if args.command == "fetch":
         fetch()
-    elif args.command == "hear":
-        hear(args.files, args.threads)
     else:
         print(parse(" ".join(args.words)))
 

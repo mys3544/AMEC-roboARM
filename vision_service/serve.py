@@ -20,12 +20,15 @@ fails the container immediately rather than on the first pick attempt.
 from __future__ import annotations
 
 import json
-import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from vision_service.depth import Depth
 from vision_service.detector import Detector
+
+PORT = 8760
+# A vision container with no CUDA refuses to start; False runs on the CPU anyway.
+REQUIRE_CUDA = True
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -79,22 +82,21 @@ def main() -> None:
     detector = Detector.from_env()  # load + warmup now; a bad model is a boot failure
     # CUDA is injected by CDI at `docker run`, so this is the first point it can
     # be checked. Fail here rather than serve slow CPU inference that surprises
-    # someone mid-demo. ROBOARM_VISION_REQUIRE_CUDA=0 opts into CPU on purpose.
-    if not detector.cuda and os.environ.get("ROBOARM_VISION_REQUIRE_CUDA", "1") != "0":
+    # someone mid-demo. REQUIRE_CUDA = False opts into CPU on purpose.
+    if not detector.cuda and REQUIRE_CUDA:
         raise RuntimeError(
             "the vision container has no CUDA -- the GPU was not passed through. "
             "Check `devices: [nvidia.com/gpu=all]` in compose.yaml and that the "
-            "host has a CDI spec (`nvidia-ctk cdi generate`). Set "
-            "ROBOARM_VISION_REQUIRE_CUDA=0 to run on CPU anyway."
+            "host has a CDI spec (`nvidia-ctk cdi generate`). Set REQUIRE_CUDA = "
+            "False in vision_service/serve.py to run on CPU anyway."
         )
     depth = Depth.from_env() if detector.cuda else None   # the engine is CUDA-only
     handler = type("BoundHandler", (Handler,), {"detector": detector, "depth": depth})
     # Binds all interfaces INSIDE the container; compose publishes it to
     # 127.0.0.1 only, and on the compose network `core` reaches it as `vision`.
-    port = int(os.environ.get("ROBOARM_VISION_PORT", "8760"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), handler)
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), handler)
     server.daemon_threads = True
-    print(f"roboarm vision: {detector.name} on port {port}, cuda={detector.cuda}", flush=True)
+    print(f"roboarm vision: {detector.name} on port {PORT}, cuda={detector.cuda}", flush=True)
     server.serve_forever()
 
 

@@ -114,6 +114,15 @@ class Card {
     pill.className = `pill mode${moving ? ' moving' : ''}${this.robot.up === false ? ' offline' : ''}`;
   }
 
+  stream() {   // the robot's camera, live: if the stream breaks or never comes, again shortly
+    this.img.onload = () => this.img.classList.remove('broken');
+    this.img.onerror = () => {
+      this.img.classList.add('broken');
+      setTimeout(() => this.stream(), 3000);
+    };
+    if (!this.closed) this.img.src = `${this.robot.url}/stream.mjpg?t=${Date.now()}`;
+  }
+
   close() {
     this.closed = true;
     this.release?.();
@@ -253,16 +262,7 @@ class X3Card extends Card {
     controls.querySelectorAll('[data-preset]').forEach(b => {
       b.onclick = () => this.act(`${b.textContent}: done`, call(robot, 'api/arm/preset', { name: b.dataset.preset }));
     });
-    this.img.onload = () => this.img.classList.remove('broken');
-    this.img.onerror = () => {   // the stream broke or never came: try again shortly
-      this.img.classList.add('broken');
-      setTimeout(() => this.stream(), 3000);
-    };
     this.stream();
-  }
-
-  stream() {
-    if (!this.closed) this.img.src = `${this.robot.url}/stream.mjpg?t=${Date.now()}`;
   }
 
   show() {
@@ -316,17 +316,8 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
     $('.view', this.el).append(this.look);
     this.looks = null;
     this.since = 0;
-    this.img.onload = () => this.img.classList.remove('broken');
-    this.img.onerror = () => {   // the stream broke or never came: try again shortly
-      this.img.classList.add('broken');
-      setTimeout(() => this.stream(), 3000);
-    };
     this.stream();
     this.follow();
-  }
-
-  stream() {
-    if (!this.closed) this.img.src = `${this.robot.url}/stream.mjpg?t=${Date.now()}`;
   }
 
   showSettings(list) {   // the speed slider, and a field for each other speed and pause
@@ -441,7 +432,6 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
 class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP of its own
   constructor() {
     this.el = $('#cloud-card').content.firstElementChild.cloneNode(true);
-    this.scene = $('.scene', this.el);
     this.pick = $('.pick', this.el);
     this.print = $('.print', this.el);
     this.clouds = [];
@@ -477,14 +467,6 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
     size.value = store.get('console.cloud.size', 3);
     size.oninput();
     this.pick.onchange = () => this.fetchCloud(this.pick.value);
-    $('.file input', this.el).onchange = e => { if (e.target.files[0]) this.openFile(e.target.files[0]); };
-    this.scene.addEventListener('dragover', e => { e.preventDefault(); this.scene.classList.add('dropping'); });
-    this.scene.addEventListener('dragleave', () => this.scene.classList.remove('dropping'));
-    this.scene.addEventListener('drop', e => {
-      e.preventDefault();
-      this.scene.classList.remove('dropping');
-      if (e.dataTransfer.files[0]) this.openFile(e.dataTransfer.files[0]);
-    });
     this.list();
   }
 
@@ -494,7 +476,7 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
       this.pick.replaceChildren(...clouds.map(c =>
         new Option(`${c.name}, ${c.written}, ${(c.bytes / 1e6).toFixed(1)} MB`, c.name)));
       if (!clouds.length) {
-        this.message('no 3D scan on this laptop yet -- m3pro/tools/arena_map.py rtab-export, or open a .ply');
+        this.message('no 3D scan on this laptop yet -- m3pro/tools/arena_map.py rtab-export');
         return;
       }
       const saved = store.get('console.cloud', null);
@@ -507,7 +489,6 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
 
   async fetchCloud(name) {
     store.set('console.cloud', name);
-    this.pick.querySelector('option[value=""]')?.remove();   // a file opened from this computer
     const token = this.token = {};   // a later choice wins over a slower earlier one
     this.setPrint(this.clouds.find(c => c.name === name)?.floor);
     this.message(`loading ${name}...`);
@@ -516,23 +497,6 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
       if (!reply.ok) throw new Error(`${name}: HTTP ${reply.status}`);
       const buffer = await reply.arrayBuffer();
       if (token === this.token) await this.display(name, buffer);
-    } catch (e) {
-      if (token === this.token) this.fail(e);
-    }
-  }
-
-  async openFile(file) {
-    const token = this.token = {};
-    // listed while it is shown, so that choosing an exported scan again is a change
-    this.pick.querySelector('option[value=""]')?.remove();
-    const option = new Option(`${file.name} (this computer)`, '', true, true);
-    option.disabled = true;
-    this.pick.prepend(option);
-    this.setPrint(null);
-    this.message(`reading ${file.name}...`);
-    try {
-      const buffer = await file.arrayBuffer();
-      if (token === this.token) await this.display(`${file.name} (opened from this computer)`, buffer);
     } catch (e) {
       if (token === this.token) this.fail(e);
     }

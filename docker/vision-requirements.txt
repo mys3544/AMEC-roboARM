@@ -15,9 +15,5 @@
 #   certifi/charset-normalizer), psutil 6.0.
 
 ultralytics==8.4.137        # >=8.4 is what brings YOLO26 / YOLOE-26
-# YOLOE's text encoder, for prompting an open-vocabulary model with class names
-# (models/yoloe-cubes.pt was made this way, 2026-09-11). Ultralytics' own CLIP
-# fork; its setup.py wants torch, so it MUST stay in this --no-deps stage.
-clip @ https://github.com/ultralytics/CLIP/archive/main.zip
 ultralytics-thop==2.1.6
 py-cpuinfo==9.0.0

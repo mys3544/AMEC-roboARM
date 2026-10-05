@@ -8,14 +8,14 @@ stop button still works with the arm on the far side of an HTTP call.
 import json
 import tempfile
 import threading
-import time
 from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import _wait
 
 from roboarm import config as cfg
-from roboarm import detect, grasp
+from roboarm import grasp
 from roboarm.arm import ArmError
 from roboarm.web import bridge, remote, session, sim
 
@@ -39,21 +39,12 @@ def robot():
     hw.close()
 
 
-def _wait(condition, timeout: float = 5.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if condition():
-            return
-        time.sleep(0.02)
-    raise AssertionError("timed out waiting")
-
-
 def test_health_before_and_after_connecting(robot):
     _hw, url = robot
-    info = remote.health(url)
+    info = remote._request(url + "/health")
     assert info["ok"] and info["arm"]["connected"] is False and info["calibration"]
     with remote.RemoteArm(url):
-        assert remote.health(url)["arm"]["connected"] is True
+        assert remote._request(url + "/health")["arm"]["connected"] is True
 
 
 def test_remote_arm_reads_and_moves_with_int_joint_keys(robot):
@@ -64,7 +55,7 @@ def test_remote_arm_reads_and_moves_with_int_joint_keys(robot):
         landed = arm.move_to({1: 100, 2: 80}, speed_dps=30)
         assert landed[1] == 100 and landed[2] == 80
         assert hw.arm.pose[1] == 100, "the robot's own arm moved"
-        assert arm.get_battery_voltage() == pytest.approx(12.3)
+        assert arm.battery() == pytest.approx(12.3)
         arm.close_gripper()
         assert arm.read()[6] == cfg.GRIPPER_CLOSED and arm.grasped() is False
 
@@ -123,7 +114,7 @@ def test_remote_stream_delivers_decoded_frames(robot):
         frame, seq = stream.latest()
         assert frame.shape == (cfg.WRIST_CAM_SIZE[1], cfg.WRIST_CAM_SIZE[0], 3)
         assert seq >= 1
-        assert remote.health(url)["camera"]["open"] is True
+        assert remote._request(url + "/health")["camera"]["open"] is True
     finally:
         stream.stop()
 
@@ -146,12 +137,10 @@ def test_calibration_comes_across_intact(robot):
     assert np.allclose(matrix, sim.REAL_H)
 
 
-def test_a_whole_session_runs_over_the_bridge(robot, monkeypatch):
+def test_a_whole_session_runs_over_the_bridge(robot):
     """The same sweep-and-pick the local session does, with the arm and camera
     behind HTTP. The block ends up under the drop pose on the 'robot'."""
     hw, url = robot
-    monkeypatch.setattr(detect, "BACKGROUND_PATH",
-                        Path(tempfile.mkdtemp()) / "table_background.png")
     sess = session.Session(
         arm_factory=lambda: remote.RemoteArm(url),
         stream=lambda: remote.RemoteStream(url),

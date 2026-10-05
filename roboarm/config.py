@@ -24,7 +24,7 @@ WRIST_CAM = int(os.environ.get("ROBOARM_WRIST_CAM", "0"))
 
 # WHICH wrist camera is fitted. Everything that changes with the camera is keyed by
 # this: its picture size and V4L2 settings, where its lens sits (the lens section
-# below), and its calibration and empty-table photos (data/cameras/<name>/).
+# below), and its calibration (data/cameras/<name>/).
 #   "sonix"  the stock Yahboom camera, USB 2 YUYV-only, ~7 fps at 640x480. Fitted
 #            until 2026-09-24; every measurement in this project before that date
 #            was made through it.
@@ -230,8 +230,7 @@ GRIPPER_GAP_MM = {30: 70, 60: 66, 90: 57, 120: 42, 150: 25, 177: 13}
 # cube the four faces repeat every 90 degrees, so the wrist never turns more than
 # 45 either way from here -- it must not swing 90 degrees to reach the equally
 # good along-the-arm position when the cube is sitting square in front of it.
-J5_FINGERS_ACROSS_ARM = 89   # rest: closes left-right across the arm
-J5_FINGERS_ALONG_ARM = 179   # 90 further on: closes fore-aft along the arm
+J5_FINGERS_ACROSS_ARM = 89   # rest: closes left-right across the arm; 179 fore-aft along it
 J5_ROLL_SENSE = -1   # +1 would mean rising J5 turns the closing line to the LEFT
 
 # Servo angle at which each joint is actually straight. Nominally 90, but forcing
@@ -530,12 +529,12 @@ OBJECT_TAG_M = 0.026
 # and is reached over HTTP -- core holds no torch. compose.yaml sets this to
 # http://vision:8760; the default here is for running a tool against the service
 # by hand on the robot. If nothing is listening, detect.objects() raises
-# DetectorOffline and the caller drops down the ladder to ArUco / change detection.
+# DetectorOffline and the caller drops down the ladder to the tags.
 DETECTOR_URL = os.environ.get("ROBOARM_DETECTOR_URL", "http://vision:8760")
 
 # Generous: first inference after a class-prompt change reloads the text encoder,
 # which is seconds on the Orin. A settled model answers in tens of milliseconds.
-DETECTOR_TIMEOUT_S = float(os.environ.get("ROBOARM_DETECTOR_TIMEOUT_S", "15"))
+DETECTOR_TIMEOUT_S = 15.0
 
 # ------------------------------------------------------------- the board ----
 # A ChArUco board on A3, taped flat and square to the robot.

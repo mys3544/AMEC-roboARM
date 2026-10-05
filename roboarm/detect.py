@@ -4,13 +4,11 @@ Everything here works on a frame taken from the SURVEY POSE and the homography
 fitted there (workspace.py). A pixel means nothing on its own; it only means
 something from the pose the mapping was fitted at.
 
-Three detectors, deliberately kept independent, in ascending order of capability
+The detectors, deliberately kept independent, in ascending order of capability
 and descending order of guarantee:
 
-  * `changes()` -- compare against a photo of the EMPTY table and report what is new.
-    No colour to tune, no model to train, no marker to print. Its failure mode is
-    visible rather than silent: if the lighting moved, everything lights up and the
-    count is obviously wrong, instead of one object quietly landing 20 mm off.
+  * `coloured()` -- whatever brings its own colour to the colourless table. No
+    model to train, no marker to print.
 
   * `markers()` -- tags. Gives each object an IDENTITY, which is what "pick up the
     red one" needs, and is as reliable as detection gets. Needs a printer. Objects
@@ -24,7 +22,7 @@ and descending order of guarantee:
     The frame is posted across and boxes come back in PIXELS -- the homography is
     applied HERE, so the vision service never needs the calibration.
 
-All three return the same `Target`, so the grasp code does not know or care which
+All of them return the same `Target`, so the grasp code does not know or care which
 one ran.
 
 NEITHER GEOMETRIC DETECTOR IS GOOD AT BOTH POSITION AND SIZE, which is why `fuse()`
@@ -61,7 +59,6 @@ import math
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -87,48 +84,8 @@ from roboarm import workspace as ws
 MIN_WIDTH_M = 0.018
 MAX_WIDTH_M = 0.055
 
-# The photograph of the empty table that `changes()` compares against. Kept beside
-# the homography because the two go together: both are only valid from the survey
-# pose, and both are invalidated by moving the robot, the board or the lamp.
-#
-# ONE PER LOOK. A background is a picture of a particular patch of table from a
-# particular pose, so the sweep's ring of looks needs a ring of backgrounds --
-# point the camera 25 degrees further round and every pixel has moved, which is
-# precisely the situation `changes()` reads as one table-sized object. The
-# calibrated look keeps the unsuffixed name, so a single-pose setup captured
-# before the sweep existed still loads.
-BACKGROUND_PATH = Path("/app/data/cameras") / cfg.WRIST_CAMERA / "table_background.png"
-
-# Below this a "change" is noise -- a shadow edge, a compression artefact.
+# Below this an outline is noise -- a shadow edge, a compression artefact.
 MIN_AREA_M2 = 0.00020   # about 14 x 14 mm
-
-# Pixel difference that counts as changed. Well above sensor noise (a few counts),
-# well below the contrast of any real object against the table.
-CHANGE_THRESHOLD = 35
-
-# Shadow test, see _shadow(). A shadow dims a pixel without colouring it.
-#
-# MEASURED on the real scene 2026-09-10, sampling shadow, cube and bare table:
-#
-#                  value ratio   hue gap   saturation gain
-#     shadow          0.51         46         +14  (p90 +53)
-#     blue cube       0.48         50         +91  (p90 +226)
-#     bare table      1.12         34          -9
-#
-# HUE IS USELESS HERE and is deliberately not tested. It scatters 46 degrees inside
-# the shadow ITSELF, because hue is numerically unstable on near-neutral pixels and
-# this table is near-neutral everywhere. A first attempt used a 14 degree tolerance,
-# which no shadow pixel could ever satisfy, so the filter did nothing at all.
-#
-# SATURATION is what actually separates them: a shadow barely changes it, an object
-# brings its own colour. That is the whole test, alongside the value ratio.
-#
-#   DARKEST  below this a pixel is too dark to be a shadow on white paper and is
-#            kept -- the only thing saving a genuinely dark OBJECT from erasure.
-#   FAINTEST above this it is barely dimmed and would be noise either way.
-SHADOW_DARKEST = 0.35
-SHADOW_FAINTEST = 0.92
-SHADOW_SATURATION_GAIN = 60
 
 
 @dataclass(frozen=True)
@@ -141,7 +98,7 @@ class Target:
     length_m: float
     angle_deg: float    # heading of the SHORT axis; reported, not yet acted on
     label: str
-    # 1.0 for the geometric detectors (a change either is or is not there); the
+    # 1.0 for the geometric detectors (a blob either is or is not there); the
     # neural detector's own score for `objects()`. Carried so a caller can prefer
     # the surest target, and so `annotate()` can show it.
     confidence: float = 1.0
@@ -209,108 +166,15 @@ def _target_from_quad(quad: np.ndarray, label: str, confidence: float = 1.0,
     )
 
 
-def light_scale(frame, background) -> float:
-    """How much brighter the room is now than when the reference was photographed.
-
-    The lamp, the sun and the auto-exposure all drift. Measured on this table, the
-    bare paper came back 12 percent brighter than its own reference photo a few hours
-    later -- enough to widen every silhouette and, left long enough, to light up the
-    whole frame as one enormous object.
-
-    The MEDIAN is what makes this safe: objects occupy a minority of the picture, so
-    the middle ratio describes the table rather than the things on it. A mean would
-    be dragged around by whatever was placed down.
-    """
-    now = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    was = cv2.cvtColor(background, cv2.COLOR_BGR2GRAY).astype(np.float32)
-    lit = was > 20  # near-black reference pixels give meaningless ratios
-    if not lit.any():
-        return 1.0
-    return float(np.median(now[lit] / was[lit]))
-
-
-def _shadow(frame, background, scale: float) -> np.ndarray:
-    """Pixels merely DARKER than the background, rather than different from it.
-
-    A shadow dims; an object brings colour. So a pixel is shadow when its VALUE has
-    dropped by a plausible amount and its SATURATION has not risen. Hue is not tested
-    at all -- see the constants above for the measurements that ruled it out.
-
-    Worth the lines: without this a 40 mm cube measured 55 x 113 mm and was refused
-    as "wider than the gripper opens", rejected on the size of its own shadow.
-
-    LIMIT, and a real one: this separates object from shadow by COLOUR. A grey or
-    white object on white paper has no colour to separate and would be read as
-    shadow and vanish. The value ratio is the only defence there -- anything darker
-    than SHADOW_DARKEST is kept -- so demo objects should be coloured or dark, not
-    pale grey.
-    """
-    now = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
-    was = cv2.cvtColor(background, cv2.COLOR_BGR2HSV).astype(np.float32)
-
-    ratio = now[:, :, 2] / np.maximum(was[:, :, 2] * scale, 1.0)
-    dimmed = (ratio > SHADOW_DARKEST) & (ratio < SHADOW_FAINTEST)
-    # Signed on purpose: shadows do not add colour, objects do. A drop in saturation
-    # is no reason to call something an object.
-    duller = (now[:, :, 1] - was[:, :, 1]) < SHADOW_SATURATION_GAIN
-    return (dimmed & duller).astype(np.uint8) * 255
-
-
-def foreground(frame, background) -> np.ndarray:
-    """Binary mask of what is genuinely new on the table, shadows removed.
-
-    Public because it is the thing to LOOK AT when detection misbehaves -- a picture
-    of this mask says immediately whether the problem is the threshold, the shadow
-    test or the object itself. tools/detect_check.py writes it out.
-    """
-    scale = light_scale(frame, background)
-    now = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    # Match the reference to the CURRENT light level before comparing, or a room
-    # that merely got brighter reads as a table covered in new objects.
-    was = np.clip(
-        cv2.cvtColor(background, cv2.COLOR_BGR2GRAY).astype(np.float32) * scale, 0, 255
-    ).astype(np.uint8)
-    # Blur first: the camera is noisy and 1-pixel speckle survives thresholding,
-    # then survives the open, then shows up as a swarm of tiny false objects.
-    diff = cv2.absdiff(cv2.GaussianBlur(now, (5, 5), 0), cv2.GaussianBlur(was, (5, 5), 0))
-    _, mask = cv2.threshold(diff, CHANGE_THRESHOLD, 255, cv2.THRESH_BINARY)
-    mask = cv2.bitwise_and(mask, cv2.bitwise_not(_shadow(frame, background, scale)))
-    # Open then close: drop speckle, then heal an object split by a highlight -- or
-    # by the shadow test biting into a dark face of the object itself.
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-
-def changes(frame, background, matrix: np.ndarray,
-            nadir: tuple[float, float] | None = None,
-            lens_m: float | None = None) -> list[Target]:
-    """Objects that appeared on the table since `background` was taken.
-
-    Both frames must come from the same survey pose, or every pixel has moved and
-    the whole image reads as one enormous object.
-
-    With `nadir` and `lens_m` each silhouette is read as a CUBE and ranged --
-    see range_block(); without them the outline is reported as the table plane
-    saw it, which for anything standing up is a little big and a little far.
-    """
-    return outlines(foreground(frame, background), matrix, "object",
-                    nadir=nadir, lens_m=lens_m, sort_by_x=True)
-
-
-
-# The COLOUR rung. Needs no empty-table photo and no tag -- only that the object
-# brings its own colour to a table that has none.
+# The COLOUR rung. Needs no tag -- only that the object brings its own colour to
+# a table that has none.
 #
-# It earns its place because the other two geometric rungs each have a hole this
-# fills. `changes()` needs a background photograph, which is per-pose, so a sweep
-# of seven stations needs seven of them and an empty table to take them on.
-# `markers()` needs the tag to be facing up, which stops being true the moment
-# anything knocks the object over -- which is exactly how it was needed here on
-# 2026-09-10.
+# It earns its place because `markers()` needs the tag to be facing up, which
+# stops being true the moment anything knocks the object over -- which is
+# exactly how it was needed here on 2026-09-10.
 #
 # MEASURED on the real scene the same day, sampling the lab's blue box, its shadow
-# and the bare paper (the same sampling that set the shadow constants above):
+# and the bare paper:
 #
 #                  saturation
 #     blue box        +91 over the table (p90 +226)
@@ -336,42 +200,25 @@ def colour_mask(frame) -> np.ndarray:
 
 
 def coloured(frame, matrix: np.ndarray, nadir: tuple[float, float] | None = None,
-             height_m: float = 0.0, lens_m: float | None = None) -> list[Target]:
+             lens_m: float | None = None) -> list[Target]:
     """Strongly coloured objects on a colourless table, in table coordinates.
 
-    Two ways to undo the parallax of an object standing above the table plane:
-
-      * `lens_m` (with `nadir`): the object is taken to be a CUBE, and its own
-        outline says how tall it is -- range_block(). Size and position both come
-        out right, for any size of cube, and nothing has to be declared.
-      * `height_m` (with `nadir`): the old way, for something whose height is
-        known and whose width is not its height. The outline is unlifted about
-        the nadir by a fixed ratio, exactly as markers() does for a tag.
-
-    Without either the outline is reported as the table plane saw it.
+    With `lens_m` and `nadir` the object is taken to be a CUBE, and its own
+    outline says how tall it is -- range_block(). Size and position both come
+    out right, for any size of cube, and nothing has to be declared. Without
+    them the outline is reported as the table plane saw it.
 
     The outline of a solid object includes whichever SIDE faces the lens can see,
-    not just its top; range_block() uses that, the fixed-height path is made a
-    little generous by it -- the safe direction for choosing a gripper opening.
+    not just its top; range_block() uses that.
     """
-    if height_m > 0.0 and nadir is None:
-        raise ValueError(
-            "coloured() needs nadir= to correct for an object standing "
-            "above the table; pass kin.camera_nadir(pose)"
-        )
-    return outlines(colour_mask(frame), matrix, "colour",
-                    nadir=nadir, height_m=height_m, lens_m=lens_m)
+    return outlines(colour_mask(frame), matrix, "colour", nadir=nadir, lens_m=lens_m)
 
 
 def outlines(mask: np.ndarray, matrix: np.ndarray, label: str, *,
-             nadir: tuple[float, float] | None = None, height_m: float = 0.0,
-             lens_m: float | None = None, confidence: float = 1.0,
-             sort_by_x: bool = False) -> list[Target]:
-    """Every blob in a binary mask, as a Target on the table.
-
-    The one place a silhouette becomes a position and a size, shared by the
-    colour and change rungs so they cannot drift apart. The correction for
-    standing above the table is chosen as in coloured().
+             nadir: tuple[float, float] | None = None,
+             lens_m: float | None = None, confidence: float = 1.0) -> list[Target]:
+    """Every blob in a binary mask, as a Target on the table: the one place a
+    silhouette becomes a position and a size. Ranged as in coloured().
     """
     # CHAIN_APPROX_NONE, not SIMPLE: SIMPLE compresses a straight run to its two
     # endpoints, so a blob clipped along a whole frame edge keeps just two points
@@ -391,16 +238,11 @@ def outlines(mask: np.ndarray, matrix: np.ndarray, label: str, *,
                                        pixels=contour.reshape(-1, 2))
         else:
             quad = ws.apply(matrix, cv2.boxPoints(cv2.minAreaRect(contour)))
-            if height_m > 0.0:
-                centre = np.asarray(nadir, dtype=float)
-                quad = centre + (quad - centre) / _lift_ratio(height_m)
             target = _target_from_quad(quad, name, 0.0 if clipped else confidence,
                                        clipped=clipped, edges=edges, pixels=contour.reshape(-1, 2))
         if target.width_m * target.length_m < MIN_AREA_M2:
             continue
         found.append(target)
-    if sort_by_x:
-        return sorted(found, key=lambda t: t.x)
     return sorted(found, key=lambda t: math.hypot(t.x, t.y))
 
 
@@ -415,8 +257,7 @@ def chamfer_for(matrix: np.ndarray, pixels: np.ndarray) -> float:
     return float(CHAMFER_PX * np.linalg.norm(step - here))
 
 
-def edges_touched(pixels: np.ndarray, shape: tuple[int, ...],
-                  margin_px: int = CLIPPED_MARGIN_PX) -> frozenset[str]:
+def edges_touched(pixels: np.ndarray, shape: tuple[int, ...]) -> frozenset[str]:
     """Which borders of a picture this shape an outline in PIXELS runs into.
 
     Named by picture side -- "top" is the top row of the image, whatever part of
@@ -425,14 +266,15 @@ def edges_touched(pixels: np.ndarray, shape: tuple[int, ...],
     """
     pts = np.asarray(pixels, dtype=float).reshape(-1, 2)
     height, width = shape[0], shape[1]
+    margin = CLIPPED_MARGIN_PX
     touched = set()
-    if pts[:, 0].min() <= margin_px:
+    if pts[:, 0].min() <= margin:
         touched.add("left")
-    if pts[:, 1].min() <= margin_px:
+    if pts[:, 1].min() <= margin:
         touched.add("top")
-    if pts[:, 0].max() >= width - 1 - margin_px:
+    if pts[:, 0].max() >= width - 1 - margin:
         touched.add("right")
-    if pts[:, 1].max() >= height - 1 - margin_px:
+    if pts[:, 1].max() >= height - 1 - margin:
         touched.add("bottom")
     return frozenset(touched)
 
@@ -666,20 +508,6 @@ def _overlap(a: np.ndarray, b: np.ndarray, cell_m: float = 0.0005) -> float:
     ra, rb = raster(a), raster(b)
     union = np.count_nonzero(ra | rb)
     return float(np.count_nonzero(ra & rb) / union) if union else 0.0
-
-
-def _lift_ratio(height_m: float, lens_m: float = 0.212) -> float:
-    """How much larger something `height_m` up images than the table beneath it.
-
-    The lens height defaults to the calibrated survey pose's 212 mm. Callers that
-    look from anywhere else should pass their own, from kin.camera_height(pose).
-    """
-    if height_m <= 0.0:
-        return 1.0
-    if height_m >= lens_m:
-        raise ValueError(f"an object {height_m * 1000:.0f} mm tall is at or above "
-                         f"the lens, {lens_m * 1000:.0f} mm up")
-    return lens_m / (lens_m - height_m)
 
 
 def _unlift(quad: np.ndarray, nadir: np.ndarray, tag_m: float) -> np.ndarray:
@@ -1015,8 +843,10 @@ def declared_size(targets: list[Target], width_m: float) -> list[Target]:
             for t in targets]
 
 
-def annotate(frame, matrix: np.ndarray, targets: list[Target]):
-    """Draw the targets back onto the frame, so a human can check the detector.
+def annotate(frame, matrix: np.ndarray, targets: list[Target], colour=None, prefix: str = ""):
+    """Draw the targets back onto a copy of the frame, so a human can check the
+    detector: green if graspable, red if not -- or all in `colour`, outlines
+    too, labels after `prefix`, for the per-rung pictures below.
 
     Going back through the INVERSE homography means a mistake in the mapping shows
     up as a box in the wrong place, which drawing the original contours would hide.
@@ -1024,35 +854,21 @@ def annotate(frame, matrix: np.ndarray, targets: list[Target]):
     out = frame.copy()
     inverse = np.linalg.inv(matrix)
     for target in targets:
+        shade = colour or ((0, 200, 0) if target.graspable else (0, 0, 220))
+        if colour and target.pixels:
+            pts = np.round(np.asarray(target.pixels)).astype(np.int32).reshape(-1, 1, 2)
+            cv2.polylines(out, [pts], True, shade, 2)
         centre = ws.apply(inverse, [[target.x, target.y]])[0]
-        colour = (0, 200, 0) if target.graspable else (0, 0, 220)
-        cv2.circle(out, (int(centre[0]), int(centre[1])), 6, colour, 2)
+        cv2.circle(out, (int(centre[0]), int(centre[1])), 6, shade, 2)
         score = "" if target.confidence >= 1.0 else f" {target.confidence:.2f}"
-        cv2.putText(
-            out,
-            f"{target.label}{score} {target.width_m * 1000:.0f}mm",
-            (int(centre[0]) + 10, int(centre[1])),
-            cv2.FONT_HERSHEY_SIMPLEX, 0.45, colour, 1,
-        )
+        cv2.putText(out, f"{prefix}{target.label}{score} {target.width_m * 1000:.0f}mm",
+                    (int(centre[0]) + 10, int(centre[1])), cv2.FONT_HERSHEY_SIMPLEX, 0.45, shade, 1)
     return out
 
 
 # One colour per rung for the pictures below (BGR).
 RUNG_COLOURS = {"colour": (255, 160, 0), "tags": (255, 0, 255), "neural": (0, 220, 255),
                 "depth": (0, 200, 0)}
-
-
-def _draw_rung(out, matrix: np.ndarray, targets: list[Target], colour, rung: str) -> None:
-    inverse = np.linalg.inv(matrix)
-    for target in targets:
-        if target.pixels:
-            pts = np.round(np.asarray(target.pixels)).astype(np.int32).reshape(-1, 1, 2)
-            cv2.polylines(out, [pts], True, colour, 2)
-        centre = ws.apply(inverse, [[target.x, target.y]])[0]
-        cv2.circle(out, (int(centre[0]), int(centre[1])), 5, colour, 2)
-        cv2.putText(out, f"{rung}: {target.label} {target.width_m * 1000:.0f}mm",
-                    (int(centre[0]) + 8, int(centre[1]) - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                    colour, 1)
 
 
 def depth_picture(frame, matrix: np.ndarray, *, url: str | None = None,
@@ -1070,8 +886,7 @@ def depth_picture(frame, matrix: np.ndarray, *, url: str | None = None,
         if small is not None:
             full = cv2.resize(small, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR)
             picture = cv2.applyColorMap(full, cv2.COLORMAP_VIRIDIS)
-    _draw_rung(picture, matrix, targets, RUNG_COLOURS["depth"], "depth")
-    return targets, picture
+    return targets, annotate(picture, matrix, targets, RUNG_COLOURS["depth"], "depth: ")
 
 
 def mixed_picture(frame, matrix: np.ndarray, *, url: str | None = None,
@@ -1080,9 +895,8 @@ def mixed_picture(frame, matrix: np.ndarray, *, url: str | None = None,
     """Every rung on its own, UNGATED, each in its colour: what everything()'s
     gate is choosing between. A rung that is off says so in the corner."""
     out = frame.copy()
-    fixed = COLOUR_OBJECT_HEIGHT_M if (nadir is not None and lens_m is None) else 0.0
     rungs = [
-        ("colour", lambda: coloured(frame, matrix, nadir=nadir, height_m=fixed, lens_m=lens_m)),
+        ("colour", lambda: coloured(frame, matrix, nadir=nadir, lens_m=lens_m)),
         ("tags", lambda: markers(frame, matrix, tag_m=cfg.OBJECT_TAG_M, nadir=nadir, lens_m=lens_m)),
         ("neural", lambda: objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m) if url else None),
         ("depth", lambda: raised(frame, matrix, url=url, nadir=nadir, lens_m=lens_m) if url else None),
@@ -1092,63 +906,21 @@ def mixed_picture(frame, matrix: np.ndarray, *, url: str | None = None,
         try:
             found = run()
             note = f"{rung}: off" if found is None else f"{rung}: {len(found)}"
-        except (DetectorOffline, ValueError, FileNotFoundError) as exc:
+        except (DetectorOffline, ValueError) as exc:
             found, note = None, f"{rung}: off ({type(exc).__name__})"
-        _draw_rung(out, matrix, found or [], RUNG_COLOURS[rung], rung)
+        out = annotate(out, matrix, found or [], RUNG_COLOURS[rung], f"{rung}: ")
         cv2.putText(out, note, (8, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, RUNG_COLOURS[rung], 1)
         y += 18
     return out
 
 
-def background_path(dyaw: float = 0.0, name: str = "primary") -> Path:
-    """Where the empty-table photo for one look lives.
-
-    The primary calibrated look (dyaw 0) keeps the original unsuffixed filename so
-    that a calibration captured before the sweep existed is still found. Every
-    other station gets its yaw in the name, spelled without characters that need
-    quoting, and a station of a SECOND calibrated look gets that look's name too
-    -- the outer look at dyaw 0 is a different picture from the primary at 0.
-    """
-    tag = f"{dyaw:+.1f}".replace("+", "p").replace("-", "m").replace(".", "_")
-    if name != "primary":
-        return BACKGROUND_PATH.with_name(f"table_background_{name}_{tag}.png")
-    if abs(dyaw) < 0.05:
-        return BACKGROUND_PATH
-    return BACKGROUND_PATH.with_name(f"table_background_{tag}.png")
-
-
-def save_background(frame, dyaw: float = 0.0, name: str = "primary") -> None:
-    path = background_path(dyaw, name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(path), frame)
-
-
-def load_background(dyaw: float = 0.0, name: str = "primary"):
-    path = background_path(dyaw, name)
-    if not path.exists():
-        which = ("the calibrated look" if abs(dyaw) < 0.05
-                 else f"the {dyaw:+.0f} degree look")
-        if name != "primary":
-            which = f"the {name} look at {dyaw:+.0f} degrees"
-        raise FileNotFoundError(
-            f"no empty-table photo for {which} at {path} -- clear the table and "
-            f"run tools/detect_check.py --background first"
-        )
-    return cv2.imread(str(path))
-
-
 # ---------------------------------------------------------------- ladder ----
-MODES = ("auto", "changes", "colour", "depth", "markers", "yolo")
+MODES = ("auto", "colour", "depth", "markers", "yolo")
 
 # Two silhouettes of the same object from different rungs land within this of
 # each other; two objects the gripper could tell apart never do (18 mm minimum).
 SAME_OBJECT_M = 0.020
 
-# How tall the colour rung assumes an object is when it is NOT told the lens
-# height and so cannot range it: the lab box lying down. Being a few mm out
-# costs a few mm of position, in the safe direction of reporting the object
-# nearer the camera than it is.
-COLOUR_OBJECT_HEIGHT_M = 0.028
 
 def distinct(targets: list[Target], tol_m: float = SAME_OBJECT_M) -> list[Target]:
     """One target per object when several rungs saw the same thing.
@@ -1165,26 +937,24 @@ def distinct(targets: list[Target], tol_m: float = SAME_OBJECT_M) -> list[Target
 
 
 def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
-               lens_m: float | None, dyaw: float = 0.0, url: str | None = None,
-               look_name: str = "primary", note=print, hints: bool = True) -> list[Target]:
+               lens_m: float | None, url: str | None = None,
+               note=print, hints: bool = True) -> list[Target]:
     """Every rung at once, merged: the "auto" detector.
 
-    Tags say exactly where a tagged object is; silhouettes -- colour, change
-    against an empty-table photo if one exists, and the neural detector if it
-    is up -- say how big things are and find the ones with no tag. Each
-    silhouette is cube-ranged, so a pale cube the colour rung cannot see is
-    still sized and placed by the neural one, and a tag on top of any of them
-    takes over the position. Nothing here needs a declared size.
+    Tags say exactly where a tagged object is; silhouettes -- colour, and the
+    neural detector if it is up -- say how big things are and find the ones
+    with no tag. Each silhouette is cube-ranged, so a pale cube the colour rung
+    cannot see is still sized and placed by the neural one, and a tag on top of
+    any of them takes over the position. Nothing here needs a declared size.
 
     Rungs that are unavailable are skipped, not fallen back through: `url`
-    None means the vision service is known to be down, and a missing
-    background is simply a missing background.
+    None means the vision service is known to be down.
 
-    `hints=False` skips colour, changes and neural once depth has answered.
+    `hints=False` skips colour and neural once depth has answered.
     Past the gate below, what those rungs contribute is only what is cut off
     at the frame's edge, and that only serves a SEARCH, as hints of where to
     look next (sweep.hints). A scan or a re-look has no use for it, and on
-    2026-09-24 the three cost 440 ms a frame of the 670 (roboarm.metrics).
+    2026-09-24 those rungs cost 440 ms a frame of the 670 (roboarm.metrics).
     """
     with metrics.span("detect.tags"):
         tagged = markers(frame, matrix, tag_m=cfg.OBJECT_TAG_M, nadir=nadir, lens_m=lens_m)
@@ -1202,15 +972,8 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
             note(f"  vision service refused the frame: {exc}")
     shapes: list[Target] = []
     if hints or not depth_answered:
-        fixed = COLOUR_OBJECT_HEIGHT_M if (nadir is not None and lens_m is None) else 0.0
         with metrics.span("detect.colour"):
-            shapes = coloured(frame, matrix, nadir=nadir, height_m=fixed, lens_m=lens_m)
-        try:
-            with metrics.span("detect.changes"):
-                shapes += changes(frame, load_background(dyaw, look_name), matrix,
-                                  nadir=nadir, lens_m=lens_m)
-        except FileNotFoundError:
-            pass
+            shapes = coloured(frame, matrix, nadir=nadir, lens_m=lens_m)
         if url and not vision_down:
             try:
                 with metrics.span("detect.neural"):
@@ -1263,21 +1026,19 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
 
 
 def ladder(frame, mode: str, matrix: np.ndarray, *,
-           nadir: tuple[float, float] | None = None, dyaw: float = 0.0,
+           nadir: tuple[float, float] | None = None,
            object_mm: float | None = None, url: str | None = None,
-           lens_m: float | None = None, look_name: str = "primary",
-           note=print, hints: bool = True) -> list[Target]:
+           lens_m: float | None = None, note=print, hints: bool = True) -> list[Target]:
     """Run the chosen detector, dropping down a rung when one is unavailable.
 
-    "auto" is everything() -- the mode that needs no tag, no background and no
-    declared size. `lens_m` is the wrist lens's height above the table
-    (kin.camera_height), which lets every silhouette be read as a cube.
+    "auto" is everything() -- the mode that needs no tag and no declared size.
+    `lens_m` is the wrist lens's height above the table (kin.camera_height),
+    which lets every silhouette be read as a cube.
 
     `mode` is one of MODES. "yolo" needs the vision container; if nothing answers
     it falls to "markers" with a note rather than failing, because a working lower
-    rung beats no detection at all. "markers" fuses the tag's position with the
-    silhouette's size when an empty-table photo exists, and says so when it does
-    not. "changes" needs that photo and raises FileNotFoundError without it.
+    rung beats no detection at all. "markers" is the tags alone; without `lens_m`
+    a tag cannot measure its object, and the size is the tag's own.
 
     `note` is told about fallbacks -- print for a tool, a log for a server. A
     declared `object_mm` overrides whatever size the detector measured, on every
@@ -1287,8 +1048,8 @@ def ladder(frame, mode: str, matrix: np.ndarray, *,
         raise ValueError(f"unknown detector {mode!r}; one of {', '.join(MODES)}")
     found: list[Target] = []
     if mode == "auto":
-        found = everything(frame, matrix, nadir=nadir, lens_m=lens_m, dyaw=dyaw,
-                           url=url, look_name=look_name, note=note, hints=hints)
+        found = everything(frame, matrix, nadir=nadir, lens_m=lens_m,
+                           url=url, note=note, hints=hints)
     elif mode in ("yolo", "depth"):
         rung = objects if mode == "yolo" else raised
         try:
@@ -1298,23 +1059,9 @@ def ladder(frame, mode: str, matrix: np.ndarray, *,
             mode = "markers"
 
     if mode == "colour":
-        if lens_m is not None and nadir is not None:
-            found = coloured(frame, matrix, nadir=nadir, lens_m=lens_m)
-        else:
-            found = coloured(frame, matrix, nadir=nadir, height_m=COLOUR_OBJECT_HEIGHT_M)
+        found = coloured(frame, matrix, nadir=nadir, lens_m=lens_m)
 
     if mode == "markers":
-        tagged = markers(frame, matrix, tag_m=cfg.OBJECT_TAG_M, nadir=nadir, lens_m=lens_m)
-        try:
-            found = fuse(tagged, changes(frame, load_background(dyaw, look_name), matrix,
-                                         nadir=nadir, lens_m=lens_m))
-        except FileNotFoundError:
-            if lens_m is None:
-                note("  no empty-table photo, so object SIZE comes from the tag itself;")
-                note("  anything wider than its tag will be refused. Capture a background first.")
-            found = tagged
-    elif mode == "changes":
-        found = changes(frame, load_background(dyaw, look_name), matrix,
-                        nadir=nadir, lens_m=lens_m)
+        found = markers(frame, matrix, tag_m=cfg.OBJECT_TAG_M, nadir=nadir, lens_m=lens_m)
 
     return declared_size(found, object_mm / 1000) if object_mm else found

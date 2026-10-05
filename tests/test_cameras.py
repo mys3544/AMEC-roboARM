@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PROBE = """
 import json
 import numpy as np
-from roboarm import camera, detect
+from roboarm import camera
 from roboarm import config as cfg
 from roboarm import workspace as ws
 undistort = camera.Undistort()
@@ -27,7 +27,6 @@ print(json.dumps({
     "size": list(cfg.WRIST_CAM_SIZE),
     "lens": [cfg.CAMERA_FROM_J4, cfg.CAMERA_ABOVE_TOOL, cfg.CAMERA_OFF_AXIS, cfg.CAMERA_SIDE],
     "calibration": ws.CALIBRATION_PATH.as_posix(),
-    "background": detect.BACKGROUND_PATH.as_posix(),
     "corrects": bool((undistort(ramp) != ramp).any()),
     "other_sizes_untouched": undistort(other) is other,
 }))
@@ -54,7 +53,6 @@ def test_the_c930e_is_the_default():
     assert got["camera"] == "c930e"
     assert got["size"] == [848, 480]
     assert got["calibration"] == "/app/data/cameras/c930e/table_homography.json"
-    assert got["background"] == "/app/data/cameras/c930e/table_background.png"
     assert got["corrects"] is True
     assert got["other_sizes_untouched"] is True
 

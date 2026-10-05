@@ -1,62 +1,27 @@
-// The console's point-cloud viewer: WebGL2, no library. It reads a PLY (binary little-endian or
-// ASCII; x, y, z and red, green, blue -- anything else, like PCL's normals, is skipped), draws it
-// as round points coloured by the camera or by height, and turns around it with the mouse:
-// drag turns, right-drag or shift-drag moves, the wheel zooms, a double-click goes back home.
-// Loaded by console.js only when the 3D view opens.
+// The console's point-cloud viewer: WebGL2, no library. It reads the one PLY the scans come as,
+// draws it as round points coloured by the camera or by height, and turns around it with the
+// mouse: drag turns, right-drag or shift-drag moves, the wheel zooms, a double-click goes back
+// home. Loaded by console.js only when the 3D view opens.
 
-const TYPES = {
-  char: ['getInt8', 1], int8: ['getInt8', 1], uchar: ['getUint8', 1], uint8: ['getUint8', 1],
-  short: ['getInt16', 2], int16: ['getInt16', 2], ushort: ['getUint16', 2], uint16: ['getUint16', 2],
-  int: ['getInt32', 4], int32: ['getInt32', 4], uint: ['getUint32', 4], uint32: ['getUint32', 4],
-  float: ['getFloat32', 4], float32: ['getFloat32', 4], double: ['getFloat64', 8], float64: ['getFloat64', 8],
-};
+// What m3pro/arena/ortho.py's write_ply writes, and nothing else: binary little-endian, each
+// point float x y z then uchar red green blue, 15 bytes.
+const HEADER = new RegExp('^ply\nformat binary_little_endian 1\\.0\nelement vertex (\\d+)\n' +
+  'property float x\nproperty float y\nproperty float z\n' +
+  'property uchar red\nproperty uchar green\nproperty uchar blue\nend_header\n');
 
 export function parsePly(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const head = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 65536)));
-  const end = head.indexOf('end_header');
-  if (!head.startsWith('ply') || end < 0) throw new Error('not a PLY file');
-  const start = head.indexOf('\n', end) + 1;   // the header is ASCII: characters are bytes
-  let format = 'ascii', element = null, first = null, count = 0;
-  const props = [];
-  for (const line of head.slice(0, end).split(/\r?\n/)) {
-    const w = line.trim().split(/\s+/);
-    if (w[0] === 'format') format = w[1];
-    else if (w[0] === 'element') {
-      element = w[1];
-      first ??= element;
-      if (element === 'vertex') count = Number(w[2]);
-    } else if (w[0] === 'property' && element === 'vertex') {
-      if (w[1] === 'list') throw new Error('list properties on vertices are not supported');
-      if (!TYPES[w[1]]) throw new Error(`unknown PLY type ${w[1]}`);
-      props.push({ name: w[2], type: w[1] });
+  const head = new TextDecoder('latin1').decode(new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 512)));
+  const m = HEADER.exec(head);   // the header is ASCII: characters are bytes
+  if (!m) throw new Error('not the PLY ortho.py writes (binary little-endian; float x y z, uchar red green blue)');
+  const count = Number(m[1]);
+  if (m[0].length + count * 15 > buffer.byteLength) throw new Error('the PLY is shorter than its header says');
+  const dv = new DataView(buffer, m[0].length);
+  const pos = new Float32Array(count * 3), col = new Uint8Array(count * 3);
+  for (let n = 0; n < count; n++) {
+    for (let k = 0; k < 3; k++) {
+      pos[n * 3 + k] = dv.getFloat32(n * 15 + 4 * k, true);
+      col[n * 3 + k] = dv.getUint8(n * 15 + 12 + k);
     }
-  }
-  if (first !== 'vertex') throw new Error('the vertices must come first in the PLY');
-  const at = ['x', 'y', 'z', 'red', 'green', 'blue'].map(n => props.findIndex(p => p.name === n));
-  if (at.slice(0, 3).some(i => i < 0)) throw new Error('the PLY has no x, y, z');
-  const pos = new Float32Array(count * 3);
-  const col = new Uint8Array(count * 3).fill(200);   // grey where there is no colour
-  if (format === 'binary_little_endian') {
-    let stride = 0;
-    const offsets = props.map(p => { const o = stride; stride += TYPES[p.type][1]; return o; });
-    if (start + stride * count > buffer.byteLength) throw new Error('the PLY is shorter than its header says');
-    const dv = new DataView(buffer, start);
-    const get = at.map(i => (i < 0 ? null : [TYPES[props[i].type][0], offsets[i]]));
-    for (let n = 0; n < count; n++) {
-      const base = n * stride;
-      for (let k = 0; k < 3; k++) pos[n * 3 + k] = dv[get[k][0]](base + get[k][1], true);
-      for (let k = 0; k < 3; k++) if (get[k + 3]) col[n * 3 + k] = dv[get[k + 3][0]](base + get[k + 3][1], true);
-    }
-  } else if (format === 'ascii') {
-    const rows = new TextDecoder().decode(bytes.subarray(start)).split('\n');
-    for (let n = 0; n < count; n++) {
-      const v = rows[n].trim().split(/\s+/).map(Number);
-      for (let k = 0; k < 3; k++) pos[n * 3 + k] = v[at[k]];
-      for (let k = 0; k < 3; k++) if (at[k + 3] >= 0) col[n * 3 + k] = v[at[k + 3]];
-    }
-  } else {
-    throw new Error(`PLY format ${format} is not supported (binary_little_endian or ascii)`);
   }
   return { pos, col, count };
 }
@@ -119,11 +84,6 @@ function lookAt(eye, target, up) {
   return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0,
     -dot(x, eye), -dot(y, eye), -dot(z, eye), 1];
 }
-function multiply(a, b) {
-  const out = new Array(16).fill(0);
-  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) out[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
-  return out;
-}
 
 export function viewer(canvas) {
   const gl = canvas.getContext('webgl2', { antialias: true });
@@ -161,9 +121,10 @@ export function viewer(canvas) {
     const { target, az, el, dist } = cam;
     const eye = [target[0] + dist * Math.cos(el) * Math.cos(az), target[1] + dist * Math.cos(el) * Math.sin(az),
       target[2] + dist * Math.sin(el)];
-    const mvp = multiply(perspective(fov, w / h, dist / 200, dist * 20), lookAt(eye, target, [0, 0, 1]));
+    const mvp = new DOMMatrix(perspective(fov, w / h, dist / 200, dist * 20))   // also column-major
+      .multiply(new DOMMatrix(lookAt(eye, target, [0, 0, 1])));
     gl.useProgram(program);
-    gl.uniformMatrix4fv(u.mvp, false, new Float32Array(mvp));
+    gl.uniformMatrix4fv(u.mvp, false, mvp.toFloat32Array());
     gl.uniform1f(u.size, size * dpr);
     gl.uniform1i(u.mode, mode);
     gl.uniform2f(u.zr, zr[0], zr[1]);

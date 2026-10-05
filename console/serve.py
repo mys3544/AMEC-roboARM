@@ -22,7 +22,6 @@ Standard library only (and sherpa-onnx for voice, when it is there).
 import argparse
 import json
 import pathlib
-import shutil
 import socket
 import subprocess
 import sys
@@ -81,23 +80,14 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None):
             if path == "/api/voice":   # ready, loading, or why not; starts the model's load
                 return self.send(200, json.dumps(recognizer.status()).encode(), TYPES[".json"])
             if path.startswith("/clouds/"):
-                return self.cloud(urllib.parse.unquote(path[len("/clouds/"):]))
-            file = (HERE / ("index.html" if path == "/" else path.lstrip("/"))).resolve()
-            if file.parent != HERE or file.suffix not in TYPES or not file.is_file():
-                return self.error(404, "not found")
-            self.send(200, file.read_bytes(), TYPES[file.suffix])
+                return self.file(clouds, urllib.parse.unquote(path[len("/clouds/"):]), CLOUD_TYPES)
+            self.file(HERE, "index.html" if path == "/" else path.lstrip("/"), TYPES)
 
-        def cloud(self, name):
-            file = (clouds / name).resolve()
-            if file.parent != clouds.resolve() or file.suffix not in CLOUD_TYPES or not file.is_file():
+        def file(self, folder, name, types):   # from that folder only, and only of those types
+            file = (folder / name).resolve()
+            if file.parent != folder.resolve() or file.suffix not in types or not file.is_file():
                 return self.error(404, "not found")
-            self.send_response(200)   # streamed: a full-size export is tens of MB
-            self.send_header("Content-Type", CLOUD_TYPES[file.suffix])
-            self.send_header("Content-Length", str(file.stat().st_size))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            with file.open("rb") as f:
-                shutil.copyfileobj(f, self.wfile)
+            self.send(200, file.read_bytes(), types[file.suffix])
 
         def do_POST(self):
             if self.path.startswith("/robot/"):
@@ -142,44 +132,25 @@ def list_clouds(folder):
             for f, floor in zip(files, prints)]
 
 
-class Server(ThreadingHTTPServer):
-    daemon_threads = True
-
-
-class Server6(Server):
+class Server6(ThreadingHTTPServer):
     address_family = socket.AF_INET6
-
-
-def start_fakes(robots):
-    """Start the pretend robots and wait (up to 60 s) until each answers."""
-    procs = [subprocess.Popen(cmd, cwd=ROOT) for cmd in FAKES]
-    for robot in robots:
-        for _ in range(120):
-            try:
-                urllib.request.urlopen(robot["url"].rstrip("/") + "/api/state", timeout=1).close()
-                break
-            except (urllib.error.URLError, OSError):
-                time.sleep(0.5)
-        else:
-            print(f"note: the pretend {robot['id']} did not answer", file=sys.stderr)
-    return procs
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--fake", action="store_true", help="pretend robots, no hardware")
-    parser.add_argument("--port", type=int, default=PORT)
     args = parser.parse_args()
     robots = json.loads((HERE / ("robots.fake.json" if args.fake else "robots.json")).read_text())
-    procs = start_fakes(robots) if args.fake else []
+    # not waited for: the page asks each robot every 0.5 s until it answers
+    procs = [subprocess.Popen(cmd, cwd=ROOT) for cmd in FAKES] if args.fake else []
     handler = make_handler(robots)
-    server = Server(("127.0.0.1", args.port), handler)
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), handler)
     try:   # "localhost" is tried as ::1 first on Windows; without this each connection waits
-        server6 = Server6(("::1", args.port), handler)
+        server6 = Server6(("::1", PORT), handler)
         threading.Thread(target=server6.serve_forever, daemon=True).start()
     except OSError:
         pass   # no IPv6 loopback here
-    print(f"console: http://localhost:{args.port}/  (Ctrl-C to stop)", flush=True)
+    print(f"console: http://localhost:{PORT}/  (Ctrl-C to stop)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

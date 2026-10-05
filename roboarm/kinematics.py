@@ -136,7 +136,6 @@ def inverse(
     y: float,
     z: float,
     pitch_deg: float = 90.0,
-    elbow_up: bool = True,
     gripper: int = cfg.GRIPPER_CLOSED,
     lowest_z: float | None = None,
 ) -> Pose:
@@ -147,8 +146,6 @@ def inverse(
     because the arm has 5 degrees of freedom, not 6: choosing a position uses three
     of them and the pitch uses the fourth, leaving only roll free. Tool yaw is
     always tied to base yaw and cannot be chosen.
-
-    `elbow_up` picks between the two ways to bend the elbow through the same point.
 
     `gripper` is not optional information: an open gripper is 28 mm shorter than a
     closed one, so solving without it puts the fingertips 28 mm off. It defaults to
@@ -184,11 +181,9 @@ def inverse(
             f"..{(L1 + L2) * 1000:.0f} mm"
         )
 
-    # Two-link solution, angles measured from the +reach axis.
+    # Two-link solution, angles measured from the +reach axis, elbow up.
     cos_elbow = (distance**2 - L1**2 - L2**2) / (2 * L1 * L2)
-    elbow = math.acos(max(-1.0, min(1.0, cos_elbow)))
-    if elbow_up:
-        elbow = -elbow
+    elbow = -math.acos(max(-1.0, min(1.0, cos_elbow)))
     shoulder = math.atan2(wrist_z, wrist_r) - math.atan2(
         L2 * math.sin(elbow), L1 + L2 * math.cos(elbow)
     )
@@ -282,7 +277,6 @@ def solve(
     y: float,
     z: float,
     pitches: tuple[float, ...] = GRASP_PITCHES,
-    elbow_up: bool = True,
     gripper: int = cfg.GRIPPER_CLOSED,
     lowest_z: float | None = None,
 ) -> tuple[Pose, float]:
@@ -292,8 +286,7 @@ def solve(
     """
     for pitch in pitches:
         try:
-            return inverse(x, y, z, pitch, elbow_up=elbow_up, gripper=gripper,
-                           lowest_z=lowest_z), pitch
+            return inverse(x, y, z, pitch, gripper=gripper, lowest_z=lowest_z), pitch
         except Unreachable:
             continue
     raise Unreachable(

@@ -21,7 +21,7 @@ def test_a_span_is_counted_and_timed(reg):
     stage = reg.snapshot()["stages"]["detect"]
     assert stage["count"] == 3
     assert stage["total_s"] == pytest.approx(0.03, abs=0.02)
-    assert stage["p50_ms"] >= 9
+    assert stage["mean_ms"] >= 9
 
 
 def test_a_run_adds_up_its_top_level_stages_only(reg):

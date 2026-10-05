@@ -41,7 +41,7 @@ from urllib.parse import urlparse
 from roboarm import camera
 from roboarm import config as cfg
 from roboarm.arm import ArmError
-from roboarm.web.server import Server, send_json, send_mjpeg
+from roboarm.web.server import Server, send_bytes, send_json, send_mjpeg
 
 # Everything a caller may invoke on the arm. Anything else is a 400, so a bug on
 # the laptop cannot reach into the SDK object behind it.
@@ -96,8 +96,6 @@ class Bridge:
                 raise ArmError(self.arm_error or "arm is not connected")
             # A stale interrupt from the last stop must not abort this new call.
             self._interrupt.clear()
-            if method == "battery":
-                return float(self.arm.battery())
             fn = getattr(self.arm, method)
             return fn(*[_int_keys(a) for a in args],
                       **{k: _int_keys(v) for k, v in kwargs.items()})
@@ -167,11 +165,7 @@ class Handler(BaseHTTPRequestHandler):
         bridge can."""
         headers = {"Content-Type": self.headers["Content-Type"]} if body is not None else {}
         status, reply = vision_request(cfg.DETECTOR_URL + tail, body, headers)
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(reply)))
-        self.end_headers()
-        self.wfile.write(reply)
+        send_bytes(self, reply, "application/json", status)
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path

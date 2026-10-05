@@ -6,15 +6,14 @@ sweep-pick-place runs in well under a second.
 """
 
 import json
-import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
-from pathlib import Path
 
 import numpy as np
 import pytest
+from conftest import _wait
 
 from roboarm import camera, detect, grasp
 from roboarm import config as cfg
@@ -37,9 +36,7 @@ def world():
 
 
 @pytest.fixture
-def sess(world, monkeypatch):
-    monkeypatch.setattr(detect, "BACKGROUND_PATH",
-                        Path(tempfile.mkdtemp()) / "table_background.png")
+def sess(world):
     arm = sim.SimArm(world, time_scale=0)
     s = session.Session(
         arm_factory=lambda: arm,
@@ -61,15 +58,6 @@ def url(sess):
     thread.start()
     yield f"http://127.0.0.1:{srv.server_port}"
     srv.shutdown()
-
-
-def _wait(condition, timeout: float = 5.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if condition():
-            return True
-        time.sleep(0.02)
-    raise AssertionError("timed out waiting")
 
 
 def get(url: str, path: str) -> dict:
@@ -111,22 +99,19 @@ def test_stream_hands_out_only_newer_frames():
     assert got is None and seq == 1, "nothing newer, so nothing handed out"
 
 
-def test_settled_returns_frames_taken_after_the_settle_time():
+def test_settled_returns_a_frame_taken_after_the_settle_time():
     stream = camera.Stream(device=-1)
-    stamps = []
 
     def feed():
         for i in range(12):
             frame = np.full((2, 2, 3), i, np.uint8)
             stream.publish(frame)
-            stamps.append(time.monotonic())
             time.sleep(0.03)
     threading.Thread(target=feed, daemon=True).start()
     started = time.monotonic()
-    frames = stream.settled(settle_s=0.15, count=2)
-    assert len(frames) == 2
-    # Both frames were published after the settle window, not before.
-    assert all(int(f[0, 0, 0]) >= 4 for f in frames)
+    frame = stream.settled(settle_s=0.15)
+    # Published after the settle window, not before.
+    assert int(frame[0, 0, 0]) >= 4
     assert time.monotonic() - started >= 0.15
 
 
@@ -483,18 +468,6 @@ def test_picking_a_chosen_target_by_index(world, url):
     post(url, "/api/auto/start", {"job": "pick", "index": good, "refine": False})
     assert finished(url, timeout=20)["status"] == "done"
     assert at_drop_pose(world.blocks[0])
-
-
-def test_background_is_captured_per_station(url):
-    post(url, "/api/mode", {"mode": "auto"})
-    post(url, "/api/auto/start", {"job": "background"})
-    assert finished(url)["status"] == "done"
-    assert detect.background_path(0.0).exists()
-    assert detect.background_path(25.0).exists()
-    # ...and the changes detector can now use them.
-    post(url, "/api/view", {"view": "detect", "detector": "changes"})
-    _wait(lambda: get(url, "/api/state")["detection"]["error"] is None
-          and get(url, "/api/state")["detection"]["at_station"])
 
 
 def test_jobs_need_a_calibration(monkeypatch, world):

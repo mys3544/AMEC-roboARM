@@ -31,9 +31,8 @@ then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fak
   and logs how long each took to confirm (pretend robots: M3 20 ms, X3 about 0.8 s).
 - **3D scan:** the M3's coloured 3D scans of the arena, as `m3pro/tools/arena_map.py
   rtab-export` leaves them in `m3pro/out/arena/rtab/` (on this laptop, so no robot needed); pick
-  one from the list, or open or drop any `.ply`. Drag turns, right-drag or Shift-drag moves,
-  the wheel (or a pinch) zooms, a double-click or "reset view" goes back to the view from
-  above. Camera colour or height colour (0 to 45 cm above the floor, blue to red), and the point
+  one from the list. Drag turns, right-drag or Shift-drag moves, the wheel (or a pinch) zooms,
+  a double-click or "reset view" goes back to the view from above. Camera colour or height colour (0 to 45 cm above the floor, blue to red), and the point
   size (a 7 MB export, 463k points, is on screen in 0.1-0.2 s). "Floor print" shows the
   export's floor print instead (`NAME_floor.png`: the floor from above, 1 cm a pixel), turned a
   quarter when it stands upright so that it lies as the 3D view starts, the same way round.
@@ -45,9 +44,9 @@ How it is built: `serve.py` (standard library) serves the page and passes JSON t
 straight from the robots. The scans come from `serve.py` too: `/clouds.json` lists the PLY
 files in the export folder, each with its floor print, and `/clouds/<name>` is one of those
 (that folder, `.ply` and `.png` only).
-`cloud.js` draws them with WebGL2 and no library (binary little-endian or ASCII PLY, x y z
-and red green blue; other properties skipped), loaded only when the 3D view opens. No
-framework, no build step. It listens on localhost only (IPv4 and IPv6: on Windows `localhost`
+`cloud.js` draws them with WebGL2 and no library (the one PLY `m3pro/arena/ortho.py` writes:
+binary little-endian, float x y z and uchar red green blue; any other is refused), loaded only
+when the 3D view opens. No framework, no build step. It listens on localhost only (IPv4 and IPv6: on Windows `localhost`
 is tried as `::1` first, and without it every connection waited 2 s). Not yet: dockview panels
 (drag, split, float), the arena panel with both robots on the mat, SSE instead of polling.
 
@@ -89,22 +88,21 @@ it, and typed commands still work.
   `{"kind", "colour", "size_mm"}`, `pick/cleanup`, `pick/home`, and STOP ALL sends `pick/stop`;
   the page polls `pick/state`. Until that entry is in `robots.json`, an M3 command says "M3 arm
   not connected".
-- **The page** shows the state, what was heard, the command (as JSON), what was done, the time
-  from letting go to the command, and the last 12. The microphone opens on the first press (the
-  browser asks once) and stays open while the page is; 0.3 s from before each press is kept, so
-  a word begun a moment early is not cut; a press is sent after 15 s at most. Not in a popped-out
-  window.
-- **The wire:** `POST /api/voice` with a WAV (16-bit PCM, any rate; the page sends 16 kHz
-  mono) answers `{"text", "intent", "audio_s", "asr_ms"}`; with `Content-Type: text/plain` the
-  text is parsed only. `GET /api/voice` says ready / loading / why not, and starts the load: the
+- **The page** shows the state, what was heard, the command (as JSON), what was done, and the
+  time from letting go to the command; the Log keeps each one. The microphone opens on the
+  first press (the browser asks once) and stays open while the page is; 0.3 s from before each
+  press is kept, so a word begun a moment early is not cut; a press is sent after 15 s at most.
+  Not in a popped-out window.
+- **The wire:** `POST /api/voice` with a WAV (16-bit PCM mono, any rate; the page sends the
+  microphone's own, and sherpa-onnx resamples to 16 kHz) answers `{"text", "intent", "audio_s",
+  "asr_ms"}`; with `Content-Type: text/plain` the text is parsed only. `GET /api/voice` says ready / loading / why not, and starts the load: the
   page asks as it opens, so the model is in memory (serve.py then holds 0.8 GB) by the first word.
 - **Measured** on this laptop (i7-10875H, 2026-10-01): the model loads in 2.8 s (3.3 s with the
   pretend robots running). Recognition with 4 threads: "Stop." (1.4 s of audio) 154 ms, "Go
   home." (1.6 s) 177 ms, "Pick up the red cube." (2.5 s) 207 ms, 3.5 s 300 ms; 1 thread 327 /
   377 / 513 ms, 2 threads 186 / 215 / 295 ms, 8 threads no better than 4. In the page, letting go
   to the command: 277 ms for a 2.5 s recording, 380-450 ms for 2.7-4.3 s, with both pretend
-  robots on the same laptop; the page's own part (resample, WAV, POST, parse) is 15-20 ms of it.
-  Seven commands spoken by Windows' own voices, all heard and parsed right; no real voice yet.
-- `python console/voice.py hear [WAV...]` prints what the model hears in each file and how fast
-  (no files: the model's own `test_wavs`); `python console/voice.py parse pick up the red cube`
-  prints the command in a sentence.
+  robots on the same laptop; the page's own part (then also a resample to 16 kHz; WAV, POST,
+  parse) is 15-20 ms of it. Seven commands spoken by Windows' own voices, all heard and parsed
+  right; no real voice yet.
+- `python console/voice.py parse pick up the red cube` prints the command in a sentence.

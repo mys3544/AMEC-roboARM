@@ -1,8 +1,8 @@
 """Sweep tests. Pure geometry against the REAL calibration -- no hardware.
 
-The homography below is the one actually fitted on the robot on 2026-09-08 (the
-fit that was then validated end to end to 2 mm), copied out of
-data/table_homography.json. Using the real matrix rather than a synthetic one is
+The homography (sim.REAL_H, the simulator's too) is the one actually fitted on the
+robot on 2026-09-08 (the fit that was then validated end to end to 2 mm), copied
+out of data/table_homography.json. Using the real matrix rather than a synthetic one is
 the point: the coverage numbers these tests assert are the coverage numbers the
 robot actually gets, so if a future recalibration moves the camera enough to open
 a hole in the ring, this suite says so instead of passing on a made-up matrix.
@@ -16,14 +16,7 @@ import pytest
 from roboarm import config as cfg
 from roboarm import detect, sweep
 from roboarm import kinematics as kin
-
-# data/table_homography.json, fitted 2026-09-08, worst residual 0.48 mm over 8 points.
-REAL_H = np.array([
-    [1.5806220846933396e-05, -2.412854587985502e-04, 2.1607999921844648e-01],
-    [-2.2744926875526548e-04, -3.5041628047172227e-07, 9.179117812253038e-02],
-    [5.9373685046794684e-05, -8.77513698668719e-05, 1.0],
-])
-REAL_SURVEY = {1: 90, 2: 56, 3: 23, 4: 10, 5: 89, 6: 30}
+from roboarm.web.sim import REAL_H, REAL_SURVEY
 
 # Enumerating the reachable set asks the IK about 20000 points, which is a second
 # or so. Every coverage test wants the same answer, so it is computed once.

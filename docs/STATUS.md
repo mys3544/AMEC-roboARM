@@ -286,7 +286,7 @@ the board (bridge stopped): `calibrate_table.py --look near
 corner at 157/+31 (model 151/+29); the near corners the verify would have
 picked first are inside the 122 mm nearest grasp point, so it now skips to
 the nearest reachable one. `--look {primary,outer,near}` replaces `--outer`
-(kept as an alias). `sweep.hints` now sends a near-edge clip to the nearer
+(kept as an alias until 2026-10-05). `sweep.hints` now sends a near-edge clip to the nearer
 look (`nearest_of`, the mirror of `reach_of`); 24 stations per sweep; the
 ride does three passes. 288 tests. Bands from the fitted matrices: primary
 110..218, outer 133..266, near 59..179 mm.
@@ -556,8 +556,10 @@ DP-1 was ignored and the screen stayed black.
   never touches the per-user file; a real monitor has a real vendor and never
   matches it.
 - tools/display_setup.sh: `sudo bash tools/display_setup.sh install [PORT]
-  [--restart]`, `check`, `uninstall`. install also drops the stale DP-0 entry
-  from the per-user monitors.xml files. tools/sync_robot.py now pushes
+  [--restart]`, `check`, `uninstall`. install also dropped the stale DP-0 entry
+  from the per-user monitors.xml files (that one-time migration, and the
+  xorg.conf restore, were removed 2026-10-05: both robots had run them).
+  tools/sync_robot.py now pushes
   tools/*.sh, *.conf, *.xml and *.service as well.
 
 ## Verified on the robot (11:20, HP P244 plugged into the port)
@@ -577,8 +579,8 @@ Learned on the way: DP-1 is "Internal TMDS" (HDMI-style signalling) and the
 driver assumes a 165 MHz pixel clock for it without an EDID, which the
 148.5 MHz modeline fits. Remote access is gnome-remote-desktop, not x11vnc:
 tools/x11vnc.service was never installed and is deleted. Hostname `yahboom`.
-The robot's WiFi (IISLab-AMEC) has no internet, so the laptop has to hop over
-and back for every robot session: tools/wifi_hop.ps1.
+Since 2026-09-23 the laptop and the robot share IISLab-AMEC, which has
+internet, so the WiFi hop script (tools/wifi_hop.ps1) is gone.
 
 ## Still to verify by hand
 
@@ -960,8 +962,8 @@ is the SECOND calibrated look, tilted out, which the code already carries but
 which has never been fitted because it needs the ChArUco board FACE UP:
 
     (robot)  docker compose --profile bridge stop bridge      # it holds the camera
-             docker compose run --rm --no-deps core python tools/calibrate_table.py --outer
-             docker compose run --rm --no-deps core python tools/calibrate_table.py --outer --verify
+             docker compose run --rm --no-deps core python tools/calibrate_table.py --look outer
+             docker compose run --rm --no-deps core python tools/calibrate_table.py --look outer --verify
              docker compose --profile bridge up -d bridge
 
 Then the sweep rings both looks (primary ring first, then the outer ring),
@@ -980,9 +982,9 @@ look tries the primary first. Nothing else needs changing.
 ## How to run (unchanged)
 
 * robot: `docker compose --profile bridge up -d bridge` and
-  `docker compose --profile vision up -d vision` (the vision container needs
-  the CLIP fork installed -- it is in the requirements now; a rebuild picks
-  it up, a recreated container does not).
+  `docker compose --profile vision up -d vision` (the CLIP fork it needed
+  then, for text prompts, left the requirements on 2026-10-05: the
+  prompt-free model does not use it).
 * laptop: `.venv/Scripts/python tools/webapp.py --robot http://192.168.73.210:8761 --port 8091`
 * tests: 259, all passing (`PYTHONPATH=. .venv/Scripts/python -m pytest -q`,
   ruff clean).

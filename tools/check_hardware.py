@@ -10,8 +10,7 @@ Exits non-zero if any check fails, so it can gate a launch script.
 import sys
 import time
 
-import cv2
-
+from roboarm import camera
 from roboarm import config as cfg
 from roboarm.arm import read_pose
 
@@ -107,48 +106,20 @@ def check_arm() -> None:
     del bot
 
 
-def check_camera(index: int, name: str, size: tuple[int, int]) -> None:
-    cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
-    if not cap.isOpened():
-        record(name, FAIL, f"/dev/video{index} will not open (held by another process?)")
-        return
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
-
-    frames, start = 0, time.time()
-    frame = None
-    for _ in range(15):
-        ok, f = cap.read()
-        if ok:
-            frames, frame = frames + 1, f
-    cap.release()
-
-    if frames == 0:
-        record(name, FAIL, f"/dev/video{index} opened but returned no frames")
-    else:
-        fps = frames / (time.time() - start)
-        record(name, PASS, f"{frame.shape[1]}x{frame.shape[0]} @ ~{fps:.0f} fps")
-
-
-def check_aruco() -> None:
-    """Generate a marker and detect it back -- proves contrib is really present."""
+def check_camera(name: str) -> None:
+    started = time.monotonic()
     try:
-        d = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-        img = cv2.aruco.generateImageMarker(d, 7, 200)
-        img = cv2.copyMakeBorder(img, 40, 40, 40, 40, cv2.BORDER_CONSTANT, value=255)
-        _, ids, _ = cv2.aruco.ArucoDetector(d, cv2.aruco.DetectorParameters()).detectMarkers(img)
-        if ids is not None and 7 in ids.ravel():
-            record("aruco", PASS, "generate/detect round-trip")
-        else:
-            record("aruco", FAIL, "generated marker did not detect back")
-    except AttributeError as exc:
-        record("aruco", FAIL, f"opencv built without contrib: {exc}")
+        frames = camera.grab(15)
+    except camera.CameraError as exc:
+        record(name, FAIL, str(exc))
+        return
+    fps = len(frames) / max(time.monotonic() - started - camera.SETTLE_S, 1e-3)
+    record(name, PASS, f"{frames[-1].shape[1]}x{frames[-1].shape[0]} @ ~{fps:.0f} fps")
 
 
 def main() -> int:
     check_arm()
-    check_camera(cfg.WRIST_CAM, "wrist camera", cfg.WRIST_CAM_SIZE)
-    check_aruco()
+    check_camera("wrist camera")
 
     width = max(len(n) for n, _, _ in results)
     print()

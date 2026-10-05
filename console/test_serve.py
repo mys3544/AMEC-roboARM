@@ -56,7 +56,7 @@ def test_the_console_passes_json_through_and_serves_only_its_own_files():
     robot_port = start(ThreadingHTTPServer(("127.0.0.1", 0), Robot))
     robots = [{"id": "m3", "url": f"http://127.0.0.1:{robot_port}"},
               {"id": "gone", "url": "http://127.0.0.1:9"}]   # nothing listens on port 9
-    port = start(serve.Server(("127.0.0.1", 0), serve.make_handler(robots)))
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler(robots)))
     base = f"http://127.0.0.1:{port}"
 
     status, body = fetch(f"{base}/robot/m3/api/state?x=1")
@@ -86,7 +86,7 @@ def test_the_clouds_are_the_scans_and_floor_prints_in_their_folder_and_nothing_e
     (clouds / "old.ply").write_bytes(b"ply ")   # a scan without a floor print
     (clouds / "sub" / "deeper.ply").write_bytes(b"ply ")
     (tmp_path / "outside.ply").write_bytes(b"ply ")
-    port = start(serve.Server(("127.0.0.1", 0), serve.make_handler([], clouds)))
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler([], clouds)))
     base = f"http://127.0.0.1:{port}"
 
     listed = {c["name"]: c for c in json.loads(fetch(f"{base}/clouds.json")[1])}
@@ -102,5 +102,5 @@ def test_the_clouds_are_the_scans_and_floor_prints_in_their_folder_and_nothing_e
     assert fetch(f"{base}/clouds/nothing.ply")[0] == 404
 
     gone = serve.make_handler([], tmp_path / "not there")   # no export yet: an empty list
-    port = start(serve.Server(("127.0.0.1", 0), gone))
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), gone))
     assert json.loads(fetch(f"http://127.0.0.1:{port}/clouds.json")[1]) == []

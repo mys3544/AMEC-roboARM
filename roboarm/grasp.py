@@ -260,7 +260,7 @@ REACH_TOLERANCE_M = 0.004   # 2026-09-18: was tighter, and a third pass chasing 
 
 
 def _reach_to(arm: Arm, x: float, y: float, z: float, pitch: float, gripper: int,
-              speed_dps: float, passes: int = REACH_PASSES, roll: int | None = None) -> Pose:
+              speed_dps: float, roll: int | None = None) -> Pose:
     """Put the FINGERTIP at (x, y, z), correcting in millimetres, not degrees.
 
     Returns the pose finally commanded. The gripper is never commanded here -- only
@@ -269,7 +269,7 @@ def _reach_to(arm: Arm, x: float, y: float, z: float, pitch: float, gripper: int
     aim = [x, y, z]
     pose, _used = kin.solve(x, y, z, pitches=(pitch,), gripper=gripper)
     roll = arm.read()[5] if roll is None else roll
-    for _ in range(passes + 1):
+    for _ in range(REACH_PASSES + 1):
         with metrics.span("pick.pass"):
             arm.move_to(_arm_only(_rolled(pose, roll)), speed_dps=speed_dps)
             time.sleep(0.4)
@@ -364,7 +364,7 @@ def plan(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> P
     return Plan(_rolled(hover_pose, roll), _rolled(grasp_pose, roll), opening, pitch, roll)
 
 
-def pick(arm: Arm, target: detect.Target, verbose: bool = True,
+def pick(arm: Arm, target: detect.Target,
          reach_offset_m: float = cfg.REACH_OFFSET_M) -> bool:
     """Pick the target up. Returns whether anything is actually held.
 
@@ -377,8 +377,7 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
     step = plan(target, reach_offset_m=0.0)  # already offset; do not add it twice
 
     def say(message: str) -> None:
-        if verbose:
-            print(f"  {message}", flush=True)
+        print(f"  {message}", flush=True)
 
     if reach_offset_m:
         say(f"aiming {aim_offset(seen, reach_offset_m) * 1000:.0f} mm beyond the object along the reach "
@@ -428,10 +427,9 @@ def pick(arm: Arm, target: detect.Target, verbose: bool = True,
     with metrics.span("pick.descend"):
         _reach_to(arm, target.x, target.y, table + GRASP_HEIGHT_M + travel, step.pitch,
                   step.opening, DESCEND_DPS, roll=step.roll)
-    if verbose:
-        tip = kin.forward({**arm.read(), cfg.GRIPPER_ID: step.opening})
-        say(f"fingertip landed {math.dist(tip[:2], (target.x, target.y)) * 1000:.1f} mm "
-            f"from the aim point, {(tip[2] - table) * 1000:.1f} mm up")
+    tip = kin.forward({**arm.read(), cfg.GRIPPER_ID: step.opening})
+    say(f"fingertip landed {math.dist(tip[:2], (target.x, target.y)) * 1000:.1f} mm "
+        f"from the aim point, {(tip[2] - table) * 1000:.1f} mm up")
 
     say("closing")
     with metrics.span("pick.close"):
@@ -528,32 +526,29 @@ def from_drop_line(x: float, y: float) -> float:
     return math.hypot(x - (nx + t * ux), y - (ny + t * uy))
 
 
-def drop(arm: Arm, pose: Pose | None = None, verbose: bool = True,
-         extra_m: float | None = None) -> None:
+def drop(arm: Arm, extra_m: float | None = None) -> None:
     """Let go of whatever is held over the drop-off spot, as it is.
 
     No descent and no put-down: the pose was chosen by eye, high enough over the
     drop-off spot that the object simply falls the last few centimetres. The
     fingers end fully open, which is where the next pick wants them.
 
-    Where exactly: `pose` if given; otherwise cfg.DROP_POSE moved `extra_m`
-    further out, by default a random 0..cfg.DROP_SPREAD_M so that cubes do not
-    land on each other. Should that ever be out of reach, cfg.DROP_POSE itself.
+    Where exactly: cfg.DROP_POSE moved `extra_m` further out, by default a
+    random 0..cfg.DROP_SPREAD_M so that cubes do not land on each other. Should
+    that ever be out of reach, cfg.DROP_POSE itself.
     """
-    if pose is None:
-        if extra_m is None:
-            extra_m = random.uniform(0.0, cfg.DROP_SPREAD_M)
-        try:
-            pose = drop_pose(extra_m)
-        except kin.Unreachable:
-            pose, extra_m = dict(cfg.DROP_POSE), 0.0
-    if verbose:
-        # The closed tool length for the log line: a readback here would be one
-        # more round trip standing still with the object in hand.
-        x, y, z = kin.forward({**pose, cfg.GRIPPER_ID: cfg.GRIPPER_CLOSED})
-        spread = f" ({extra_m * 1000:.0f} mm further out)" if extra_m else ""
-        print(f"  dropping at {x * 1000:.0f} mm forward, {y * 1000:+.0f} mm left, "
-              f"{(z + cfg.TABLE_BELOW_PLATE) * 1000:.0f} mm up{spread}", flush=True)
+    if extra_m is None:
+        extra_m = random.uniform(0.0, cfg.DROP_SPREAD_M)
+    try:
+        pose = drop_pose(extra_m)
+    except kin.Unreachable:
+        pose, extra_m = dict(cfg.DROP_POSE), 0.0
+    # The closed tool length for the log line: a readback here would be one
+    # more round trip standing still with the object in hand.
+    x, y, z = kin.forward({**pose, cfg.GRIPPER_ID: cfg.GRIPPER_CLOSED})
+    spread = f" ({extra_m * 1000:.0f} mm further out)" if extra_m else ""
+    print(f"  dropping at {x * 1000:.0f} mm forward, {y * 1000:+.0f} mm left, "
+          f"{(z + cfg.TABLE_BELOW_PLATE) * 1000:.0f} mm up{spread}", flush=True)
     with metrics.span("drop.move"):
         arm.move_to(dict(pose), speed_dps=TRANSIT_DPS, settle=False)
     with metrics.span("drop.open"):
@@ -562,7 +557,7 @@ def drop(arm: Arm, pose: Pose | None = None, verbose: bool = True,
         time.sleep(0.15)
 
 
-def place(arm: Arm, x: float, y: float, verbose: bool = True,
+def place(arm: Arm, x: float, y: float,
           reach_offset_m: float = cfg.REACH_OFFSET_M) -> None:
     """Put down whatever is held, at (x, y) on the table.
 
@@ -585,8 +580,7 @@ def place(arm: Arm, x: float, y: float, verbose: bool = True,
             f"cannot place at ({x * 1000:.0f}, {y * 1000:+.0f}) mm: {exc}"
         ) from exc
 
-    if verbose:
-        print(f"  placing at {x * 1000:.0f} mm forward, {y * 1000:+.0f} mm left", flush=True)
+    print(f"  placing at {x * 1000:.0f} mm forward, {y * 1000:+.0f} mm left", flush=True)
     # The roll the object was picked with stays for the put-down, so it is set
     # down the way it was lifted.
     over_pose, down_pose = _rolled(over_pose, now[5]), _rolled(down_pose, now[5])

@@ -4,14 +4,10 @@
   --bar-ink: #f2f3f6;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root {
     --bg: #12151b; --panel: #1b1f27; --ink: #e5e8ef; --muted: #98a2b5; --line: #2e3441;
     --key: #262c37; --bar: #0b0d11;
   }
-}
-:root[data-theme="dark"] {
-  --bg: #12151b; --panel: #1b1f27; --ink: #e5e8ef; --muted: #98a2b5; --line: #2e3441;
-  --key: #262c37; --bar: #0b0d11;
 }
 
 * { box-sizing: border-box; }
@@ -114,7 +110,6 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .card.cloud { --robot: var(--muted); }
 .pick { font: inherit; font-size: 12px; color: var(--ink); background: var(--key);
         border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; max-width: 16em; }
-.file { font-size: 12px; color: var(--muted); cursor: pointer; text-decoration: underline; }
 .scene { position: relative; height: min(72vh, 760px, 100vw); min-height: 260px; background: #0e1116; }
 .scene canvas { width: 100%; height: 100%; display: block; }
 .scene .gl { touch-action: none; cursor: grab; }
@@ -127,7 +122,6 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .scene .nosignal { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
                    padding: 16px; text-align: center; }
 .scene .nosignal:empty { display: none; }
-.scene.dropping { outline: 3px dashed var(--accent); outline-offset: -3px; }
 .cloud-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 12px;
                   border-bottom: 1px solid var(--line); }
 .choice { display: flex; }
@@ -149,11 +143,9 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .said dt { color: var(--muted); font-size: 12px; line-height: 20px; }
 .said dd { margin: 0; overflow-wrap: anywhere; }
 .said code { font: 12px ui-monospace, Consolas, monospace; }
-.typed { display: flex; gap: 8px; margin-bottom: 8px; }
+.typed { display: flex; gap: 8px; }
 .typed input { flex: 1; min-width: 0; font: inherit; color: var(--ink); background: var(--key);
                border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
-.history { margin: 0; padding: 0; list-style: none; max-height: 140px; overflow: auto;
-           font: 12px/1.5 ui-monospace, Consolas, monospace; }
 body.solo #voice, body.solo #talk { display: none; }
 
 /* the log */

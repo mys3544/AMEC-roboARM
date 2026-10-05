@@ -191,7 +191,7 @@ def load_all() -> list[tuple[np.ndarray, dict[int, int], str]]:
     cannot change how FAR the camera is looking, because a yaw maps the table to
     itself and a tilt does not. Reaching the outer rim of the workspace therefore
     needs a genuinely second calibration, at a pose tilted further out, and this
-    is where it lives: appended under "also" by tools/calibrate_table.py --outer.
+    is where it lives: appended under "also" by tools/calibrate_table.py --look outer.
 
     Backwards compatible on purpose. A file written before any of this existed has
     no "also" key and simply yields one look, so nothing that predates the sweep

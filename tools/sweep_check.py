@@ -94,7 +94,7 @@ def report(calibrated, step_deg: float) -> list:
             print(f"  -- an outer RIM {deep:.0f} mm deep, not a hole: every bearing")
             print("     is looked at, but no yaw can make the camera look further")
             print("     out. A smaller --step will not help. Closing it needs a")
-            print("     second calibrated look, tilted out -- calibrate_table.py --outer.")
+            print("     second calibrated look, tilted out -- calibrate_table.py --look outer.")
         else:
             print(f"  -- {holes} of them are HOLES inside the covered band, with table")
             print("     seen further out at the same bearing. Try a smaller --step.")
@@ -114,7 +114,7 @@ def compare_steps(calibrated) -> None:
     print("\nPast about 25 deg the extra looks buy almost nothing: a yaw changes")
     print("the BEARING the camera looks at, never the distance, so more of them")
     print("cannot widen the radial band. That needs a second calibrated look --")
-    print("see calibrate_table.py --outer.")
+    print("see calibrate_table.py --look outer.")
 
 
 def do_look(arm: Arm, calibrated, step_deg: float) -> int:

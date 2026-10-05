@@ -140,7 +140,6 @@
         <select id="detector">
           <option value="auto">auto (tags + colour + neural + depth, measures size)</option>
           <option value="colour">colour</option>
-          <option value="changes">changes (needs background)</option>
           <option value="depth">depth (what stands up; vision service)</option>
           <option value="markers">tags</option>
           <option value="yolo">neural (vision service)</option>
@@ -246,7 +245,6 @@
         <button class="primary" data-job="pick">pick &amp; place</button>
         <button class="primary" data-job="pickall" title="walk every station picking and dropping as it goes, coming back to the station after each drop; stops when a round of the ring picks nothing">clear the table</button>
         <button data-job="survey">go to survey pose</button>
-        <button data-job="background" title="clear the table first: photographs the empty table from every station">capture background</button>
       </div>
       <div class="row">
         <label>place at x <input type="number" id="px" value="150" step="5"></label>
@@ -529,7 +527,6 @@
     const params = {job: name, first: $("firstchk").checked, dry_run: $("dryrun").checked,
                     refine: $("refinechk").checked, ...extra};
     if (name === "place") { params.x = +$("px").value; params.y = +$("py").value; }
-    if (name === "background" && !confirm("Is the table EMPTY? The background is what every later detection is compared against.")) return;
     api("/api/auto/start", params).then(poll).catch(() => {});
   }
   const viewBody = () => ({view: $("view").value, detector: $("detector").value,

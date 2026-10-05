@@ -7,6 +7,7 @@ import pytest
 
 from roboarm import config as cfg
 from roboarm import kinematics as kin
+from roboarm.web.sim import REAL_SURVEY as SURVEY_POSE
 
 # Gripper CLOSED, because that is the state the 575 mm table-to-fingertip figure
 # below was measured in, and the state the whole geometry fit was calibrated at.
@@ -131,22 +132,6 @@ def test_ik_output_is_directly_commandable():
         lo, hi = cfg.SAFE_LIMITS[joint]
         assert lo <= pose[joint] <= hi
     assert cfg.mast_clearance(pose) >= cfg.MIN_MAST_CLEARANCE_M
-
-
-def test_both_elbow_solutions_reach_the_same_point():
-    reference = {**STRAIGHT_UP, 2: 50, 3: 100, 4: 80}
-    target, pitch = kin.forward(reference), kin.tool_pitch(reference)
-    solved = []
-    for elbow_up in (True, False):
-        try:
-            solved.append(
-                kin.inverse(*target, pitch_deg=pitch, elbow_up=elbow_up, gripper=reference[6])
-            )
-        except kin.Unreachable:
-            continue
-    assert solved, "at least one elbow branch must solve a point FK produced"
-    for pose in solved:
-        assert math.dist(kin.forward(pose), target) < ROUNDING_LIMIT
 
 
 # ------------------------------------------------------------------ solve --
@@ -274,9 +259,7 @@ def test_gripper_gap_and_gripper_for_gap_agree():
 
 
 # ------------------------------------------------------------ wrist lens --
-# The pose the table homography was fitted at, from data/table_homography.json.
-SURVEY_POSE = {1: 90, 2: 56, 3: 23, 4: 10, 5: 89, 6: 30}
-
+# SURVEY_POSE: the pose the table homography was fitted at (sim.REAL_SURVEY).
 
 def test_lens_sits_where_the_ruler_said():
     """MEASURED: 125 mm from the fingertips closed, 96 mm open, i.e. 65 mm from J4.
@@ -321,18 +304,22 @@ def test_the_lens_offset_follows_the_arm_around():
 
 
 # ----------------------------------------------------------- wrist roll ----
+# Measured: 90 on from the rest roll (J5 179) the fingers close fore-aft, along the arm.
+ALONG_ARM = cfg.J5_FINGERS_ACROSS_ARM + 90
+
+
 def test_fingers_close_along_the_arm_at_the_measured_roll():
-    straight = {1: 90, 5: cfg.J5_FINGERS_ALONG_ARM}
+    straight = {1: 90, 5: ALONG_ARM}
     assert kin.finger_heading(straight) == pytest.approx(0.0)
-    across = {1: 90, 5: cfg.J5_FINGERS_ALONG_ARM - 90}
+    across = {1: 90, 5: ALONG_ARM - 90}
     assert abs(kin.finger_heading(across)) == pytest.approx(90.0)
 
 
 def test_rising_j5_turns_the_closing_line_clockwise():
     """Measured: a finger seen at the LEFT of the wrist picture at J5=110 had
     crossed to the RIGHT by J5=210."""
-    left = kin.finger_heading({1: 90, 5: cfg.J5_FINGERS_ALONG_ARM - 40})
-    right = kin.finger_heading({1: 90, 5: cfg.J5_FINGERS_ALONG_ARM + 40})
+    left = kin.finger_heading({1: 90, 5: ALONG_ARM - 40})
+    right = kin.finger_heading({1: 90, 5: ALONG_ARM + 40})
     assert left > 0 > right
 
 

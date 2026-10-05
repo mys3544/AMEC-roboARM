@@ -38,7 +38,7 @@ from pathlib import Path
 # the container, where PYTHONPATH=/app is set for us.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from roboarm import camera, detect
+from roboarm import camera
 from roboarm import config as cfg
 from roboarm import workspace as ws
 from roboarm.web import server, session
@@ -58,10 +58,7 @@ def real_session(out_dir: Path | None) -> session.Session:
 def remote_session(url: str) -> session.Session:
     from roboarm.web import remote
 
-    # Detection runs HERE, so the empty-table photos and sweep pictures live here.
-    data_dir = Path("data")
-    data_dir.mkdir(exist_ok=True)
-    detect.BACKGROUND_PATH = data_dir / "cameras" / cfg.WRIST_CAMERA / "table_background.png"
+    # Detection runs HERE, so the sweep pictures live here.
     out_dir = Path("out")
     out_dir.mkdir(exist_ok=True)
     return session.Session(
@@ -78,9 +75,8 @@ def remote_session(url: str) -> session.Session:
 def sim_session(time_scale: float) -> session.Session:
     from roboarm.web import sim
 
-    # Backgrounds and sweep pictures go somewhere harmless rather than /app/data.
+    # Sweep pictures go somewhere harmless rather than /out.
     scratch = Path(tempfile.mkdtemp(prefix="roboarm-sim-"))
-    detect.BACKGROUND_PATH = scratch / "table_background.png"
     arm = sim.SimArm(time_scale=time_scale)
     return session.Session(
         arm_factory=lambda: arm,
