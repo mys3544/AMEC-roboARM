@@ -48,10 +48,6 @@ import numpy as np
 from roboarm import m3arm, m3kinematics, m3vision, metrics
 
 LOOK = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90}   # the wide look: the floor from the bumper (12 cm) to 45 cm
-# The looks either side of it (2026-10-05, the user's: every cube in reach across the front): LOOK sees
-# J1 ~40-140 deg at reach; with these two, J1 0-180 from 17 cm out to 25. LOOK turned 60 deg is refused
-# (the hand over the chassis): these lean further out.
-WIDE_SIDES = ({1: 30, 2: 60, 3: 50, 4: 0, 5: 90}, {1: 150, 2: 60, 3: 50, 4: 0, 5: 90})
                                              # ahead, +-17 cm aside at the near edge; a 40 mm top there is
                                              # 22 cm off, the depth's near end ~19 (until 2026-10-01 J3 25:
                                              # from 20 cm, and the near cubes cut by the picture's edge)
@@ -365,6 +361,13 @@ BOX_MARGIN = 0.025
 BOX_DROP_OVER = 0.04
 BOX_MOVED_M, BOX_TURNED_DEG = 0.015, 5.0   # seen again further or turned more than this: it was moved
 SIDE_LOOK = {1: 180, 2: 95, 3: 30, 4: 0, 5: 90}   # the look at the box: lid, marker and inside in view
+# The looks either side of LOOK (2026-10-05, the user's: every cube in reach across the front -- LOOK sees
+# J1 ~40-140 deg at reach), in SIDE_LOOK's shape: that one turns freely, J1 0-180, where LOOK's is
+# allowed at J1 89-91 only (its hand at the bumper's limit) -- so the box look, the right one, the left
+# one and LOOK are one turn of J1 and a settle at 90, no way up and down between them (the user saw a
+# first try, in shapes of their own, go up over a carry pose and down again three times). With LOOK
+# they see every spot a pick reaches, J1 0-180.
+WIDE_SIDES = ({**SIDE_LOOK, 1: 160}, {**SIDE_LOOK, 1: 20})   # right first: from the box look at J1 180
 BOX_LOOKS = (180, 135, 90, 45, 0)   # J1s the box is looked for at, SIDE_LOOK's other joints: 15-61 cm out
                                     # from the arm's axis each way -- the box anywhere in the arm's half
                                     # circle, its marker facing the arm (the user's, 2026-10-02)
@@ -525,6 +528,16 @@ def way_to(here: dict, goal: dict, direct: bool = True) -> list[dict]:
         if m3arm.glide_problem(here, way) is None:
             return way
     return ways[-1]
+
+
+def look_way(here: dict, goal: dict) -> list[dict]:
+    """The way between looks without going up and down: straight there; else turned in SIDE_LOOK's
+    shape (it turns freely) and only then into the goal's; else way_to's."""
+    shape = {j: SIDE_LOOK[j] for j in (2, 3, 4)}
+    for way in ([goal], [{**goal, **shape}, goal], [{**here, **shape}, {**goal, **shape}, goal]):
+        if m3arm.glide_problem(here, way) is None:
+            return way
+    return way_to(here, goal)
 
 
 def nudge(found: list[dict], kit: list[dict], at=None, most: float = 0.10, right: float = 0.03) -> tuple[float, float] | None:
@@ -854,9 +867,9 @@ class Picker:
         def off_facing(o, j1):   # deg between the thing's bearing from J1's axis and the look's
             return abs(90 - math.degrees(math.atan2(o["centre"][1] - axis[1], o["centre"][0] - axis[0])) - j1)
         readings = []   # (thing, the J1 of the look that saw it)
-        for look in ((WIDE_SIDES[0], LOOK, WIDE_SIDES[1]) if sides else (LOOK,)):
+        for look in ((*WIDE_SIDES, LOOK) if sides else (LOOK,)):
             here = {int(j): v for j, v in self.call("read").items()}
-            self.through(way_to(here, {**look, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}), speed=self.dps("free_dps"))
+            self.through(look_way(here, {**look, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}), speed=self.dps("free_dps"))
             _camera, seen = self.look("wide" if look is LOOK else f"wide J1 {look[1]}")
             readings += [(o, look[1]) for o in seen]
         kept = []
@@ -1306,7 +1319,7 @@ class Picker:
             try:
                 record, found = self.pick(kind, found=found, skip=skip)
             except NothingToPick as exc:
-                self.say(f"clean-up done: {exc}" + (f" ({len(skip)} left: the arm refused the way)" if skip else ""))
+                self.say(f"clean-up done: {exc}" + (f" ({len(skip)} left: refused, or missed twice)" if skip else ""))
                 break
             except Refused as exc:   # nothing moved: on with the others, that one left
                 self.say(f"left the one at x {exc.spot[0]:.3f} y {exc.spot[1]:+.3f}: {exc.why}")
@@ -1318,8 +1331,10 @@ class Picker:
                 continue
             misses.append(np.asarray(record["target"][:2]))
             if len(misses) >= MAX_MISSES and np.linalg.norm(misses[-1] - misses[-2]) < MATCH_M:
-                self.say("clean-up stopped: the same spot missed twice")
-                break
+                # left, and on with the others (2026-10-05: the job stopped there, two more left untried)
+                self.say(f"left the one at x {misses[-1][0]:.3f} y {misses[-1][1]:+.3f}: missed twice")
+                skip.append(misses[-1])
+                misses = []
         self.drive_back()
         self.home()
 

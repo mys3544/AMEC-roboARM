@@ -40,6 +40,7 @@ class World:
         self.held, self.dropped, self.calls, self.driven, self.released = None, [], [], [], []
         self.base = np.zeros(2)   # where the base is from where it began
         self.refuse = None        # a spot the arm refuses to come down to
+        self.slip = []            # spots where the fingers shut on the thing and it is not held
         self.dropped_at = []
 
     def call(self, method, *args, **kwargs):
@@ -70,7 +71,8 @@ class World:
         elif method == "close_gripper":
             self.pose[6] = m3arm.gripper_angle(kwargs["width_mm"])
             point, _ = m3kinematics.grip(self.pose)
-            near = [b for b in self.boxes if math.hypot(b[0] - point[0], b[1] - point[1]) < 0.012]
+            near = [b for b in self.boxes if math.hypot(b[0] - point[0], b[1] - point[1]) < 0.012
+                    and all(math.hypot(b[0] - x, b[1] - y) > 0.02 for x, y in self.slip)]
             if near:
                 self.held = near[0]
                 self.boxes.remove(near[0])
@@ -572,3 +574,29 @@ def test_a_square_grip_turned_over_is_tried_once_j5_turns_past_180(monkeypatch):
     assert any(j5 > 180 for j5 in turned) and set(squares) <= set(turned)
     assert all(abs((j5 - s + 180) % 360 - 180) in (0, 90, 180) for j5 in turned for s in squares)
     assert all(j5 <= 270 for j5 in off)
+
+
+def test_the_looks_go_round_without_up_and_down():
+    """2026-10-05, the user: searching, the arm went up and down several times -- the side looks in
+    shapes of their own, each way between them over a carry pose. Now one turn of J1 from the box
+    look, and a settle into LOOK."""
+    opened = m3arm.gripper_angle(m3pick.OPEN_MM)
+    here = {**m3pick.SIDE_LOOK, 6: opened}
+    for look in (*m3pick.WIDE_SIDES, m3pick.LOOK):
+        goal = {**look, 6: opened}
+        way = m3pick.look_way(here, goal)
+        assert way[-1] == goal and m3arm.glide_problem(here, way) is None
+        assert all(q[2] <= 105 for q in way), way    # never up to a carry pose (J2 130-180)
+        here = goal
+    way = m3pick.look_way({**m3pick.LOOK, 6: opened}, {**m3pick.WIDE_SIDES[0], 6: opened})   # round again from LOOK
+    assert all(q[2] <= 105 for q in way), way
+
+
+def test_a_cube_missed_twice_is_left_and_the_others_still_picked():
+    """2026-10-05: the clean-up stopped at the second miss of one cube, two others left untried."""
+    world = World([(0.19, 0.0, 0, 0.03, 0.03), (0.22, 0.05, 10, 0.03, 0.03)])
+    world.slip = [(0.19, 0.0)]   # the nearer one: its grip never holds
+    picker = run(world, "clean_up")
+    said = " ".join(line["text"] for line in picker._log)
+    assert "missed twice" in said and picker.state["missed"] == 2 and picker.state["picked"] == 1, said
+    assert [b[:2] for b in world.boxes] == [(0.19, 0.0)] and len(world.dropped) == 1
