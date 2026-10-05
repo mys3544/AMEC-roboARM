@@ -35,7 +35,7 @@ STATE = ROOT / "out" / "touch" / "look.json"
 
 
 def look() -> None:
-    if "error" in he.http("/arm/call", {"method": "read"}):   # limp since power-on: home first
+    if "error" in he.http("/arm/call", {"method": "read"}):   # pose unknown since power-on: home first
         print("engage:", he.http("/arm/call", {"method": "engage"}).get("result"))
     reply = he.http("/arm/call", {"method": "move_to", "args": [LOOK], "kwargs": {"speed_dps": 25}})
     if "error" in reply:

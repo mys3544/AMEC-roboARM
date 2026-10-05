@@ -6,9 +6,12 @@ that the bridge and everything above it stay as they are. It is commanded over R
 What the M3's board does not do, and what that changes (surveyed 2026-09-30):
   * it reports no servo angles: read() is the pose last commanded, interpolated through a move
     under way -- believed, not measured; the camera is what checks where the arm really is;
-  * the arm is limp at power-up until the first command, at a pose nobody knows: nothing moves
-    until engage() has sent a known pose, slowly;
-  * there is no torque switch: the arm cannot be let go limp;
+  * at power-up the arm goes to Yahboom's ready pose (90, 120, 10, 20, 90, 0) and holds it, torque
+    on -- the board, and their gamepad node (yahboom_joy_M3Pro) sends the same at its start; which
+    pose it is in after that, nobody here knows: nothing moves until engage() has sent a known
+    pose, slowly;
+  * there is no torque switch: the arm cannot be let go limp, not even by a power cycle (the user
+    tried, 2026-10-05: it came up stiff in the ready pose);
   * the gripper servo stalls and can burn when told to close past an object: it closes only to
     a width, through Yahboom's width table, and cannot tell whether it holds -- look instead.
 
@@ -44,7 +47,7 @@ POSES = {
 }
 GRIPPER_WIDTH = m3kinematics.GRIPPER_WIDTH   # Yahboom's table, object width (mm) -> the gripper angle
 GRIPPER_OPEN = 30          # wider than the 60 mm entry: the kit's biggest piece is 40 mm
-ENGAGE_MS = 3000           # the first command, from wherever the limp arm is
+ENGAGE_MS = 3000           # the first command, from wherever the arm is (after power-up: the ready pose)
 MIN_BATTERY_V = 10.5       # the M3's board went silent at ~10.4 V under load (2026-09-30)
 POLL_S = 0.03              # how often a move under way looks for an interrupt
 BLEND = 0.8                # follow(): the next pose goes out this far through the one before
@@ -247,7 +250,7 @@ class M3Arm:
         return pose
 
     def engage(self, pose: Pose | None = None) -> Pose:
-        """The first command after power-up: the limp arm, wherever it is, goes to `pose`
+        """The first command after power-up: the arm, wherever it is, goes to `pose`
         (default: home) over ENGAGE_MS. From then on its pose is known."""
         goal = {int(j): int(v) for j, v in (pose or dict(zip(JOINTS, POSES["home"]))).items()}
         if set(goal) != set(JOINTS):

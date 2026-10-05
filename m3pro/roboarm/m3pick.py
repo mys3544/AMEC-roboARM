@@ -748,7 +748,7 @@ class Picker:
 
     # --------------------------------------------------------------------------- doing --
     def engaged(self) -> None:
-        """The arm is limp until its first command and its pose unknown: home first, ~3 s."""
+        """The arm's pose is unknown until its first command: home first, ~3 s."""
         try:
             self.call("read")
         except Exception:  # noqa: BLE001 -- the bridge's ArmError, or the HTTP wrapper's exit
