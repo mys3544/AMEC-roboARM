@@ -388,7 +388,8 @@ def test_both_of_a_cubes_square_wrists_are_tried():
     def wrist(grip):
         return m3pick.wrist_choices(grip, 74, 90, m3kinematics.finger_span(opened), [other])
     squares, _off = wrist(m3pick.plan_grasp(cube, 0.03, floor_clear=0.003)[1][-1])
-    assert len(squares) == 2 and abs(abs(squares[0] - squares[1]) - 90) <= 2
+    assert len(squares) >= 2 and all(abs((a - b + 45) % 90 - 45) <= 2 for a in squares for b in squares)   # 90 apart
+    assert sum(j5 <= 180 for j5 in squares) == 2   # both within 0-180 (and, past it, the same turned over)
     planned = m3pick.plan_grasp(cube, 0.03, floor_clear=0.003, wrist=wrist, gripper=opened, held=m3arm.gripper_angle(30))
     assert planned is not None and planned[1][-1][5] in squares
 
@@ -458,9 +459,10 @@ def test_the_arm_keeps_off_the_front_right_lidar():
     in front of the lidar no grip is planned now, the arm itself refuses the pose that went in, and
     what it uses -- home, the looks, the carries -- still passes. (2026-10-05: 1.5 cm off it, not 2.5,
     the user having watched the arm 2.0-2.4 cm off it down a pick's path: a little more is picked.)"""
-    for centre in ((0.21, -0.13, 0.015), (0.175, -0.07, 0.015), (0.169, -0.115, 0.015)):
+    for centre in ((0.175, -0.07, 0.015), (0.169, -0.115, 0.015), (0.17, -0.10, 0.015)):
         assert m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003) is None, centre
-    assert m3pick.plan_grasp(np.array([0.212, -0.063, 0.015]), 0.03, floor_clear=0.003) is not None
+    for centre in ((0.212, -0.063, 0.015), (0.21, -0.13, 0.015)):   # 1.0 cm off it, the hand as seen
+        assert m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003) is not None, centre
     why = m3kinematics.problem({1: 115, 2: 30, 3: 30, 4: 30, 5: 90})
     assert why and "front-right lidar" in why
     for pose in (m3pick.FOLDED, m3pick.LOOK, *({**m3pick.SIDE_LOOK, 1: j} for j in m3pick.BOX_LOOKS),
@@ -471,7 +473,7 @@ def test_the_arm_keeps_off_the_front_right_lidar():
 def test_in_front_of_the_right_lidar_the_base_slides_right_when_it_may_and_says_so_when_not():
     """2026-10-02, the user's choice: the arm keeps LIDAR_ROOM off the front-right lidar, and what is just
     in front of it is picked after the base slides right -- back before the drop."""
-    cube = (0.20, -0.11, 0, 0.03, 0.03)
+    cube = (0.18, -0.11, 0, 0.03, 0.03)
     world = World([cube])
     picker = run(world, "pick_once")
     said = " ".join(line["text"] for line in picker._log)
@@ -565,12 +567,12 @@ def test_the_check_pose_faces_the_marker_above_what_is_held():
 
 def test_a_square_grip_turned_over_is_tried_once_j5_turns_past_180(monkeypatch):
     """2026-10-05, the user's: the finger motor's housing turned away from the lidar -- J5 turned
-    180 deg. Yahboom drives the M3's J5 to 270; ours stays 180 until a turn on the robot shows it free."""
+    180 deg. Yahboom drives the M3's J5 to 270; so does ours since (the user's, the same day)."""
     grip = m3kinematics.reach(np.array([0.21, 0.03, 0.02]), 70, floor_clear=0.003)
+    turned, off = m3pick.wrist_choices(grip, 20, 90)
+    monkeypatch.setitem(m3arm.SAFE_LIMITS, 5, (0, 180))   # as the X3's: none turned over
     squares, _off = m3pick.wrist_choices(grip, 20, 90)
     assert max(squares) <= 180
-    monkeypatch.setitem(m3arm.SAFE_LIMITS, 5, (0, 270))
-    turned, off = m3pick.wrist_choices(grip, 20, 90)
     assert any(j5 > 180 for j5 in turned) and set(squares) <= set(turned)
     assert all(abs((j5 - s + 180) % 360 - 180) in (0, 90, 180) for j5 in turned for s in squares)
     assert all(j5 <= 270 for j5 in off)
@@ -581,15 +583,19 @@ def test_the_looks_go_round_without_up_and_down():
     shapes of their own, each way between them over a carry pose. Now one turn of J1 from the box
     look, and a settle into LOOK."""
     opened = m3arm.gripper_angle(m3pick.OPEN_MM)
+
+    def glides(here, goal):
+        legs = m3pick.look_way(here, goal)
+        assert legs[-1][-1] == goal
+        for leg in legs:
+            assert m3arm.glide_problem(here, leg) is None
+            assert all(q[2] <= 105 for q in leg), legs    # never up to a carry pose (J2 130-180)
+            here = leg[-1]
     here = {**m3pick.SIDE_LOOK, 6: opened}
     for look in (*m3pick.WIDE_SIDES, m3pick.LOOK):
-        goal = {**look, 6: opened}
-        way = m3pick.look_way(here, goal)
-        assert way[-1] == goal and m3arm.glide_problem(here, way) is None
-        assert all(q[2] <= 105 for q in way), way    # never up to a carry pose (J2 130-180)
-        here = goal
-    way = m3pick.look_way({**m3pick.LOOK, 6: opened}, {**m3pick.WIDE_SIDES[0], 6: opened})   # round again from LOOK
-    assert all(q[2] <= 105 for q in way), way
+        glides(here, {**look, 6: opened})
+        here = {**look, 6: opened}
+    glides({**m3pick.LOOK, 6: opened}, {**m3pick.WIDE_SIDES[0], 6: opened})   # round again, from LOOK
 
 
 def test_a_cube_missed_twice_is_left_and_the_others_still_picked():

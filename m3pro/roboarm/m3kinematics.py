@@ -84,8 +84,13 @@ MIRRORED = (1,)           # joints that turn against the URDF's axis (see SIGNS 
 # user, 2026-10-02); the rear-left one taken alike.
 LIDARS = (("front-right lidar", (0.060, 0.124), (-0.112, -0.070), 0.135),
           ("rear-left lidar", (-0.140, -0.090), (0.090, 0.112), 0.135))
-LIDAR_ROOM = 0.015   # m the arm keeps from a lidar, every way (the user: 2.5 cm after the hit; 1.5 cm
-                     # from 2026-10-05, after watching the arm 2.0-2.4 cm off it down a pick's path)
+LIDAR_ROOM = 0.010   # m the arm keeps from a lidar, every way (the user: 2.5 cm after the hit; 1.5 cm
+                     # from 2026-10-05, after watching the arm 2.0-2.4 cm off it down a pick's path;
+                     # 1.0 the same day, with HAND_BACK as seen, for the 40 mm cube just by it)
+HAND_BACK = 0.028    # m the hand's shell reaches along its own x -- the finger motor's housing: 4.2 cm by
+                     # Yahboom's mesh, 1.4 less as the user saw it (2026-10-05: hovering over a 40 mm cube
+                     # by the right lidar, the housing ~1 cm in front of the lidar's face, where the mesh
+                     # had it 0.4 cm over it)
 BODY_ROOM = 0.0      # m from the rest: the shell must not go in; the steps keep their own margins
 BODY_FROM_X = 0.0    # m: the body in front of this, less the arm's own turntable (ARM_COLUMN round its axis)
 ARM_COLUMN = 0.05
@@ -127,6 +132,7 @@ _TO_GRIPPING = _frame(GRIPPING[0], _rpy(*GRIPPING[1]))
 _MODEL = np.load(Path(__file__).with_name("m3body.npz"))
 _SHELL = tuple((part, frame, _MODEL[f"shell_{frame}"].astype(float)) for part, frame in (
     ("forearm", "arm3"), ("wrist", "arm4"), ("hand", "arm5"), ("camera", "camera"), ("gripper", "gripping")))
+_SHELL[2][2][:, 0] = np.minimum(_SHELL[2][2][:, 0], HAND_BACK)   # the hand: its housing as seen
 _BOUNDS = tuple(np.array(list(itertools.product(*zip(points.min(0), points.max(0), strict=True))))
                 for _part, _frame, points in _SHELL)   # each part's box's 8 corners, in its frame
 _CELL = float(_MODEL["body_cell"])

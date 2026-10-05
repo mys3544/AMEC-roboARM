@@ -362,12 +362,16 @@ BOX_DROP_OVER = 0.04
 BOX_MOVED_M, BOX_TURNED_DEG = 0.015, 5.0   # seen again further or turned more than this: it was moved
 SIDE_LOOK = {1: 180, 2: 95, 3: 30, 4: 0, 5: 90}   # the look at the box: lid, marker and inside in view
 # The looks either side of LOOK (2026-10-05, the user's: every cube in reach across the front -- LOOK sees
-# J1 ~40-140 deg at reach), in SIDE_LOOK's shape: that one turns freely, J1 0-180, where LOOK's is
-# allowed at J1 89-91 only (its hand at the bumper's limit) -- so the box look, the right one, the left
-# one and LOOK are one turn of J1 and a settle at 90, no way up and down between them (the user saw a
-# first try, in shapes of their own, go up over a carry pose and down again three times). With LOOK
-# they see every spot a pick reaches, J1 0-180.
-WIDE_SIDES = ({**SIDE_LOOK, 1: 160}, {**SIDE_LOOK, 1: 20})   # right first: from the box look at J1 180
+# J1 ~40-140 deg at reach), in a shape that turns freely, J1 0-180, where LOOK's is allowed at J1 89-91
+# only (its hand at the bumper's limit): the box look, the right one, the left one and LOOK are one turn
+# of J1 and a settle at 90, no way up and down between them (the user saw a first try, in shapes of
+# their own, go over a carry pose three times). Looking down at the band a pick reaches, 12-26 cm out:
+# SIDE_LOOK's shape saw as much of it but out to 60 cm too -- the laptop, the box's insides, a cube 51 cm
+# away (the user: "you cant pick things further then 26 cm"). With LOOK they see every spot a pick reaches.
+WIDE_SIDE_SHAPE = {2: 50, 3: 55, 4: 5, 5: 90}
+WIDE_SIDES = ({1: 160, **WIDE_SIDE_SHAPE}, {1: 20, **WIDE_SIDE_SHAPE})   # right first: from the box look at J1 180
+SEARCH_FAR = 0.45   # m from J1's axis: what lies further, or behind the axis, is no job's -- not in reach, nor
+                    # brought there by a drive forward (LOOK sees ahead to 45 cm)
 BOX_LOOKS = (180, 135, 90, 45, 0)   # J1s the box is looked for at, SIDE_LOOK's other joints: 15-61 cm out
                                     # from the arm's axis each way -- the box anywhere in the arm's half
                                     # circle, its marker facing the arm (the user's, 2026-10-02)
@@ -530,14 +534,20 @@ def way_to(here: dict, goal: dict, direct: bool = True) -> list[dict]:
     return ways[-1]
 
 
-def look_way(here: dict, goal: dict) -> list[dict]:
-    """The way between looks without going up and down: straight there; else turned in SIDE_LOOK's
-    shape (it turns freely) and only then into the goal's; else way_to's."""
-    shape = {j: SIDE_LOOK[j] for j in (2, 3, 4)}
-    for way in ([goal], [{**goal, **shape}, goal], [{**here, **shape}, {**goal, **shape}, goal]):
-        if m3arm.glide_problem(here, way) is None:
-            return way
-    return way_to(here, goal)
+def look_way(here: dict, goal: dict) -> list[list[dict]]:
+    """The way between looks without going up and down, as glides one after another: straight there;
+    else turned in the side looks' shape (it turns freely), then into the goal's -- each a glide of its
+    own, the corners between them not cut (cut, LOOK -> the right look's came down over the chassis);
+    else way_to's."""
+    shape = {j: WIDE_SIDE_SHAPE[j] for j in (2, 3, 4)}
+    for legs in ([[goal]], [[{**goal, **shape}], [goal]], [[{**here, **shape}], [{**goal, **shape}], [goal]]):
+        start, ok = here, True
+        for leg in legs:
+            ok = ok and m3arm.glide_problem(start, leg) is None
+            start = leg[-1]
+        if ok:
+            return [leg for leg in legs if leg[-1] != here]
+    return [way_to(here, goal)]
 
 
 def nudge(found: list[dict], kit: list[dict], at=None, most: float = 0.10, right: float = 0.03) -> tuple[float, float] | None:
@@ -861,7 +871,7 @@ class Picker:
         """To the wide look, the gripper opening on the way, and what it shows; `sides`: the looks
         either side too (WIDE_SIDES), each thing as the look most facing it saw it whole -- one only
         another look cut short left out (PART_M). What lies where this job lets go is left out too
-        (dropped_here)."""
+        (dropped_here), and what lies behind J1's axis or past SEARCH_FAR."""
         axis = np.asarray(m3kinematics.CHAIN[0][0][:2])
 
         def off_facing(o, j1):   # deg between the thing's bearing from J1's axis and the look's
@@ -869,7 +879,8 @@ class Picker:
         readings = []   # (thing, the J1 of the look that saw it)
         for look in ((*WIDE_SIDES, LOOK) if sides else (LOOK,)):
             here = {int(j): v for j, v in self.call("read").items()}
-            self.through(look_way(here, {**look, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}), speed=self.dps("free_dps"))
+            for leg in look_way(here, {**look, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}):
+                self.through(leg, speed=self.dps("free_dps"))
             _camera, seen = self.look("wide" if look is LOOK else f"wide J1 {look[1]}")
             readings += [(o, look[1]) for o in seen]
         kept = []
@@ -880,7 +891,8 @@ class Picker:
                 kept.append((o, j1))
             elif o["whole"] and off_facing(o, j1) < off_facing(*kept[same]):
                 kept[same] = (o, j1)
-        found = [o for o, _ in kept if not self.dropped_here(o)]
+        found = [o for o, _ in kept if not self.dropped_here(o) and o["centre"][0] >= axis[0]
+                 and float(np.hypot(*(o["centre"][:2] - axis))) <= SEARCH_FAR]
         self.say(("looked round: " if sides else "wide look: ") + describe(found))
         return found
 
