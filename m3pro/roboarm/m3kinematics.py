@@ -50,17 +50,21 @@ GRIPPING = ((-0.00062499, 0.00023987, 0.093235), (-0.041648, -1.5708, 0.041619))
 FINGERS = 0.015   # m the fingertips reach past the Gripping point
 # Yahboom's table, object width (mm) -> the gripper angle (J6) that just holds it; 0 is widest open
 GRIPPER_WIDTH = {0: 180, 20: 152, 30: 134, 40: 115, 50: 95, 60: 57}
-FINGER_SIDE = 0.008   # m a finger's outer edge past the opening's edge (its thickness, and a margin)
+FINGER_SIDE = 0.006   # m a finger's outer edge past the opening's edge (its thickness, and a margin;
+                      # 8 mm until 2026-10-05 -- a block lying across in front of the left wheel had no grip)
 
 # The chassis, from Yahboom's own model of it (meshes/base_link.STL, 2026-09-30): x -0.153..+0.124,
 # y +-0.112 (+-0.12 with the wheels); its top 0.196 over the arm's base, 0.133 on the front deck
 # (x 0.08..0.124), where the front lidar's housing adds ~2.5 cm. As steps, each (x from, x to,
-# the height the arm keeps above), with 1.5 cm to spare all round: the front step lets the arm
-# reach down just in front of the robot, where it picks.
+# the height the arm keeps above), with 1.5 cm to spare round the top: the front step lets the arm
+# reach down just in front of the robot, where it picks. The front step ends at the bumper's face,
+# no spare in front (2026-10-05, the user's: "edit the safety bounding box" -- the block in front of
+# the left wheel, the near finger 1.5 cm in front of the bumper): there the body's own shape keeps
+# the arm's shell off it (too_near), as round the lidars.
 CHASSIS_Y = 0.135   # m either side
 # The middle step is the arm's own base (its shoulder joint sits at 0.218): 0.9 cm over it, not 1.5,
 # or the folded home pose -- the SAG overstates the droop of an upright, unloaded forearm -- reads 2 mm in.
-CHASSIS = ((-0.17, 0.08, 0.205), (0.08, 0.14, 0.175))
+CHASSIS = ((-0.17, 0.08, 0.205), (0.08, 0.124, 0.175))
 # base_link is ON the floor: the URDF's wheel axles are 0.040 above it and the wheels' radius is
 # 0.040 (meshes/lwheel1.STL); camcheck's 0.350 m for the camera at the mapping pose against the
 # URDF's 0.355 agrees. (Yahboom's launch puts base_link 2 cm up, base_footprint -> base_link.)

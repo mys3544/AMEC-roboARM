@@ -60,14 +60,24 @@ BACKS = (BACK, 0.10, 0.08)  # and shorter when that pre-grasp's open fingers wou
 GUARD_SLACK = 0.0015        # m the arm's own guard lets the fingertips come lower than the plan has them:
                             # the wrist's turn after planning moves them up to ~1 mm (2026-10-02: a plan at
                             # 8.0 mm, J5 35, refused at 7.9)
-FLOOR_CLEAR_PLACE = 0.003   # m the fingertips stay above the floor on the descent (the floor just measured):
+FLOOR_CLEAR_PLACE = 0.008   # m the fingertips stay above the floor on the descent (the floor just measured):
                             # the "fingertips_mm" setting's default. 8 for a day (2026-10-02, they had touched
                             # the table) -- it was the turned wrist's lower finger the model did not have;
                             # with both fingers in it, back to 3 (the user's call): blocks turned far, further
-                            # out, had no square grip at 8
+                            # out, had no square grip at 8. 8 again from 2026-10-05 (the user's: they still
+                            # touched; 74 of 112 cube grips planned at 3 mm and at 8 alike)
 OPEN_MM = 55        # the fingers apart at the wide look; at the pre-grasp opened_for() the target
 SPARE_MM = 25       # the opening over the target's width (2026-10-01: a 40 mm cube -- 57 mm across
                     # its diagonal -- missed at 55; it opens to ~67 now, the gripper's widest)
+# The careful grip, where no other plans (2026-10-05, the user's: a block lying across in front of the
+# left wheel, "we have to pick things from such position"): opened only CAREFUL_SPARE_MM over the
+# thing and aimed further out along the line the fingers close on, CAREFUL_SHIFTS tried in turn --
+# the near finger 4.5 (2.5) mm off the thing and 1.0 (1.2) cm further from the robot; closing, it
+# pushes the thing that much out. That block, 11 mm in front of the bumper: 3 mm planned turned one
+# way, whole servo degrees left the descent 1 mm short the other; 5 mm planned both.
+CAREFUL_SPARE_MM, CAREFUL_SHIFTS = 15, (0.003, 0.005)
+RELEASE_SPARE_MM = 15   # let go opened this much over the thing, not wide: the fingers stay off the box's
+                        # walls and lid (2026-10-05: the box hit at a drop by its lid)
 FINGER_M = 0.008    # m a fingertip reaches past the opening's edge (its own thickness and a margin)
 DROP_OUT, DROP_UP, DROP_SPREAD = 0.189, 0.110, 0.100   # m: the X3 Plus's drop-off (config.DROP_POSE)
 GRIP_Z_MIN = 0.018   # m: the grip point's lowest; the fingertips reach ~1.4 cm below it at 70 deg
@@ -165,10 +175,10 @@ def describe(found: list[dict]) -> str:
                      for o in found) or "nothing"
 
 
-def opened_for(size_m: float) -> int:
-    """The gripper angle that opens the fingers SPARE_MM wider than a thing `size_m` across --
+def opened_for(size_m: float, spare_mm: float = SPARE_MM) -> int:
+    """The gripper angle that opens the fingers `spare_mm` wider than a thing `size_m` across --
     beyond Yahboom's table (60 mm), its widest, GRIPPER_OPEN (~67 mm)."""
-    width = size_m * 1000 + SPARE_MM
+    width = size_m * 1000 + spare_mm
     return m3arm.gripper_angle(width) if width <= max(m3arm.GRIPPER_WIDTH) else m3arm.GRIPPER_OPEN
 
 
@@ -365,6 +375,8 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
 BOX_MARKER = ("DICT_4X4_50", 10, 0.064)   # family, id, side (m, measured: 64.0-64.7 from the depth)
 BOX_INSIDE = (0.15, 0.11, 0.038)          # m: along, across, walls
 BOX_MARGIN = 0.025
+BOX_LID_MARGIN = 0.045   # m from the lid's side: what is let go comes straight down past the standing lid
+                         # (2026-10-05: a drop 2.5 cm from it, and the box was hit and turned)
 BOX_DROP_OVER = 0.04
 BOX_MOVED_M, BOX_TURNED_DEG = 0.015, 5.0   # seen again further or turned more than this: it was moved
 SIDE_LOOK = {1: 180, 2: 95, 3: 30, 4: 0, 5: 90}   # the look at the box: lid, marker and inside in view
@@ -379,6 +391,16 @@ WIDE_SIDE_SHAPE = {2: 50, 3: 55, 4: 5, 5: 90}
 WIDE_SIDES = ({1: 160, **WIDE_SIDE_SHAPE}, {1: 20, **WIDE_SIDE_SHAPE})   # right first: from the box look at J1 180
 SEARCH_FAR = 0.45   # m from J1's axis: what lies further, or behind the axis, is no job's -- not in reach, nor
                     # brought there by a drive forward (LOOK sees ahead to 45 cm)
+# After the lift the box is looked at again from where it was found (SIDE_LOOK at box_dir: the user's,
+# 2026-10-05, "semi home position ... so it sees more" -- over the spot the marker read close and
+# askew, 153 deg one look and 170 the next, and the job looked for it all round, holding: the arm up and
+# down). Turned there in SIDE_LOOK's shape what is held passes over the front deck's corner lower than
+# the chassis' step allows (the wrist turned for a grip, the arm itself 19 cm over its own base): it
+# turns with the hand VIEW_TURN deg up -- the grip point 4 cm higher and further out, what is held over
+# the steps all the way round -- and tilts it down into the view at the end.
+VIEW_TURN = 20
+HELD_ROUND = 0.02   # m what is held reaches round the grip point (a 40 mm cube's half): a thing just
+                    # picked in front of the bumper is not over the chassis yet
 BOX_LOOKS = (180, 135, 90, 45, 0)   # J1s the box is looked for at, SIDE_LOOK's other joints: 15-61 cm out
                                     # from the arm's axis each way -- the box anywhere in the arm's half
                                     # circle, its marker facing the arm (the user's, 2026-10-02)
@@ -460,11 +482,13 @@ def box_corners(box: dict, lift: float = 0.0) -> list[np.ndarray]:
 
 
 def box_spots(box: dict, step: float = 0.02) -> list[np.ndarray]:
-    """Spots inside the box to let go over, BOX_MARGIN clear of its walls, `step` m apart."""
+    """Spots inside the box to let go over, BOX_MARGIN clear of its walls and BOX_LID_MARGIN of the
+    lid's side (the hinge: -`into`), `step` m apart."""
     along_m, across_m, _ = BOX_INSIDE
-    a_half, b_half = along_m / 2 - BOX_MARGIN, across_m / 2 - BOX_MARGIN
+    a_half = along_m / 2 - BOX_MARGIN
+    b_lo, b_hi = -across_m / 2 + BOX_LID_MARGIN, across_m / 2 - BOX_MARGIN
     return [box["centre"] + box["along"] * a + box["into"] * b
-            for a in np.arange(-a_half, a_half + 1e-9, step) for b in np.arange(-b_half, b_half + 1e-9, step)]
+            for a in np.arange(-a_half, a_half + 1e-9, step) for b in np.arange(b_lo, b_hi + 1e-9, step)]
 
 
 def way_to(here: dict, goal: dict, direct: bool = True) -> list[dict]:
@@ -496,6 +520,42 @@ def look_way(here: dict, goal: dict) -> list[list[dict]]:
         if ok:
             return [leg for leg in legs if leg[-1] != here]
     return [way_to(here, goal)]
+
+
+def held_problem(start: dict, poses: list[dict], below: float) -> str | None:
+    """Why what is held -- its bottom `below` m under the grip point, HELD_ROUND round it -- would come
+    down onto the chassis' steps on the glides start -> poses (each a glide of its own, every
+    STEP_DEG), or None: the arm's guard knows the arm, not what it holds."""
+    last = start
+    for goal in poses:
+        n = max(1, math.ceil(max(abs(goal[j] - last[j]) for j in (1, 2, 3, 4)) / m3arm.STEP_DEG))
+        for k in range(1, n + 1):
+            p, _ = m3kinematics.grip({j: last[j] + (goal[j] - last[j]) * k / n for j in (1, 2, 3, 4, 5)})
+            for x0, x1, top in m3kinematics.CHASSIS:   # the steps' tops keep 1.5 cm spare; 0.12 m: the
+                # chassis either side, its wheels too (m3kinematics)
+                if x0 - HELD_ROUND < p[0] < x1 + HELD_ROUND and abs(p[1]) < 0.12 + HELD_ROUND and p[2] - below < top:
+                    return (f"what is held would come down to {100 * (p[2] - below):.0f} cm above the floor"
+                            f" over the chassis (x {p[0]:+.2f} m): keep it above {100 * top:.0f} cm there")
+        last = goal
+    return None
+
+
+def view_way(here: dict, view: dict, below: float) -> list[list[dict]]:
+    """Holding something, from the lift to the box `view` (a whole pose: SIDE_LOOK at box_dir) without
+    going up and down, as glides one after another: risen in place into the view's shape and turned
+    there; else risen into it with the hand VIEW_TURN deg up, turned, and the hand tilted down into
+    the view; else way_to's, swung high. `below`: what is held hangs that far under the grip point."""
+    shape = {j: view[j] for j in (2, 3, 4, 5)}
+    raised = {**shape, 4: view[4] + VIEW_TURN}
+    for legs in ([[{**here, **shape}], [view]],
+                 [[{**here, **raised}], [{**view, **raised}], [view]]):
+        start, ok = here, True
+        for leg in legs:
+            ok = ok and m3arm.glide_problem(start, leg) is None
+            start = leg[-1]
+        if ok and held_problem(here, [leg[-1] for leg in legs], below) is None:
+            return [leg for leg in legs if leg[-1] != here]
+    return [way_to(here, view, direct=False)]
 
 
 def nudge(found: list[dict], kit: list[dict], at=None, most: float = 0.10, right: float = 0.03) -> tuple[float, float] | None:
@@ -651,13 +711,14 @@ class Picker:
             (self.out / "settings.json").write_text(json.dumps(self.cfg, indent=1))
         return self.settings()
 
-    def wrist(self, thing: dict, around: list[dict], whole: bool | None = None):
-        """grip pose -> (J5s square, J5s off square) for `thing` (wrist_choices): the fingers clear
-        of `around` -- or straight (90) while its turn is not known (seen in part)."""
+    def wrist(self, thing: dict, around: list[dict], whole: bool | None = None, opened: int | None = None):
+        """grip pose -> (J5s square, J5s off square) for `thing` (wrist_choices): the fingers, opened to
+        `opened` (opened_for's by default), clear of `around` -- or straight (90) while its turn is
+        not known (seen in part)."""
         if not (thing["whole"] if whole is None else whole):
             return lambda grip: ([90], [])
         others = [o for o in around if o is not thing]
-        span = m3kinematics.finger_span(opened_for(thing["size"]))
+        span = m3kinematics.finger_span(opened_for(thing["size"]) if opened is None else opened)
         return lambda grip: wrist_choices(grip, thing["yaw"], thing["period"], span, others)
 
     def floor_clear(self) -> float:
@@ -910,8 +971,15 @@ class Picker:
                     at = at - went
                 found = self.wide_look()
         others = [o for o in found if o is not target]
-        with self.step("pregrasp"), refusable(target["centre"]):   # the wrist turned, the fingers opened on the way
-            self.go(planned[1][0], speed=self.dps("near_dps"))
+        # The close look with the wrist straight: the open fingers left and right of the thing in the picture.
+        # Turned for the grip already, one came up across it (2026-10-05: a 30 mm cube seen in part, aimed by
+        # the wide look and missed; the next time not seen at all) -- it turns on the way down.
+        pre = planned[1][0]
+        look_from = {**pre, 5: 90 if pre[5] <= 180 else 270}
+        if m3kinematics.problem(look_from) is not None or m3arm.glide_problem(look_from, [pre]) is not None:
+            look_from = pre   # (the wrist turned back where it is, or the way down goes over a carry pose)
+        with self.step("pregrasp"), refusable(target["centre"]):   # the fingers opened on the way
+            self.go(look_from, speed=self.dps("near_dps"))
         with self.step("look.close"):
             _camera, close = self.look("close", target["centre"])
         again = [o for o in close if o["kind"] and np.linalg.norm(o["centre"][:2] - target["centre"][:2]) < MATCH_M]
@@ -927,12 +995,14 @@ class Picker:
         self.say(f"close look: {found_how}, moved {1000 * np.linalg.norm(centre[:2] - target['centre'][:2]):.1f} mm")
         # what is round it: the close look's, and the wide look's -- the close one sees less round it
         others = [o for o in close if np.linalg.norm(o["centre"][:2] - centre[:2]) > MATCH_M] + others
-        replanned = plan_grasp(centre, reading["height"], prefer=(planned[0], planned[2]), floor_clear=self.floor_clear(),
-                               wrist=self.wrist(reading, others, whole=True), gripper=opened_for(reading["size"]),
-                               held=m3arm.gripper_angle(reading["size"] * 1000))
+        careful = target.get("careful", False)   # a careful grip stays one; a plain one may become one, a few mm on
+        replanned = self.grasp(reading, others, centre, prefer=(planned[0], planned[2]), whole=True, careful=careful)
+        if replanned is None and not careful:
+            replanned = self.grasp(reading, others, centre, prefer=(planned[0], planned[2]), whole=True, careful=True)
+            careful = replanned is not None
         if replanned is None:   # at the edge whole servo degrees make it all or nothing (2026-10-02: a
             # plan at y -0.1297, none at -0.1300): the first plan, a few mm off, its wrist as now read
-            squares, off = self.wrist(reading, others, whole=True)(planned[1][-1])
+            squares, off = self.wrist(reading, others, whole=True, opened=planned[1][-1].get(m3arm.GRIPPER))(planned[1][-1])
             for j5 in [*squares, *off]:
                 poses = [{**p, 5: j5} for p in planned[1]]
                 shut = [{**p, 6: m3arm.gripper_angle(reading["size"] * 1000)} for p in poses]
@@ -946,7 +1016,9 @@ class Picker:
         j5 = poses[-1][5]
         off = off_square(poses[-1], reading["yaw"], reading["period"])
         self.say(f"the {name(reading)}: fingers along {reading['yaw']:.0f} deg ({yaw_from} look), wrist J5 {j5}"
-                 + (f" -- {off:.0f} deg off square: square put a finger on the table" if off > 3 else ""))
+                 + (f" -- {off:.0f} deg off square: square put a finger on the table" if off > 3 else "")
+                 + (f" -- careful grip: opened {CAREFUL_SPARE_MM} mm over it, aimed {1000 * reading.get('shift', target.get('shift', 0)):.0f} mm"
+                    " further out (no other keeps the fingers off the robot)" if careful else ""))
         with self.step("descend"), refusable(centre):   # to the line's top, then down it in one glide
             self.go(poses[0], speed=self.dps("near_dps"))
             self.through(poses[1:], floor_clear=self.arm_clear(), speed=self.dps("descend_dps"))
@@ -966,6 +1038,7 @@ class Picker:
                 self.say(f"back up the line refused ({exc}): straight up instead")
                 self.straight_up(speed=self.dps("lift_dps"))
         self.held_below = float(m3kinematics.grip(poses[-1])[0][2])   # its bottom was on the floor
+        self.held_size = reading["size"]
         self.drop(back=(self.offset.copy(), poses))
         with self.step("look.after"):   # the next pick's wide look, too
             after = self.wide_look()
@@ -973,7 +1046,7 @@ class Picker:
         record = {"when": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.monotonic() - started, 1),
                   "kind": name(reading), "target": np.round(centre, 4).tolist(), "size_mm": round(reading["size"] * 1000),
                   "yaw_deg": round(reading["yaw"], 1), "yaw_from": yaw_from, "pitch": pitch, "j5": j5,
-                  "grip_pose": poses[-1], "close_look_found": bool(again), "picked": not left}
+                  "grip_pose": poses[-1], "close_look_found": bool(again), "careful": careful, "picked": not left}
         self._remember(record)
         with self._lock:
             self.state["missed" if left else "picked"] += 1
@@ -1007,12 +1080,13 @@ class Picker:
         return self.cfg["carry_cm"] / 100 + getattr(self, "held_below", 0.04)
 
     def drop(self, back=None) -> None:
-        """What is held to the drop-off and let go. Into the box when the job found one: carried round
-        high over it (carry_to), the box looked at again from over the spot -- moved, it is aimed at
+        """What is held to the drop-off and let go. Into the box when the job found one: looked at again
+        from where it was found (view_way: risen and turned, no up and down) -- moved, it is aimed at
         where it is now; not seen there, looked for all round, holding; nowhere, what is held is put
         back where it came from (`back`: (the base's offset then, the pick's line)) and the job stops
-        (the user's, 2026-10-02: the box may be moved between picks). No box at the job's start: on
-        the line out on the right, like the X3's (0-DROP_SPREAD further out, at random)."""
+        (the user's, 2026-10-02: the box may be moved between picks) -- then carried out over a spot
+        in it (carry_to) and straight down. No box at the job's start: on the line out on the right,
+        like the X3's (0-DROP_SPREAD further out, at random)."""
         self.drive_back()   # the box did not drive with it
         if self.box is None:
             with self.step("drop"):
@@ -1026,35 +1100,39 @@ class Picker:
             self.say(f"dropped {1000 * (DROP_OUT + extra):.0f} mm out on the right")
             return
         with self.step("drop"):
-            # the box looked at from over the spot (a check pose on the way, tried 2026-10-05, read the
-            # marker close and askew: the box 30 deg and cm off, a cube onto its wall, the box shoved)
-            into = self.box_way({int(j): v for j, v in self.call("read").items()})
-            if into is not None:
-                spot, way = into
-                self.through(way[:-1], speed=self.dps("free_dps"))   # round, to over the spot
-                again = self.see_box("over the box")
-                if again is not None and self.same_box(again):
+            # the box looked at from where it was found (a check pose on the way, and over the spot, read
+            # the marker close and askew, 2026-10-05: the box cm and up to 30 deg off, a cube onto its wall)
+            here = {int(j): v for j, v in self.call("read").items()}
+            view = {**here, **SIDE_LOOK, 1: self.box_dir, 5: 90 if here[5] <= 180 else 270}   # turned over stays so
+            for leg in view_way(here, view, getattr(self, "held_below", 0.04)):
+                self.through(leg, speed=self.dps("free_dps"))
+            again = self.see_box("box view")
+            if again is None:
+                self.say(f"the box not seen at J1 {self.box_dir}, where it was: looking for it all round, holding")
+                again = self.box_search(holding=True, tried=self.box_dir)
+            into = None
+            if again is not None:
+                if self.same_box(again):
                     self.box = {**again, "items": self.box.get("items", [])}
                 else:
-                    into = None
-                    self.box = again if again is not None else self.box_search(holding=True)
-                    if self.box is not None:
-                        self.say("the box has moved: aimed at where it is now")
-                        into = self.box_way({int(j): v for j, v in self.call("read").items()})
-                        if into is not None:
-                            spot, way = into
-                            self.through(way[:-1], speed=self.dps("free_dps"))
+                    self.box = again
+                    self.say("the box has moved: aimed at where it is now")
+                into = self.box_way({int(j): v for j, v in self.call("read").items()})
             if into is None:
                 self.put_back(back)
                 raise NothingToPick("the drop-off box is not to be found, or nowhere in it in reach: put back"
                                     " what it held where it was -- place the box, its marker facing the arm")
-            self.through(way[-1:], speed=self.dps("free_dps"))      # straight down onto the spot
+            spot, way = into
+            self.through(way, speed=self.dps("free_dps"))   # out and round over the spot, straight down onto it
             self.let_go()
         self.box_drops.append(in_box(self.box, spot))
         self.say(f"dropped into the box at x {spot[0]:.3f} y {spot[1]:+.3f}")
 
     def let_go(self) -> None:
-        self.call("set_gripper", m3arm.GRIPPER_OPEN, speed_dps=self.dps("gripper_dps"), settle=False)
+        """Open RELEASE_SPARE_MM over what is held (wide open when not known), and a moment for it to fall."""
+        size = getattr(self, "held_size", None)
+        opened = m3arm.GRIPPER_OPEN if size is None else opened_for(size, RELEASE_SPARE_MM)
+        self.call("set_gripper", opened, speed_dps=self.dps("gripper_dps"), settle=False)
         time.sleep(self.cfg["release_s"])
 
     def same_box(self, seen: dict) -> bool:
@@ -1136,10 +1214,11 @@ class Picker:
             cv2.imwrite(str(self.out / f"{time.strftime('%H%M%S')}_box.jpg"), marked)
         return box
 
-    def box_search(self, holding: bool = False) -> dict | None:
-        """The box looked for at BOX_LOOKS, where it was last seen first; None if nowhere."""
+    def box_search(self, holding: bool = False, tried: float | None = None) -> dict | None:
+        """The box looked for at BOX_LOOKS, where it was last seen first (not at `tried`, looked at
+        already); None if nowhere."""
         with self.step("look.box"):
-            for j1 in [self.box_dir, *(j for j in BOX_LOOKS if j != self.box_dir)]:
+            for j1 in [j for j in [self.box_dir, *(j for j in BOX_LOOKS if j != self.box_dir)] if j != tried]:
                 self.go({**SIDE_LOOK, 1: j1}, speed=self.dps("free_dps"), holding=holding)
                 box = self.see_box("box")
                 if box is not None:
@@ -1158,9 +1237,36 @@ class Picker:
         return self.box
 
     def plan(self, thing: dict, around: list[dict]):
-        """plan_grasp for `thing` as it will be picked: square to it, the fingers clear of `around`."""
-        return plan_grasp(thing["centre"], thing["height"], floor_clear=self.floor_clear(), wrist=self.wrist(thing, around),
-                          gripper=opened_for(thing["size"]), held=m3arm.gripper_angle(thing["size"] * 1000))
+        """plan_grasp for `thing` as it will be picked: square to it, the fingers clear of `around` --
+        where that has none, the careful grip; thing["careful"] says which."""
+        thing["careful"] = False
+        planned = self.grasp(thing, around)
+        if planned is None:
+            planned = self.grasp(thing, around, careful=True)
+            thing["careful"] = planned is not None
+        return planned
+
+    def grasp(self, thing: dict, around: list[dict], centre=None, prefer=None, whole: bool | None = None,
+              careful: bool = False):
+        """plan_grasp for `thing` at `centre` (its own by default; `prefer`, `whole`: plan_grasp's,
+        wrist's), the fingers opened SPARE_MM over it -- or, `careful`, CAREFUL_SPARE_MM, the aim
+        CAREFUL_SHIFTS further from J1's axis along a line they close on (either of a cube's two):
+        thing["shift"] says how far."""
+        centre = np.asarray(thing["centre"] if centre is None else centre, float)
+        opened = opened_for(thing["size"], CAREFUL_SPARE_MM if careful else SPARE_MM)
+        kwargs = {"prefer": prefer, "floor_clear": self.floor_clear(), "wrist": self.wrist(thing, around, whole, opened),
+                  "gripper": opened, "held": m3arm.gripper_angle(thing["size"] * 1000)}
+        if not careful:
+            return plan_grasp(centre, thing["height"], **kwargs)
+        out = centre[:2] - np.asarray(m3kinematics.CHAIN[0][0][:2])
+        for shift, turn in itertools.product(CAREFUL_SHIFTS, np.arange(thing["yaw"], thing["yaw"] + 180 - 1e-6, thing["period"])):
+            along = np.array([math.cos(math.radians(turn)), math.sin(math.radians(turn))])
+            along = along if along @ out >= 0 else -along
+            planned = plan_grasp(np.r_[centre[:2] + shift * along, centre[2]], thing["height"], **kwargs)
+            if planned is not None:
+                thing["shift"] = float(shift)
+                return planned
+        return None
 
     def obstacles(self) -> list[np.ndarray]:
         """What the base keeps DRIVE_GAP from, as points round it (the job's start frame): the drop-off
@@ -1203,9 +1309,11 @@ class Picker:
     def why_not(self, kit: list[dict], found: list[dict]) -> str:
         """Why none of `kit` is picked from here, each: out of reach (no grip at all reaches it,
         square or not -- 2026-10-02: two at the very edge were blamed on the fingers); too near the
-        right lidar (a plan from further left: the slide that would do); else the square grip."""
+        right lidar (a plan from further left: the slide that would do); in reach but too close to
+        the robot's body (2026-10-05: a cube beside the left wheel, the elbow over the arm's base,
+        was "out of reach"); else the square grip."""
         base = np.asarray(m3kinematics.CHAIN[0][0][:2])
-        far, lidar, awkward = [], [], []
+        far, lidar, body, awkward = [], [], [], []
         for o in kit:
             if float(np.hypot(*(o["centre"][:2] - base))) > furthest(o["height"]) + 0.005:
                 far.append(o)
@@ -1213,8 +1321,13 @@ class Picker:
                 awkward.append(o)
             else:
                 slide = slide_for(o, found, SIDESTEP_MOST, self.floor_clear()) if o["centre"][1] < 0 else None
-                (far if slide is None else lidar).append(o if slide is None else (o, slide))
+                (body if slide is None else lidar).append(o if slide is None else (o, slide))
         parts = [f"out of reach: {describe(far)}"] if far else []
+        for o in body:   # the guard's own words for the grip from above
+            grip = np.r_[o["centre"][:2], max(o["centre"][2], GRIP_Z_MIN)]
+            poses = (m3kinematics.reach(grip, pitch, floor_clear=self.floor_clear(), guard=False) for pitch in (90, 70, 50))
+            why = next((m3kinematics.problem(q, self.floor_clear()) for q in poses if q is not None), None)
+            parts.append(f"in reach but too close to the robot's body for the arm: {describe([o])}" + (f" ({why})" if why else ""))
         if lidar:
             room = self.right_room()
             how = ("may drive closer lets the base slide right" if not self.may_drive

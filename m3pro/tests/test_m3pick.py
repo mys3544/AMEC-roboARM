@@ -42,6 +42,7 @@ class World:
         self.refuse = None        # a spot the arm refuses to come down to
         self.slip = []            # spots where the fingers shut on the thing and it is not held
         self.dropped_at = []
+        self.opened_to = []       # the gripper's angle at each let-go
 
     def call(self, method, *args, **kwargs):
         self.calls.append((method, args, kwargs))
@@ -55,7 +56,7 @@ class World:
             time.sleep(self.move_s)
             last = {**self.pose, **{int(j): v for j, v in args[0][-1].items()}}
             point, _ = m3kinematics.grip(last)
-            if self.refuse is not None and np.hypot(*(point[:2] - self.refuse)) < 0.02:
+            if self.refuse is not None and np.hypot(*(point[:2] - self.refuse)) < 0.02 and point[2] < 0.06:
                 raise RuntimeError("follow: refused: as the arm's guard would")
             for pose in args[0]:
                 goal = {**self.pose, **{int(j): v for j, v in pose.items()}}
@@ -77,21 +78,21 @@ class World:
             near = [b for b in self.boxes if math.hypot(b[0] - point[0], b[1] - point[1]) < 0.012
                     and all(math.hypot(b[0] - x, b[1] - y) > 0.02 for x, y in self.slip)]
             if near:
-                self.held = near[0]
+                self.held, self.shut_mm = near[0], kwargs["width_mm"]
                 self.boxes.remove(near[0])
         elif method == "set_gripper":
             why = m3kinematics.problem({**self.pose, 6: args[0]}, kwargs.get("floor_clear") or m3kinematics.FLOOR_CLEAR)
             assert why is None, why   # as the arm's own move_to checks it (2026-10-05: the put-back's open, refused)
             self.pose[6] = args[0]
-            if self.held and args[0] < 110:   # opened past it, low: set down where the hand is
+            if self.held and m3kinematics.finger_span(args[0]) * 1000 > self.shut_mm + 5:   # opened past it:
                 point = m3kinematics.grip(self.pose)[0]
-                if point[2] < 0.04:
+                if point[2] < 0.04:   # low, set down where the hand is
                     self.boxes.append((float(point[0]), float(point[1]), *self.held[2:]))
-                    self.held = None
-            if self.held and args[0] <= 40:   # opened wide: let go
-                self.released.append(m3kinematics.grip(self.pose)[0])
-                self.dropped.append(self.held)
-                self.dropped_at.append(self.base.copy())
+                else:                 # let go, it falls
+                    self.released.append(point)
+                    self.dropped.append(self.held)
+                    self.dropped_at.append(self.base.copy())
+                    self.opened_to.append(args[0])
                 self.held = None
         return dict(self.pose) if method == "read" else None
 
@@ -245,7 +246,8 @@ def test_the_settings_are_held_to_their_ranges_kept_and_count(tmp_path):
 
 
 def test_the_fingertips_keep_their_height_over_the_table_the_grip_rises_instead():
-    """Asked for more room over the table, the grip rises on the cube (8 mm here; the default is 3)."""
+    """Asked for more room over the table, the grip rises on the cube (8 mm, the default since 2026-10-05:
+    they still touched it, the user saw)."""
     for centre in ((0.20, 0.03, 0.015), (0.25, -0.05, 0.015), (0.16, 0.0, 0.015)):
         low = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003)
         high = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.008)
@@ -253,7 +255,7 @@ def test_the_fingertips_keep_their_height_over_the_table_the_grip_rises_instead(
             assert m3kinematics.grip(poses[-1])[0][2] <= 0.03 + 1e-6   # never above the cube's top
         assert min(m3kinematics.outline(p)[:, 2].min() for p in high[1]) >= 0.008
         assert m3kinematics.grip(high[1][-1])[0][2] > m3kinematics.grip(low[1][-1])[0][2]
-    assert m3pick.SETTINGS["fingertips_mm"][5] == 3   # the default: the lower finger, so 3 will do
+    assert m3pick.SETTINGS["fingertips_mm"][5] == 8
 
 
 def test_a_plan_is_one_the_arm_will_glide_down_and_back_up():
@@ -440,22 +442,25 @@ def test_no_box_to_be_found_puts_it_back_and_stops():
     assert not world.released and not world.dropped and world.held is None   # nothing let go over nothing
     (x, y, *_rest), = world.boxes                                              # back down where it was
     assert np.hypot(x - cube[0], y - cube[1]) < 0.012
-    assert len(looks) == 1 + 1 + len(m3pick.BOX_LOOKS)   # the start's, over the spot, then all round
+    assert looks == ["box", "box view"] + ["box"] * (len(m3pick.BOX_LOOKS) - 1)   # the start's, the box view
+    # where it was found, then the other looks round
     assert world.pose[2] == 180                          # home again
 
 
-def test_left_both_out_of_reach_and_without_a_square_grip_is_said():
+def test_left_out_of_reach_by_the_lidar_without_a_square_grip_and_by_the_body_is_said():
     """2026-10-02: the message for a cube out of reach and a block lying lengthwise to the bumper
     (its square grip puts a finger over it) raised ValueError -- `in` compared the dicts' arrays.
-    (2026-10-02, later: that block is too near the right lidar now -- its mirror on the left is the
-    square grip's; all three said at once.)"""
-    world = World([(0.40, 0.0, 0, 0.03, 0.03), (0.156, -0.056, 107, 0.06, 0.03),   # read as turned 17
-                   (0.156, 0.056, 73, 0.06, 0.03)])
+    All four said at once: out of reach; too near the right lidar; a block at the left edge with no
+    square grip; a cube beside the left wheel too close to the body -- "out of reach" until 2026-10-05.
+    (Those blocks by the bumper of 2026-10-02 have the careful grip since.)"""
+    world = World([(0.40, 0.0, 0, 0.03, 0.03), (0.169, -0.115, 0, 0.03, 0.03), (0.15, 0.12, 90, 0.06, 0.03),
+                   (0.09, 0.19, 0, 0.03, 0.03)])
     picker = run(world, "clean_up")
     said = picker._log[-1]["text"]
     assert picker.state["error"] is None, picker.state["error"]
-    assert "out of reach" in said and "too near the right lidar" in said and "no square grip" in said, said
-    assert len(world.boxes) == 3 and not world.dropped
+    assert "out of reach: 30 mm cube at x 0.400" in said and "too near the right lidar" in said, said
+    assert "no square grip" in said and "too close to the robot's body for the arm: 30 mm cube at x 0.090" in said, said
+    assert len(world.boxes) == 4 and not world.dropped
 
 
 def test_the_arm_keeps_off_the_front_right_lidar():
@@ -470,7 +475,8 @@ def test_the_arm_keeps_off_the_front_right_lidar():
         assert m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003) is not None, centre
     # the 40 mm cube just by it: only with the hand turned over (J5 past 180, the finger motor's housing
     # away from the lidar), the line down planned with that wrist (2026-10-05)
-    cube, opened = np.array([0.165, -0.075, 0.02]), m3pick.opened_for(0.04)
+    cube, opened = np.array([0.160, -0.075, 0.02]), m3pick.opened_for(0.04)   # 0.165 until the fingers'
+    # margin went to 6 mm (2026-10-05): there J5 173 does too
     def wrist(grip):
         return m3pick.wrist_choices(grip, 67, 90, m3kinematics.finger_span(opened))
     planned = m3pick.plan_grasp(cube, 0.04, floor_clear=0.003, wrist=wrist, gripper=opened, held=m3arm.gripper_angle(40))
@@ -583,3 +589,93 @@ def test_a_cube_missed_twice_is_left_and_the_others_still_picked():
     said = " ".join(line["text"] for line in picker._log)
     assert "missed twice" in said and picker.state["missed"] == 2 and picker.state["picked"] == 1, said
     assert [b[:2] for b in world.boxes] == [(0.19, 0.0)] and len(world.dropped) == 1
+
+
+def test_a_block_lying_across_in_front_of_the_wheel_has_the_careful_grip():
+    """2026-10-05, the user: a block lying across 11 mm in front of the bumper, by the left wheel, "we
+    have to pick things from such position" -- no grip kept the near finger off the robot. The careful
+    one, as it was read (turned 2-6 deg, or 178): opened 15 mm over it, aimed 3-5 mm further out."""
+    picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
+    for yaw in (2.0, 4.0, 6.0, 178.0):
+        block = {"centre": np.array([0.150, 0.079, 0.015]), "height": 0.03, "size": 0.03, "length": 0.06, "yaw": yaw,
+                 "period": 180.0, "whole": True, "kind": "block", "footprint": (0.03, 0.06)}
+        planned = picker.plan(block, [block])
+        assert planned is not None and block["careful"], yaw
+        grip = m3kinematics.grip(planned[1][-1])[0]
+        assert 0.002 <= grip[0] - 0.150 <= 0.0085 and abs(grip[1] - 0.079) < 0.003, (yaw, grip)   # further out along
+        # x: 3-5 mm, and the whole servo degrees' few
+        assert all(q[6] == m3pick.opened_for(0.03, m3pick.CAREFUL_SPARE_MM) for q in planned[1])
+    world = World([(0.150, 0.079, 94, 0.06, 0.03)])
+    picker = run(world, "pick_once")
+    said = " ".join(line["text"] for line in picker._log)
+    assert picker.state["error"] is None and picker.state["picked"] == 1 and "careful grip" in said, said
+
+
+def test_a_cube_is_not_picked_careful_where_the_plain_grip_does():
+    picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
+    cube = {"centre": np.array([0.21, 0.03, 0.015]), "height": 0.03, "size": 0.03, "yaw": 20.0, "period": 90.0,
+            "whole": True, "kind": "cube", "footprint": (0.03, 0.03)}
+    planned = picker.plan(cube, [cube])
+    assert planned is not None and not cube["careful"] and planned[1][-1][6] == m3pick.opened_for(0.03)
+
+
+def test_the_close_look_is_taken_with_the_wrist_straight():
+    """2026-10-05: at the pre-grasp the wrist turned for the grip brought a finger up across the cube in
+    the close look's picture -- seen in part, aimed by the wide look, missed. The look with the fingers
+    left and right of it; the wrist turns on the way down."""
+    world = World([(0.21, 0.03, 30, 0.03, 0.03)])
+    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
+    looked, look = [], picker.look
+
+    def recording(tag, target_near=None):
+        looked.append((tag, dict(world.pose)))
+        return look(tag, target_near)
+    picker.look = recording
+    picker.start("pick_once")
+    picker.wait(120)
+    assert picker.state["error"] is None and picker.state["picked"] == 1
+    (_tag, pose), = [x for x in looked if x[0] == "close"]
+    assert pose[5] in (90, 270) and picker.state["last"]["j5"] not in (90, 270)   # looked straight, gripped turned
+
+
+def test_after_the_lift_the_box_is_looked_at_from_where_it_was_found_no_up_and_down():
+    """2026-10-05, the user: "after the lift ... semi home position ... so it sees more" -- over the spot
+    the marker read close and askew and the job looked for the box all round, holding: up and down.
+    Risen in place, turned with the hand raised, tilted down into SIDE_LOOK at the box's J1: never up to a
+    carry pose, and what is held never down over the chassis."""
+    world = World([(0.21, 0.03, 30, 0.03, 0.03)])
+    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
+    views = []
+
+    def see(tag):
+        views.append((tag, dict(world.pose)))
+        return box_here()
+    picker.see_box = see
+    picker.start("pick_once")
+    picker.wait(120)
+    assert picker.state["error"] is None and picker.state["picked"] == 1 and len(world.released) == 1
+    (_tag, pose), = [v for v in views if v[0] == "box view"]
+    assert {j: pose[j] for j in (1, 2, 3, 4)} == {j: v for j, v in m3pick.SIDE_LOOK.items() if j != 5}
+    closed = next(i for i, (m, _a, _k) in enumerate(world.calls) if m == "close_gripper")
+    let_go = next(i for i, (m, _a, _k) in enumerate(world.calls) if m == "set_gripper" and i > closed)
+    carried = [q for m, args, _kw in world.calls[closed:let_go] if m == "follow" for q in args[0]]
+    assert carried and all(q[2] <= 105 for q in carried), carried   # never up to a carry pose (J2 130-180)
+    assert m3kinematics.finger_span(world.opened_to[0]) <= 0.03 + 0.016   # let go just over its width
+
+
+def test_the_raised_turn_holds_the_thing_over_the_chassis():
+    held = m3arm.gripper_angle(30)
+    top = {1: 90, 2: 60, 3: 40, 4: 60, 5: 90, 6: held}
+    view = {**top, **m3pick.SIDE_LOOK, 1: 180}
+    legs = m3pick.view_way(top, view, 0.02)
+    assert len(legs) == 3 and legs[-1] == [view] and legs[1][0][4] == view[4] + m3pick.VIEW_TURN, legs
+    assert m3pick.held_problem(top, [leg[-1] for leg in legs], 0.035) is None
+    flat = {**top, **{j: view[j] for j in (2, 3, 4, 5)}}   # in SIDE_LOOK's shape what is held comes over the
+    assert m3pick.held_problem(top, [flat, {**flat, 1: 180}], 0.035) is not None   # front deck's corner, low
+
+
+def test_the_drop_spots_keep_off_the_standing_lid():
+    box = box_here()
+    across = [float(m3pick.in_box(box, s)[1]) for s in m3pick.box_spots(box)]
+    assert min(across) >= -m3pick.BOX_INSIDE[1] / 2 + m3pick.BOX_LID_MARGIN - 1e-9   # the lid: -into
+    assert max(across) <= m3pick.BOX_INSIDE[1] / 2 - m3pick.BOX_MARGIN + 1e-9
