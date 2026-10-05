@@ -194,13 +194,17 @@ def wrist_squares(pose: dict, yaw: float, period: float = 90, opening: float = O
     close along, the same every `period` deg (90 a cube, 180 across a lying block); of the ways that
     square them, the one whose open fingers keep furthest from `others` first (2026-10-01: fingers
     opening left and right of a cube hit a 40 mm one 6.5 cm beside it)."""
-    def mismatch(j5):
-        return off_square({**pose, 5: j5}, yaw, period)
     top = m3arm.SAFE_LIMITS[5][1]   # J5's end (m3arm): past 180 a square grip turned over is one more --
     # the finger motor's housing then on the hand's other side (2026-10-05, the user's: away from the lidar)
-    best = min(range(top + 1), key=lambda j5: (round(mismatch(j5)), abs(j5 - 90)))
+    # J5 turns the hand about its own z: the closing line for every J5 from the hand's x and y at J5 90 (one
+    # frames() a grip, not one a degree -- 2026-10-05: 131k of them, 10 s, in a plan that failed)
+    hand = m3kinematics.frames({**pose, 5: 90})["arm5"][:3, :2]
+    turn = np.radians(np.arange(top + 1) - 90.0)
+    closing = -np.sin(turn)[:, None] * hand[:, 0] + np.cos(turn)[:, None] * hand[:, 1]
+    mismatch = np.abs((np.degrees(np.arctan2(closing[:, 1], closing[:, 0])) - yaw + period / 2) % period - period / 2)
+    best = min(range(top + 1), key=lambda j5: (round(mismatch[j5]), abs(j5 - 90)))
     squared = [j5 for j5 in {best + 90 * n for n in range(-3, 4)}
-               if 0 <= j5 <= top and round(mismatch(j5)) <= round(mismatch(best)) + 1]
+               if 0 <= j5 <= top and round(mismatch[j5]) <= round(mismatch[best]) + 1]
     return sorted(squared, key=lambda j5: (-min(finger_clearance({**pose, 5: j5}, opening, others), 0.03)
                                            if others else 0.0, abs(j5 - 90)))
 
@@ -254,11 +258,12 @@ TILTS = (5, -5, 10, -10, 15, -15)   # deg the hand may tilt off the approach's p
 EXACT_M = 0.04   # the last bit of the line, at exactly the approach's pitch
 
 
-def line(a: np.ndarray, b: np.ndarray, pitch: float, floor_clear: float, step: float = 0.02):
+def line(a: np.ndarray, b: np.ndarray, pitch: float, floor_clear: float, step: float = 0.02, ok=None):
     """IK poses along the straight line a -> b, every `step`, the hand at `pitch` over the last
     EXACT_M and up to 15 deg off it before that -- at the far edge the shoulder is at its end and the
     elbow runs into its own (J3 0) going back up the line at one pitch (2026-10-01); None if an end,
-    or two points in a row, are out of reach."""
+    or two points in a row, are out of reach. `ok(pose)`: the guard, as the pose will be driven (its
+    wrist, its gripper) -- by default the arm's own at J5 90."""
     n = max(1, math.ceil(np.linalg.norm(b - a) / step))
     out, skipped = [], False
     for i in range(n, -1, -1):   # from the grip back up: each point's pitch near the one below it
@@ -268,8 +273,8 @@ def line(a: np.ndarray, b: np.ndarray, pitch: float, floor_clear: float, step: f
         for tilt in tilts:
             if abs(last + tilt - pitch) > 15:
                 continue
-            p = m3kinematics.reach(point, last + tilt, floor_clear=floor_clear)
-            if p is not None:
+            p = m3kinematics.reach(point, last + tilt, floor_clear=floor_clear, guard=ok is None)
+            if p is not None and (ok is None or ok(p)):
                 out.append((p, last + tilt))
                 skipped = False
                 break
@@ -311,7 +316,7 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
     if prefer is not None:
         tries.insert(0, (BACK, prefer[1], prefer[0]))
     hand = {} if gripper is None else {6: gripper}
-    reached, lines = {}, {}   # (grip, pitch) -> the grip pose; (back, lift, pitch) -> the line: both passes
+    reached, lines = {}, {}   # (lift, pitch) -> the grip pose; (back, lift, pitch, J5) -> the line: both passes
     # square first, everywhere -- every approach and grip height -- and only then off square: a
     # cube gripped 20 deg off turns in the fingers, and the grip was luck (2026-10-02)
     for squared in ((True, False) if wrist is not None else (True,)):
@@ -321,7 +326,7 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
                 continue
             grip = np.array([centre[0], centre[1], z])
             if (lift, pitch) not in reached:   # the grip first: cheap
-                reached[lift, pitch] = m3kinematics.reach(grip, pitch, floor_clear=floor_clear)
+                reached[lift, pitch] = m3kinematics.reach(grip, pitch, floor_clear=floor_clear, guard=False)
             bottom = reached[lift, pitch]
             if bottom is None:
                 continue
@@ -330,14 +335,16 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
                    if m3kinematics.problem({**bottom, 5: j5, **hand}, floor_clear) is None]
             if not j5s:
                 continue
-            if (back, lift, pitch) not in lines:
-                r = math.radians(pitch)
-                along = np.array([math.cos(yaw) * math.cos(r), math.sin(yaw) * math.cos(r), -math.sin(r)])
-                lines[back, lift, pitch] = line(grip - back * along, grip, pitch, floor_clear)
-            poses = lines[back, lift, pitch]
-            if not poses:
-                continue
+            r = math.radians(pitch)
+            along = np.array([math.cos(yaw) * math.cos(r), math.sin(yaw) * math.cos(r), -math.sin(r)])
             for j5 in j5s:
+                if (back, lift, pitch, j5) not in lines:   # the line as it will be driven: this wrist, this
+                    # gripper -- a hand turned over clears what it at J5 90 does not (2026-10-05)
+                    lines[back, lift, pitch, j5] = line(grip - back * along, grip, pitch, floor_clear, ok=lambda q, j5=j5:
+                                                        m3kinematics.problem({**q, 5: j5, **hand}, floor_clear) is None)
+                poses = lines[back, lift, pitch, j5]
+                if not poses:
+                    continue
                 driven = [{**q, 5: j5, **hand} for q in poses]
                 lifted = driven if held is None else [{**q, 5: j5, 6: held} for q in poses]
                 if m3kinematics.problem(driven[0]) is None \

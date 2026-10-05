@@ -91,6 +91,9 @@ HAND_BACK = 0.028    # m the hand's shell reaches along its own x -- the finger 
                      # Yahboom's mesh, 1.4 less as the user saw it (2026-10-05: hovering over a 40 mm cube
                      # by the right lidar, the housing ~1 cm in front of the lidar's face, where the mesh
                      # had it 0.4 cm over it)
+WRIST_BACK = 0.025   # m the wrist link's shell reaches along its own x: 3.5 cm by the mesh, 1.0 less as the
+                     # user saw it (2026-10-05: the hand turned over, over that cube, the wrist link ~1.5 cm
+                     # in front of the lidar's face where the mesh had it 0.5)
 BODY_ROOM = 0.0      # m from the rest: the shell must not go in; the steps keep their own margins
 BODY_FROM_X = 0.0    # m: the body in front of this, less the arm's own turntable (ARM_COLUMN round its axis)
 ARM_COLUMN = 0.05
@@ -132,7 +135,8 @@ _TO_GRIPPING = _frame(GRIPPING[0], _rpy(*GRIPPING[1]))
 _MODEL = np.load(Path(__file__).with_name("m3body.npz"))
 _SHELL = tuple((part, frame, _MODEL[f"shell_{frame}"].astype(float)) for part, frame in (
     ("forearm", "arm3"), ("wrist", "arm4"), ("hand", "arm5"), ("camera", "camera"), ("gripper", "gripping")))
-_SHELL[2][2][:, 0] = np.minimum(_SHELL[2][2][:, 0], HAND_BACK)   # the hand: its housing as seen
+_SHELL[1][2][:, 0] = np.minimum(_SHELL[1][2][:, 0], WRIST_BACK)   # the wrist link, as seen
+_SHELL[2][2][:, 0] = np.minimum(_SHELL[2][2][:, 0], HAND_BACK)    # the hand: its housing as seen
 _BOUNDS = tuple(np.array(list(itertools.product(*zip(points.min(0), points.max(0), strict=True))))
                 for _part, _frame, points in _SHELL)   # each part's box's 8 corners, in its frame
 _CELL = float(_MODEL["body_cell"])
@@ -328,12 +332,14 @@ def _planar(radius: float, z: float, pitch_down: float) -> list[tuple[float, flo
 
 
 def reach(target, pitch_down: float, j5: float = 90, tolerance: float = 0.005,
-          floor_clear: float = FLOOR_CLEAR) -> dict[int, int] | None:
+          floor_clear: float = FLOOR_CLEAR, guard: bool = True) -> dict[int, int] | None:
     """Servo degrees that put the grip point on `target` (base_link, m) with the fingers
     `pitch_down` degrees below level, or None when no pose the guard allows does it -- within
     `tolerance` m and 3 degrees after rounding to whole servo degrees (one degree of J2 moves the
     grip ~4 mm at reach; the arm itself repeats to ~1 cm). J1 turns the arm's plane to the target;
-    J2-J4 in closed form in that plane, then a few Gauss-Newton steps on the full geometry."""
+    J2-J4 in closed form in that plane, then a few Gauss-Newton steps on the full geometry. Not
+    `guard`: the caller checks the pose itself, with the wrist and the gripper it will have (the
+    guard at J5 90 threw out grips that pass turned over: 2026-10-05, the housing by the lidar)."""
     target = np.asarray(target, float)
     base = np.asarray(CHAIN[0][0][:2])
     yaw = math.degrees(math.atan2(target[1] - base[1], target[0] - base[0]))
@@ -362,7 +368,7 @@ def reach(target, pitch_down: float, j5: float = 90, tolerance: float = 0.005,
         pose = {1: round(j1), 2: round(q[0]), 3: round(q[1]), 4: round(q[2]), 5: round(j5)}
         point, pitch = grip(pose)
         miss = float(np.linalg.norm(point - target))
-        good = miss <= tolerance and abs(pitch - pitch_down) <= 3 and problem(pose, floor_clear) is None
+        good = miss <= tolerance and abs(pitch - pitch_down) <= 3 and (not guard or problem(pose, floor_clear) is None)
         if good and (best is None or miss < best[0]):
             best = (miss, pose)
     return None if best is None else best[1]

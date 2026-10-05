@@ -463,6 +463,13 @@ def test_the_arm_keeps_off_the_front_right_lidar():
         assert m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003) is None, centre
     for centre in ((0.212, -0.063, 0.015), (0.21, -0.13, 0.015)):   # 1.0 cm off it, the hand as seen
         assert m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003) is not None, centre
+    # the 40 mm cube just by it: only with the hand turned over (J5 past 180, the finger motor's housing
+    # away from the lidar), the line down planned with that wrist (2026-10-05)
+    cube, opened = np.array([0.165, -0.075, 0.02]), m3pick.opened_for(0.04)
+    def wrist(grip):
+        return m3pick.wrist_choices(grip, 67, 90, m3kinematics.finger_span(opened))
+    planned = m3pick.plan_grasp(cube, 0.04, floor_clear=0.003, wrist=wrist, gripper=opened, held=m3arm.gripper_angle(40))
+    assert planned is not None and planned[1][-1][5] > 180, planned
     why = m3kinematics.problem({1: 115, 2: 30, 3: 30, 4: 30, 5: 90})
     assert why and "front-right lidar" in why
     for pose in (m3pick.FOLDED, m3pick.LOOK, *({**m3pick.SIDE_LOOK, 1: j} for j in m3pick.BOX_LOOKS),
@@ -473,7 +480,7 @@ def test_the_arm_keeps_off_the_front_right_lidar():
 def test_in_front_of_the_right_lidar_the_base_slides_right_when_it_may_and_says_so_when_not():
     """2026-10-02, the user's choice: the arm keeps LIDAR_ROOM off the front-right lidar, and what is just
     in front of it is picked after the base slides right -- back before the drop."""
-    cube = (0.18, -0.11, 0, 0.03, 0.03)
+    cube = (0.20, -0.15, 0, 0.03, 0.03)
     world = World([cube])
     picker = run(world, "pick_once")
     said = " ".join(line["text"] for line in picker._log)
