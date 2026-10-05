@@ -84,7 +84,8 @@ MIRRORED = (1,)           # joints that turn against the URDF's axis (see SIGNS 
 # user, 2026-10-02); the rear-left one taken alike.
 LIDARS = (("front-right lidar", (0.060, 0.124), (-0.112, -0.070), 0.135),
           ("rear-left lidar", (-0.140, -0.090), (0.090, 0.112), 0.135))
-LIDAR_ROOM = 0.025   # m the arm keeps from a lidar, every way (the user: 2.5 cm after the hit)
+LIDAR_ROOM = 0.015   # m the arm keeps from a lidar, every way (the user: 2.5 cm after the hit; 1.5 cm
+                     # from 2026-10-05, after watching the arm 2.0-2.4 cm off it down a pick's path)
 BODY_ROOM = 0.0      # m from the rest: the shell must not go in; the steps keep their own margins
 BODY_FROM_X = 0.0    # m: the body in front of this, less the arm's own turntable (ARM_COLUMN round its axis)
 ARM_COLUMN = 0.05
