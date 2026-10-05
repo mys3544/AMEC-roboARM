@@ -1,29 +1,20 @@
-"""The robot's hardware over HTTP, so the control panel can run on another machine.
+"""The robot's arm and camera over HTTP, so that code on another machine can drive them.
 
-Runs ON THE ROBOT (`tools/hwbridge.py`, the `bridge` compose service) and holds
-the arm and the wrist camera. It has no page and makes no decisions: every request
-is one method call on roboarm.arm.Arm, the camera's frames, or the calibration
-file. The panel on the laptop (roboarm.web.remote) is what turns those into a
-session.
+Runs ON THE ROBOT, inside tools/m3bridge.py, and holds the arm and the camera's frames. It has
+no page and makes no decisions: every request is one method call on the arm
+(roboarm.m3arm.M3Arm) or the camera's frames.
 
     GET  /health                       {ok, arm: {connected, error}, camera}
-    GET  /stream.mjpg                  multipart MJPEG of the wrist camera, opened on first use
-    GET  /calibration                  data/table_homography.json, verbatim
-    GET  /vision/health                forwarded to the vision container
-    POST /vision/detect                raw JPEG in, forwarded to the vision container
-    POST /vision/raised                same, the depth rung (what stands up)
-    POST /arm/connect                  open the serial port (idempotent)
+    GET  /stream.mjpg                  multipart MJPEG of the arm's camera
     POST /arm/call                     {"method": "move_to", "args": [...], "kwargs": {...}}
                                        -> {"result": ...}; an ArmError is {"error": ..., "type": "ArmError"}
-    POST /arm/interrupt                abandon the move in progress (Arm.interrupt)
+    POST /arm/interrupt                abandon the move in progress (M3Arm.interrupt)
 
-Two things it does guard. Calls are serialised on one lock, because the SDK cannot
-interleave two conversations -- a second caller waits. And /arm/interrupt is
-handled OUTSIDE that lock, which is the whole point of it: it is how a stop button
-on the laptop reaches a glide already under way here.
+Two things it does guard. Calls are serialised on one lock, one move at a time -- a second
+caller waits. And /arm/interrupt is handled OUTSIDE that lock, which is the whole point of it:
+it is how a stop reaches a move already under way.
 
-No authentication: this is the robot's WiFi, and the port is only published there.
-Do not expose it further.
+No authentication: the lab network only. Do not expose it further.
 """
 
 from __future__ import annotations
@@ -31,24 +22,77 @@ from __future__ import annotations
 import json
 import threading
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Callable
-from http.server import BaseHTTPRequestHandler
-from pathlib import Path
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+import cv2
+
 from roboarm import camera
-from roboarm import config as cfg
-from roboarm.arm import ArmError
-from roboarm.web.server import Server, send_json, send_mjpeg
+from roboarm.m3arm import ArmError
+
+BOUNDARY = "roboarmframe"
+JPEG_QUALITY = 80
 
 # Everything a caller may invoke on the arm. Anything else is a 400, so a bug on
-# the laptop cannot reach into the SDK object behind it.
+# the laptop cannot reach into the object behind it.
 ALLOWED = frozenset({
-    "read", "move_to", "follow", "glide", "moving", "home", "set_gripper", "open_gripper",
-    "close_gripper", "grasped", "hold", "release", "engage", "out_of_range", "battery",
+    "read", "move_to", "follow", "home", "set_gripper", "open_gripper", "close_gripper",
+    "hold", "engage", "battery",
 })
+
+
+def send_json(handler: BaseHTTPRequestHandler, payload, status: int = 200) -> None:
+    body = json.dumps(payload).encode()
+    handler.send_response(status)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    handler.wfile.write(body)
+
+
+def send_mjpeg(handler: BaseHTTPRequestHandler, wait_frame,
+               max_frames: int | None = None) -> None:
+    """Multipart MJPEG: one JPEG per camera frame, for as long as the client stays.
+
+    `wait_frame(seen, timeout)` returns (frame, seq) with frame None on timeout.
+    Each part is written as one buffer, so a slow client stalls between frames
+    rather than mid-frame. A disconnect surfaces as a socket error, which simply
+    ends the loop.
+    """
+    handler.send_response(200)
+    handler.send_header("Content-Type", f"multipart/x-mixed-replace; boundary={BOUNDARY}")
+    handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Connection", "close")
+    handler.end_headers()
+    seen = 0
+    sent = 0
+    try:
+        while max_frames is None or sent < max_frames:
+            frame, seq = wait_frame(seen, 1.0)
+            if frame is None:
+                continue
+            seen = seq
+            ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+            if not ok:
+                continue
+            body = jpeg.tobytes()
+            handler.wfile.write(
+                f"--{BOUNDARY}\r\nContent-Type: image/jpeg\r\n"
+                f"Content-Length: {len(body)}\r\n\r\n".encode() + body + b"\r\n"
+            )
+            handler.wfile.flush()
+            sent += 1
+    except (TimeoutError, BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+        pass
+
+
+class Server(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+    # Tests set this so a stream request finishes instead of running forever.
+    max_stream_frames: int | None = None
 
 
 def _int_keys(value):
@@ -59,11 +103,9 @@ def _int_keys(value):
 
 
 class Bridge:
-    def __init__(self, arm_factory: Callable[[], object],
-                 stream: Callable[[], camera.Stream], calibration_path: Path):
+    def __init__(self, arm_factory: Callable[[], object], stream: Callable[[], camera.Stream]):
         self._arm_factory = arm_factory
         self._stream_factory = stream
-        self.calibration_path = calibration_path
         self.arm = None
         self.arm_error: str | None = None
         self._lock = threading.RLock()
@@ -96,8 +138,6 @@ class Bridge:
                 raise ArmError(self.arm_error or "arm is not connected")
             # A stale interrupt from the last stop must not abort this new call.
             self._interrupt.clear()
-            if method == "battery":
-                return float(self.arm.battery())
             fn = getattr(self.arm, method)
             return fn(*[_int_keys(a) for a in args],
                       **{k: _int_keys(v) for k, v in kwargs.items()})
@@ -106,10 +146,6 @@ class Bridge:
         self._interrupt.set()
 
     def close(self) -> None:
-        with self._stream_lock:
-            if self._stream is not None:
-                self._stream.stop()
-                self._stream = None
         with self._lock:
             if self.arm is not None:
                 try:
@@ -121,7 +157,7 @@ class Bridge:
     def stream(self) -> camera.Stream:
         with self._stream_lock:
             if self._stream is None:
-                self._stream = self._stream_factory().start()
+                self._stream = self._stream_factory()
             return self._stream
 
     def health(self) -> dict:
@@ -132,7 +168,6 @@ class Bridge:
             "camera": {"open": stream is not None,
                        "fps": round(stream.fps, 1) if stream else 0,
                        "error": stream.error if stream else None},
-            "calibration": self.calibration_path.exists(),
         }
 
 
@@ -147,40 +182,16 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             send_json(self, self.bridge.health())
-        elif path == "/vision/health":
-            self._forward_vision("/health")
         elif path == "/stream.mjpg":
             send_mjpeg(self, self.bridge.stream().wait,
                        getattr(self.server, "max_stream_frames", None))
-        elif path == "/calibration":
-            if not self.bridge.calibration_path.exists():
-                send_json(self, {"error": f"no calibration at {self.bridge.calibration_path}"}, 404)
-                return
-            send_json(self, json.loads(self.bridge.calibration_path.read_text()))
         else:
             send_json(self, {"error": f"no such endpoint: GET {path}"}, 404)
-
-    def _forward_vision(self, tail: str, body: bytes | None = None) -> None:
-        """Relay one request to the vision container and its reply back.
-
-        A panel on a laptop cannot reach the compose-internal `vision` host; the
-        bridge can."""
-        headers = {"Content-Type": self.headers["Content-Type"]} if body is not None else {}
-        status, reply = vision_request(cfg.DETECTOR_URL + tail, body, headers)
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(reply)))
-        self.end_headers()
-        self.wfile.write(reply)
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
-        if path in ("/vision/detect", "/vision/raised"):
-            # the query goes along (/raised?map=1 asks for the depth picture)
-            self._forward_vision(self.path.removeprefix("/vision"), body)
-            return
         try:
             params = json.loads(body or b"{}")
         except json.JSONDecodeError as exc:
@@ -190,9 +201,6 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/arm/interrupt":
             self.bridge.interrupt()
             send_json(self, {"ok": True})
-        elif path == "/arm/connect":
-            self.bridge.connect()
-            send_json(self, {"ok": self.bridge.arm is not None, "error": self.bridge.arm_error})
         elif path == "/arm/call":
             started = time.perf_counter()
             try:
@@ -207,45 +215,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 if isinstance(result, dict):
                     result = {str(k): v for k, v in result.items()}
-                # How long it ran here, so the laptop can tell the arm from the WiFi
-                # (roboarm.metrics "arm.<method>.robot"). Includes the wait for the
-                # one-call-at-a-time lock.
+                # How long it ran here, so a caller can tell the arm from the network.
+                # Includes the wait for the one-call-at-a-time lock.
                 send_json(self, {"result": result,
                                  "elapsed_s": round(time.perf_counter() - started, 4)})
         else:
             send_json(self, {"error": f"no such endpoint: POST {path}"}, 404)
-
-
-def vision_request(url: str, body: bytes | None, headers: dict[str, str],
-                   timeout: float = cfg.DETECTOR_TIMEOUT_S) -> tuple[int, bytes]:
-    """(status, JSON bytes) from the vision service; 502 with a message if it
-    cannot be reached. A function so a test can stand in for the service."""
-    request = urllib.request.Request(url, data=body, headers=headers,
-                                     method="POST" if body is not None else "GET")
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as reply:
-            return reply.status, reply.read()
-    except urllib.error.HTTPError as exc:
-        return exc.code, exc.read() or json.dumps({"error": str(exc)}).encode()
-    except (urllib.error.URLError, OSError) as exc:
-        return 502, json.dumps({"error": f"vision service unreachable: {exc}"}).encode()
-
-
-def make_server(bridge: Bridge, host: str = "0.0.0.0", port: int = 8761) -> Server:
-    handler = type("BoundBridgeHandler", (Handler,), {"bridge": bridge})
-    return Server((host, port), handler)
-
-
-def serve(bridge: Bridge, host: str = "0.0.0.0", port: int = 8761) -> None:
-    server = make_server(bridge, host, port)
-    bridge.connect()
-    status = "arm connected" if bridge.arm is not None else f"arm NOT connected: {bridge.arm_error}"
-    print(f"roboarm bridge on port {server.server_port}: {status}", flush=True)
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.shutdown()
-        bridge.close()
-        print("bridge stopped; arm left holding", flush=True)

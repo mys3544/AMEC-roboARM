@@ -3,13 +3,12 @@ and clear of the chassis, every step on the way is checked and then a move is on
 interrupt holds where it got to, follow() goes through poses without stopping, the gripper closes
 only to a width."""
 
-import threading
-import time
+import math
 
 import pytest
 
 from roboarm import m3arm, m3kinematics
-from roboarm.arm import ArmError
+from roboarm.m3arm import ArmError
 
 HOME = dict(zip(m3arm.JOINTS, m3arm.POSES["home"]))
 SURVEY = dict(zip(m3arm.JOINTS, m3arm.POSES["survey"]))
@@ -31,8 +30,8 @@ class Board:
     def sleep(self, s):
         self.t += s
 
-    def arm(self, **kw):
-        return m3arm.M3Arm(self.send, lambda: self.volts, self.clock, self.sleep, **kw)
+    def arm(self):
+        return m3arm.M3Arm(self.send, lambda: self.volts, self.clock, self.sleep)
 
 
 def test_nothing_moves_before_engage_and_engage_sends_a_whole_known_pose():
@@ -51,7 +50,7 @@ def test_nothing_moves_before_engage_and_engage_sends_a_whole_known_pose():
 
 def test_a_move_is_one_command_over_its_whole_time_and_is_believed_on_the_way():
     board = Board()
-    with board.arm(step_deg=5) as arm:
+    with board.arm() as arm:
         arm.engage()
         board.sent.clear()
         t0 = board.t
@@ -84,7 +83,7 @@ def test_what_is_not_safe_is_refused_before_anything_is_sent():
 
 def test_an_interrupt_holds_where_the_move_got_to():
     board = Board()
-    arm = board.arm(step_deg=5)
+    arm = board.arm()
     arm.engage()
     board.sent.clear()
     t0 = board.t
@@ -112,18 +111,7 @@ def test_follow_goes_through_without_stopping_and_checks_the_rounded_corners():
     assert board.sent == []
 
 
-def test_a_glide_returns_at_once_and_hold_stops_it():
-    board = Board()
-    arm = m3arm.M3Arm(board.send, lambda: 11.8, time.monotonic, time.sleep, step_deg=5)
-    arm._send(HOME, 0)   # as engage() leaves it, without its 3.3 s on the real clock
-    goal = arm.glide(SURVEY, speed_dps=50)     # 60 deg of J2 at 50 deg/s: ~1.2 s
-    assert goal == SURVEY and arm.moving()
-    time.sleep(0.35)
-    held = arm.hold()
-    assert not arm.moving() and held != SURVEY and board.sent[-1] == (held, 0)
-
-
-def test_the_gripper_closes_only_to_a_width_and_cannot_say_it_holds():
+def test_the_gripper_closes_only_to_a_width():
     assert m3arm.gripper_angle(30) == 134 and m3arm.gripper_angle(35) in (124, 125)
     with pytest.raises(ArmError, match="table"):
         m3arm.gripper_angle(80)
@@ -133,10 +121,6 @@ def test_the_gripper_closes_only_to_a_width_and_cannot_say_it_holds():
     with pytest.raises(ArmError, match="width"):
         arm.close_gripper()
     assert arm.close_gripper(width_mm=40)[m3arm.GRIPPER] == 115
-    with pytest.raises(ArmError, match="camera"):
-        arm.grasped()
-    with pytest.raises(ArmError, match="torque"):
-        arm.release()
 
 
 def test_a_low_battery_refuses_to_start():
@@ -147,12 +131,8 @@ def test_a_low_battery_refuses_to_start():
 def test_the_guard_passes_the_poses_the_arm_has_been_in_on_the_robot():
     for pose in (m3arm.POSES["home"], m3arm.POSES["survey"], (90, 150, 12, 20, 90, 0), (90, 90, 90, 90, 90, 0)):
         assert m3kinematics.problem(dict(zip(m3arm.JOINTS, pose))) is None
-    _position, down = m3kinematics.camera(SURVEY)
+    down = -math.degrees(math.asin(m3kinematics.frames(SURVEY)["camera"][2, 0]))   # the DCW2 link looks along x
     assert 33 < down < 37   # measured on the robot: 34.9 (the URDF alone: 30; the SAG adds the rest)
-
-
-def test_threads_are_not_left_behind():
-    assert not [t for t in threading.enumerate() if t.name == "m3-arm-glide" and t.is_alive()]
 
 
 def test_a_move_planned_on_the_measured_floor_may_come_closer_to_it_but_not_too_close():

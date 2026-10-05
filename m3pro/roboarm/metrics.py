@@ -1,26 +1,18 @@
 """Where the time goes: named durations, per stage and per job run.
 
-    with metrics.span("pick.descend"):
+    with metrics.span("descend"):
         ...                                         # timed, recorded under that name
-    metrics.record("vision.raised.server", 0.031)   # a duration measured elsewhere
 
-Every duration lands in the session-wide statistics for its name -- count,
-total, mean, p50, p90, max, last (the panel's Timing card, GET /api/metrics).
-While a RUN is open on a thread -- Session._run_job opens one round every job
--- each span on that thread also goes into the run's timeline, so a finished
-run says where its time went from start to finish, and how much of it no span
-accounts for. The live view's detection runs on a thread of its own: it counts
-in the statistics, never in a run.
+Every duration lands in the statistics for its name -- count, total, mean, p50,
+p90, max, last (the console's Timing card, GET /api/metrics). While a RUN is open
+on a thread -- the picker opens one round every job (m3pick.Picker._run) -- each
+span on that thread also goes into the run's timeline, so a finished run says
+where its time went from start to finish, and how much of it no span accounts
+for. A span on another thread counts in the statistics, never in a run.
 
 Spans nest. A span inside another is recorded with its depth, and a run's
 breakdown adds up only its TOP-level spans, so nothing is counted twice; the
 nested ones are the detail of where inside those the time went.
-
-Names are dotted by where they are measured: "scan", "refine", "pick", "drop",
-"return" at the top of a job; "pick.descend", "detect.depth", "vision.raised",
-"arm.move_to" inside them. "*.server" and "*.robot" are the part of a round
-trip spent on the far side, as that side measured it; the rest is the network
-and the bridge.
 """
 
 from __future__ import annotations
@@ -28,12 +20,13 @@ from __future__ import annotations
 import collections
 import contextlib
 import json
-import math
 import threading
 import time
 from pathlib import Path
 
-# Timed with perf_counter, not monotonic: on Windows (where the panel runs)
+import numpy as np
+
+# Timed with perf_counter, not monotonic: on Windows (where the X3's panel ran)
 # monotonic ticks in 15.6 ms steps, which reads a JPEG encode or a tag search
 # as 0 or 15.6 ms.
 RECENT = 500        # samples kept per stage for its percentiles
@@ -59,24 +52,16 @@ class _Stage:
         self.recent.append(seconds)
 
     def summary(self) -> dict:
-        ordered = sorted(self.recent)
+        p50, p90 = (float(p) for p in np.percentile(self.recent, (50, 90)))
         return {
             "count": self.count,
             "total_s": round(self.total, 3),
             "mean_ms": round(1000 * self.total / self.count, 1),
-            "p50_ms": round(1000 * _percentile(ordered, 50), 1),
-            "p90_ms": round(1000 * _percentile(ordered, 90), 1),
+            "p50_ms": round(1000 * p50, 1),
+            "p90_ms": round(1000 * p90, 1),
             "max_ms": round(1000 * self.max, 1),
             "last_ms": round(1000 * self.last, 1),
         }
-
-
-def _percentile(ordered: list[float], p: float) -> float:
-    if not ordered:
-        return 0.0
-    k = (len(ordered) - 1) * p / 100
-    lo, hi = math.floor(k), math.ceil(k)
-    return ordered[lo] + (ordered[hi] - ordered[lo]) * (k - lo)
 
 
 class Registry:
@@ -103,27 +88,7 @@ class Registry:
             local.depth = depth
             self._add(name, time.perf_counter() - start, start, depth)
 
-    def record(self, name: str, seconds: float) -> None:
-        """A duration measured by someone else (the vision service, the bridge),
-        recorded as if a span had just ended inside the current one."""
-        depth = getattr(self._local, "depth", 0)
-        self._add(name, float(seconds), time.perf_counter() - float(seconds), depth)
-
-    @contextlib.contextmanager
-    def scope(self, prefix: str):
-        """Every name recorded on this thread inside the block gets `prefix.` in
-        front: the live view's detection runs the same code as a job's, and its
-        numbers should not be mixed with them."""
-        local = self._local
-        outer = getattr(local, "prefix", "")
-        local.prefix = f"{outer}{prefix}."
-        try:
-            yield
-        finally:
-            local.prefix = outer
-
     def _add(self, name: str, seconds: float, start: float, depth: int) -> None:
-        name = getattr(self._local, "prefix", "") + name
         with self._lock:
             stage = self._stages.get(name)
             if stage is None:
@@ -167,11 +132,6 @@ class Registry:
         ordered = dict(sorted(stages.items(), key=lambda kv: -kv[1]["total_s"]))
         return {"stages": ordered, "runs": runs}
 
-    def reset(self) -> None:
-        with self._lock:
-            self._stages.clear()
-            self._runs.clear()
-
 
 def _summarise(run: dict, total: float) -> dict:
     """The run's own totals: per top-level stage (what adds up to the run) and
@@ -200,8 +160,5 @@ def _summarise(run: dict, total: float) -> dict:
 
 REGISTRY = Registry()
 span = REGISTRY.span
-record = REGISTRY.record
 run = REGISTRY.run
-scope = REGISTRY.scope
 snapshot = REGISTRY.snapshot
-reset = REGISTRY.reset

@@ -1,5 +1,6 @@
 """tools/m3bridge.py's HTTP side on this laptop, no ROS: the X3's bridge contract in front of
-roboarm.m3arm.M3Arm on a pretend board, and /rgbd from frames fed as the ROS node feeds them."""
+roboarm.m3arm.M3Arm on a pretend board, /rgbd from frames fed as the ROS node feeds them, and a
+stop reaching a move under way."""
 
 import base64
 import json
@@ -16,8 +17,11 @@ import numpy as np
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 import m3bridge
 
-from roboarm import m3arm
+from roboarm import camera, m3arm
 from roboarm.web import bridge
+
+HOME = dict(zip(m3arm.JOINTS, m3arm.POSES["home"]))
+SURVEY = dict(zip(m3arm.JOINTS, m3arm.POSES["survey"]))
 
 
 def ask(url, body=None):
@@ -31,12 +35,12 @@ def ask(url, body=None):
         return e.code, json.loads(e.read())
 
 
-def test_the_bridge_drives_the_m3_arm_and_serves_rgbd(tmp_path):
+def test_the_bridge_drives_the_m3_arm_and_serves_rgbd():
     sent = []
-    frames, stream = m3bridge.Frames(), m3bridge.RosStream()
+    frames, stream = m3bridge.Frames(), camera.Stream()
     fast = lambda s: None   # the pretend board needs no waiting
     the_bridge = bridge.Bridge(lambda: m3arm.M3Arm(lambda p, ms: sent.append((p, ms)), lambda: 11.8,
-                                                  sleep=fast), lambda: stream, tmp_path / "none.json")
+                                                  sleep=fast), lambda: stream)
     server = m3bridge.Server(("127.0.0.1", 0), m3bridge.make_handler(the_bridge, frames))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_port}"
@@ -70,6 +74,47 @@ def test_the_bridge_drives_the_m3_arm_and_serves_rgbd(tmp_path):
         time.sleep(0.3)   # the last step's 125 ms: read() believes the arm on its way till then
         status, reply = ask(f"{base}/rgbd")
         assert reply["joints"]["1"] == 100
+
+        server.max_stream_frames = 1   # the console's live view: one part, then the stream ends
+        stream.publish(colour)
+        with urllib.request.urlopen(f"{base}/stream.mjpg", timeout=10) as stream_reply:
+            part = stream_reply.read()
+        jpeg = part[part.index(b"\r\n\r\n") + 4:part.rindex(b"\r\n")]
+        assert cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR).shape == (480, 640, 3)
+        assert ask(f"{base}/health")[1]["camera"]["open"]
+    finally:
+        server.shutdown()
+        the_bridge.close()
+
+
+def test_a_stop_reaches_a_move_under_way_and_only_the_allowed_calls_pass():
+    """/arm/interrupt, outside the calls' lock, holds the arm where a move got to, and a stale
+    interrupt does not stop the next move (the X3's bridge tests, on the M3's arm)."""
+    sent = []
+    the_bridge = bridge.Bridge(lambda: m3arm.M3Arm(lambda p, ms: sent.append((p, ms)), lambda: 11.8),
+                               camera.Stream)
+    server = m3bridge.Server(("127.0.0.1", 0), m3bridge.make_handler(the_bridge, m3bridge.Frames()))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        status, reply = ask(f"{base}/arm/call", {"method": "glide"})
+        assert status == 400 and "bridge" in reply["error"]
+        the_bridge.connect()
+        the_bridge.arm._send(HOME, 0)   # as engage() leaves it, without its 3.3 s on the real clock
+        replies = []
+        move = threading.Thread(target=lambda: replies.append(ask(
+            f"{base}/arm/call", {"method": "move_to", "args": [SURVEY], "kwargs": {"speed_dps": 30}})))
+        move.start()   # J2 180 -> 120 at 30 deg/s: 2 s
+        time.sleep(0.4)
+        assert ask(f"{base}/arm/interrupt", {})[0] == 200
+        move.join(timeout=5)
+        status, reply = replies[0]
+        assert status == 400 and "interrupted" in reply["error"]
+        held, ms = sent[-1]
+        assert ms == 0 and SURVEY[2] < held[2] < HOME[2]   # held on the way, not at the goal
+        status, reply = ask(f"{base}/arm/call", {"method": "move_to", "args": [SURVEY],
+                                                 "kwargs": {"speed_dps": 300, "settle": False}})
+        assert status == 200 and reply["result"]["2"] == SURVEY[2]
     finally:
         server.shutdown()
         the_bridge.close()

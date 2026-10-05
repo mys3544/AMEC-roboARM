@@ -54,26 +54,12 @@ import cv2
 import numpy as np
 
 from roboarm import camera, m3arm, m3pick, metrics
-from roboarm.arm import ArmError
+from roboarm.m3arm import ArmError
 from roboarm.web import bridge
-from roboarm.web.server import Server, send_json
+from roboarm.web.bridge import Server, send_json
 
-PORT = 8761
+HOST, PORT = "0.0.0.0", 8761
 OUT = Path(__file__).resolve().parents[1] / "out" / "pick"
-CALIBRATION = Path(__file__).resolve().parents[1] / "data" / "m3_calibration.json"   # none yet
-
-
-class RosStream(camera.Stream):
-    """camera.Stream fed from a ROS topic instead of a V4L2 device: no capture thread."""
-
-    def __init__(self):
-        super().__init__(device=-1, size=(640, 480))
-
-    def start(self) -> RosStream:
-        return self
-
-    def stop(self) -> None:
-        pass
 
 
 class Frames:
@@ -190,7 +176,7 @@ def make_handler(the_bridge: bridge.Bridge, frames: Frames, picker: m3pick.Picke
     return Handler
 
 
-def make_node(frames: Frames, stream: RosStream):
+def make_node(frames: Frames, stream: camera.Stream):
     """The ROS side: /arm6_joints out; /battery and the camera in."""
     from arm_msgs.msg import ArmJoints
     from geometry_msgs.msg import Twist
@@ -325,8 +311,6 @@ def drive(node, dx: float, dy: float, speed: float = 0.05, stopping=lambda: Fals
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=PORT)
     parser.add_argument("--camera", action="store_true", help="start the DCW2's driver too")
     args = parser.parse_args()
 
@@ -339,7 +323,7 @@ def main() -> int:
         driver = subprocess.Popen(["ros2", "launch", "orbbec_camera", "dabai_dcw2.launch.py",
                                    "depth_registration:=true"])
     rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
-    frames, stream = Frames(), RosStream()
+    frames, stream = Frames(), camera.Stream()
     node = make_node(frames, stream)
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
 
@@ -348,13 +332,13 @@ def main() -> int:
             raise ArmError("nothing listens on /arm6_joints: is the micro-ROS agent up?")
         return m3arm.M3Arm(node.send, lambda: node.volts)
 
-    the_bridge = bridge.Bridge(make_arm, lambda: stream, CALIBRATION)
+    the_bridge = bridge.Bridge(make_arm, lambda: stream)
     picker = m3pick.Picker(arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT,
                            drive=lambda dx, dy, v: drive(node, dx, dy, v, lambda: picker.stopping()),
                            battery=lambda: node.volts)
     metrics.REGISTRY.log_path = OUT / "metrics.jsonl"
     OUT.mkdir(parents=True, exist_ok=True)
-    server = Server((args.host, args.port), make_handler(the_bridge, frames, picker))
+    server = Server((HOST, PORT), make_handler(the_bridge, frames, picker))
     the_bridge.connect()
     state = "arm ready (engage before the first move)" if the_bridge.arm else f"arm NOT connected: {the_bridge.arm_error}"
     print(f"m3bridge on port {server.server_port}: {state}", flush=True)

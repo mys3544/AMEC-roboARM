@@ -16,7 +16,6 @@
     python tools/arena_map.py rtab-export [NAME]   # the 3D cloud, the floor print, heights ->
                                            # out/arena/rtab; NAME: another database in ~/arena/rtab
     python tools/arena_map.py rtab-crop [N]   # the kept export (or try N) cropped again, fetched
-    python tools/arena_map.py calib NAME   # the two lidars' mounting, from its standing start
     python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings, compare
     python tools/arena_map.py status
     python tools/arena_map.py stop
@@ -172,8 +171,8 @@ RAW = "/scan0 /scan1 /odom_raw /imu/data_raw"   # what a replay feeds the stack
 
 
 def record(client, name, step=None):
-    """A replayable log for tuning, ~/arena/bags/NAME: 20 s standing (the lidars' mounting is
-    calibrated from it), the auto loop, 10 s standing. The raw topics, plus what the live stack
+    """A replayable log for tuning, ~/arena/bags/NAME: 20 s standing (lidars.yaml's range biases
+    were measured on loop1's), the auto loop, 10 s standing. The raw topics, plus what the live stack
     made of them (/scan, /odom, /tf) for comparison. With `step` (m) the loop stops and goes:
     it pauses after every `step` until `resume` (or Continue on the page / in the console) --
     for a robot on its charging cable, which someone moves at each pause."""
@@ -384,15 +383,6 @@ def upload(client):
             sftp.put(str(path), f"{REMOTE}/{path.name}")
 
 
-def calib(client, name):
-    """lidar_calib.py on a recording's first 15 s; the corrected mounting -> ~/arena/lidars_cal.yaml."""
-    upload(client)
-    _c, text = sh(client, f"{ROS} && cd {REMOTE} && python3 lidar_calib.py bags/{name}"
-                          " --write lidars_cal.yaml && cat lidars_cal.yaml", timeout=600)
-    print(text)
-    return 0
-
-
 def tune(client, name, wanted):
     """Replay recording NAME through configurations side by side (replay.sh, one ROS domain
     each) and compare their maps. Configurations: the names in CONFIGS (all by default), or
@@ -511,8 +501,8 @@ def main():
         return arm(connect(), sys.argv[2])
     if len(sys.argv) == 5 and sys.argv[1] == "record" and sys.argv[3] == "--step":
         return record(connect(), sys.argv[2], float(sys.argv[4]))
-    if len(sys.argv) == 3 and sys.argv[1] in ("save", "record", "calib"):
-        return {"save": save, "record": record, "calib": calib}[sys.argv[1]](connect(), sys.argv[2])
+    if len(sys.argv) == 3 and sys.argv[1] in ("save", "record"):
+        return {"save": save, "record": record}[sys.argv[1]](connect(), sys.argv[2])
     if len(sys.argv) == 3 and sys.argv[1] == "rtab-export":
         return rtab_export(connect(), sys.argv[2])
     if len(sys.argv) in (2, 3) and sys.argv[1] == "rtab-crop":

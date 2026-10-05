@@ -21,11 +21,9 @@ HOST, USER = "192.168.73.66", "jetson"   # the M3 Pro; the X3 Plus is ../../tool
 LOCAL = pathlib.Path(__file__).resolve().parents[1]
 REMOTE = "/home/jetson/roboarm"
 
-PATTERNS = ["roboarm/**/*.py", "roboarm/*.npz", "roboarm/web/static/*.html", "tools/*.py", "tests/*.py",
-            "vision_service/*.py", "docker/*", "docs/*.md", "compose.yaml", "pyproject.toml",
+PATTERNS = ["roboarm/**/*.py", "roboarm/*.npz", "tools/*.py", "tests/*.py",
+            "vision_service/*.py", "docker/*", "compose.yaml", "pyproject.toml",
             "uv.lock", ".dockerignore", ".gitignore",
-            # wrist camera profiles (cameras/README.md)
-            "cameras/*.md", "cameras/*.env", "cameras/*/*.json",
             # the robot's desktop setup, applied on the host by tools/display_setup.sh
             "tools/*.sh", "tools/*.conf", "tools/*.xml"]
 

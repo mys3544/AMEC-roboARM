@@ -168,7 +168,7 @@ def test_a_stop_with_nothing_running_does_not_linger():
 def test_the_way_to_the_drop_off_carries_low_and_turns_while_rising_and_the_guard_passes_it():
     lifted = [{1: 80, 2: 76, 3: 15, 4: 19, 5: 90, 6: 134}, {1: 136, 2: 59, 3: 34, 4: 18, 5: 44, 6: 134}]
     for extra in (0.0, 0.05, 0.1):
-        drop = m3pick.drop_pose(extra)
+        drop = m3pick.drop_at(m3pick.DROP_OUT + extra, m3pick.DROP_UP, 180.0)
         for here in lifted:
             way = m3pick.way_to(here, drop, direct=False)
             assert way[-1] == drop and len(way) >= 2 and m3arm.glide_problem(here, way) is None
@@ -210,14 +210,14 @@ def test_the_fingers_square_a_cube_the_way_that_keeps_them_off_its_neighbour_and
     cube = np.array([0.212, 0.063, 0.015])
     big = {"centre": np.array([0.191, 0.124, 0.02]), "footprint": (0.04, 0.04)}
     _pitch, poses, _lift = m3pick.plan_grasp(cube, 0.03)
-    width = m3pick.opening_m(m3pick.opened_for(0.030))
-    alone = m3pick.wrist_for(poses[-1], 109, 90, width)
-    beside = m3pick.wrist_for(poses[-1], 109, 90, width, [big])
+    width = m3kinematics.finger_span(m3pick.opened_for(0.030))
+    alone = m3pick.wrist_squares(poses[-1], 109, 90, width)[0]
+    beside = m3pick.wrist_squares(poses[-1], 109, 90, width, [big])[0]
     assert m3pick.finger_clearance({**poses[-1], 5: alone}, width, [big]) < 0.005
     assert m3pick.finger_clearance({**poses[-1], 5: beside}, width, [big]) > 0.02
     assert abs(abs(beside - alone) - 90) <= 2           # the cube's other square way
-    assert abs(m3pick.opening_m(m3pick.opened_for(0.030)) - 0.055) < 0.001
-    assert m3pick.opening_m(m3pick.opened_for(0.040)) > 0.065   # a 40 mm cube's diagonal is 57 mm
+    assert abs(m3kinematics.finger_span(m3pick.opened_for(0.030)) - 0.055) < 0.001
+    assert m3kinematics.finger_span(m3pick.opened_for(0.040)) > 0.065   # a 40 mm cube's diagonal is 57 mm
 
 
 def test_the_settings_are_held_to_their_ranges_kept_and_count(tmp_path):
@@ -276,7 +276,7 @@ def test_with_the_wrist_turned_both_fingertips_keep_off_the_table():
     for centre in ((0.25, 0.0, 0.015), (0.21, 0.13, 0.015), (0.175, 0.07, 0.015), (0.20, 0.05, 0.015)):
         for yaw in (0, 20, 45, 70):
             def wrist(grip, yaw=yaw):
-                return m3pick.wrist_choices(grip, yaw, 90, m3pick.opening_m(opening))
+                return m3pick.wrist_choices(grip, yaw, 90, m3kinematics.finger_span(opening))
             planned = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.008, wrist=wrist, gripper=opening)
             if centre[0] >= 0.25 and yaw in (20, 45, 70):
                 # at the far edge the hand comes in at ~55 deg: a cube turned much tilts the fingers more
@@ -298,7 +298,7 @@ def test_the_way_back_up_is_planned_with_the_fingers_shut_on_the_thing():
     cube, opened, shut = np.array([0.163, -0.115, 0.02]), m3pick.opened_for(0.040), m3arm.gripper_angle(40)
     for yaw in (75, 30, 0):
         def wrist(grip, yaw=yaw):
-            return m3pick.wrist_choices(grip, yaw, 90, m3pick.opening_m(opened))
+            return m3pick.wrist_choices(grip, yaw, 90, m3kinematics.finger_span(opened))
         planned = m3pick.plan_grasp(cube, 0.04, floor_clear=0.003, wrist=wrist, gripper=opened, held=shut)
         if planned is None:
             continue
@@ -315,7 +315,7 @@ def test_the_carry_goes_round_low_just_over_the_drop_off_height():
     for here in ({1: 80, 2: 76, 3: 15, 4: 19, 5: 90, 6: 134}, {1: 60, 2: 72, 3: 20, 4: 25, 5: 120, 6: 115},
                  {1: 136, 2: 59, 3: 34, 4: 18, 5: 44, 6: 134}):
         for extra in (0.0, 0.05, 0.10):
-            way = m3pick.carry_arc(here, extra, high)
+            way = m3pick.carry_to(here, m3pick.DROP_OUT + extra, 180.0, m3pick.DROP_UP, high)
             assert way is not None and m3arm.glide_problem(here, way) is None
             grips = [m3kinematics.grip(q)[0] for q in way]
             assert max(g[2] for g in grips) <= high + 0.005
@@ -384,7 +384,7 @@ def test_both_of_a_cubes_square_wrists_are_tried():
     opened = m3pick.opened_for(0.030)
 
     def wrist(grip):
-        return m3pick.wrist_choices(grip, 74, 90, m3pick.opening_m(opened), [other])
+        return m3pick.wrist_choices(grip, 74, 90, m3kinematics.finger_span(opened), [other])
     squares, _off = wrist(m3pick.plan_grasp(cube, 0.03, floor_clear=0.003)[1][-1])
     assert len(squares) == 2 and abs(abs(squares[0] - squares[1]) - 90) <= 2
     planned = m3pick.plan_grasp(cube, 0.03, floor_clear=0.003, wrist=wrist, gripper=opened, held=m3arm.gripper_angle(30))

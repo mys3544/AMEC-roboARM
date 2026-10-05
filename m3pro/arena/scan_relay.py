@@ -1,4 +1,4 @@
-"""Each lidar's scan with its range bias (from lidars.yaml, measured by lidar_calib.py) taken off
+"""Each lidar's scan with its range bias (from lidars.yaml, measured 2026-09-30) taken off
 every range, and returns within 0.18 m of the robot's centre (the chassis) blanked, as Yahboom's
 filter does for /scan -- published two ways:
 

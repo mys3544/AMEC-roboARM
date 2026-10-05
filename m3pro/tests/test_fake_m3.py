@@ -73,14 +73,15 @@ def test_the_survey_stands_still_while_the_map_records():
     robot = fake_m3.FakeM3(ARENA / "maps" / "arena_v4.yaml", seed=0)
     clock = robot.core.clock = Clock()
     robot.core.set_scan(robot.scan())
-    events = []
-    robot.core.on_record = lambda on: events.append((on, robot.pose()))
     assert robot.core.start_auto(plan="survey") is None
+    events = [(robot.core.recording, robot.pose())]   # each change of `recording`, and where
     assert events == [(False, robot.pose())] and robot.core.state()["plan"] == "survey"
     for k in range(int(60 / 0.05)):   # a minute: the first stations
         if k % 3 == 0:
             robot.core.set_scan(robot.scan())
         robot.core.tick()
+        if robot.core.recording != events[-1][0]:
+            events.append((robot.core.recording, robot.pose()))
         robot.step(0.05)
         clock.t += 0.05
     assert robot.core.auto is not None and robot.core.auto["i"] >= 6 and robot.core.auto["skips"] == 0

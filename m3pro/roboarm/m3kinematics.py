@@ -30,6 +30,7 @@ import itertools
 import math
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 # (origin xyz, origin rpy, joint axis) of arm1..arm5, each in its parent's frame
@@ -92,9 +93,7 @@ SHELL_REACH = 0.06   # m the shell can be from the outline's nearest point: 5.0 
 
 def _rot(axis, q):
     a = np.asarray(axis, float)
-    a = a / np.linalg.norm(a)
-    k = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
-    return np.eye(3) + math.sin(q) * k + (1 - math.cos(q)) * k @ k
+    return cv2.Rodrigues(a / np.linalg.norm(a) * q)[0]
 
 
 def _rpy(r, p, y):
@@ -137,14 +136,9 @@ _TOPS = np.where(_MODEL["body_mm"] >= 0, _MODEL["body_mm"] / 1000.0, -np.inf)
 def _grow(h: np.ndarray, r: float, square: bool = False) -> np.ndarray:
     """Each cell: the highest within `r` of it (a disc; a square when `square`, cheaper and wider)."""
     n = math.ceil(r / _CELL - 1e-9)
-    if n == 0:
-        return h.copy()
-    pad = np.pad(h, n, constant_values=-np.inf)
-    out = h.copy()
-    for dx, dy in itertools.product(range(-n, n + 1), repeat=2):
-        if square or (dx * dx + dy * dy) * _CELL * _CELL <= r * r + 1e-12:
-            out = np.maximum(out, pad[n + dx:n + dx + h.shape[0], n + dy:n + dy + h.shape[1]])
-    return out
+    d = np.arange(-n, n + 1)
+    disc = square | ((d[:, None] ** 2 + d[None, :] ** 2) * _CELL * _CELL <= r * r + 1e-12)
+    return cv2.dilate(h, disc.astype(np.uint8), borderType=cv2.BORDER_CONSTANT, borderValue=-np.inf)
 
 
 def _keep_out() -> tuple[list[tuple[str, float, np.ndarray]], np.ndarray, np.ndarray]:
@@ -215,22 +209,14 @@ def camera_optical() -> np.ndarray:
     return m
 
 
-def camera(pose: dict[int, float]) -> tuple[np.ndarray, float]:
-    """Where the camera is (base_link, m) and how far it looks down (degrees, + = down): the
-    DCW2 link looks along its x axis."""
-    f = frames(pose)["camera"]
-    return f[:3, 3], -math.degrees(math.asin(f[2, 0]))
-
-
 def finger_span(angle: float) -> float:
     """m between the fingers at gripper angle `angle` (J6): Yahboom's table inverted, its last
     stretch carried on past 60 mm (GRIPPER_OPEN, 30, is ~67)."""
     table = sorted(GRIPPER_WIDTH.items())
-    for (w0, a0), (w1, a1) in itertools.pairwise(table):
-        if a1 <= angle <= a0:
-            return (w0 + (angle - a0) * (w1 - w0) / (a1 - a0)) / 1000
     (w0, a0), (w1, a1) = table[-2], table[-1]
-    return max(0.0, (w1 + (angle - a1) * (w1 - w0) / (a1 - a0)) / 1000) if angle < a1 else 0.0
+    if angle < a1:
+        return max(0.0, (w1 + (angle - a1) * (w1 - w0) / (a1 - a0)) / 1000)
+    return float(np.interp(angle, [a for _w, a in table[::-1]], [w for w, _a in table[::-1]])) / 1000
 
 
 def outline(pose: dict[int, float], f: dict[str, np.ndarray] | None = None) -> np.ndarray:

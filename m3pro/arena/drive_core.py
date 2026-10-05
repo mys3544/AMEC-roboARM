@@ -23,7 +23,6 @@ loop.
 """
 
 import heapq
-import itertools
 import json
 import math
 import pathlib
@@ -153,16 +152,8 @@ def free_space(blobs, length, width, start, res=0.04):
     if not len(cells):
         return free, res
     seed = tuple(cells[np.argmin(np.hypot(*((cells + 0.5) * res - np.asarray(start)).T))])
-    reach, todo = np.zeros_like(free), [seed]
-    reach[seed] = True
-    while todo:   # flood fill, 8 neighbours
-        c = todo.pop()
-        for da, db in itertools.product((-1, 0, 1), repeat=2):
-            n = (c[0] + da, c[1] + db)
-            if 0 <= n[0] < free.shape[0] and 0 <= n[1] < free.shape[1] and free[n] and not reach[n]:
-                reach[n] = True
-                todo.append(n)
-    return reach, res
+    _n, labels = cv2.connectedComponents(free.astype(np.uint8), connectivity=8)
+    return labels == labels[seed], res
 
 
 def free_path(free, res, p, q):
@@ -327,16 +318,13 @@ class Driver:
         self.auto = None                 # the loop: waypoints, index, heading, blocked_since
         self.mode, self.note = "idle", "" if motion else BENCH
         self.cmd, self.nearest, self.moving = (0.0, 0.0, 0.0), math.inf, False
-        # on_record(on): told when the camera's frames are the sharp ones -- during a survey
-        # only while the robot stands settled at a station; otherwise always (`recording` in
-        # the state). Nothing pauses the map with it any more (drive_server.py)
-        self.on_record, self.recording = None, True
+        # recording: the camera's frames are the sharp ones -- during a survey only while the
+        # robot stands settled at a station; otherwise always (in the state). Nothing pauses the
+        # map with it any more (drive_server.py)
+        self.recording = True
 
     def record(self, on):
-        if on != self.recording:
-            self.recording = on
-            if self.on_record is not None:
-                self.on_record(on)
+        self.recording = on
 
     # --- inputs -------------------------------------------------------------------------------
 

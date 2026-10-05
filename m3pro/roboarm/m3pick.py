@@ -9,7 +9,7 @@ taken to the drop-off -- one, or every one in reach (clean_up).
      ~1-2 deg) and its turn read -- the wrist (J5) turned to square the fingers with it;
   4. down the line to the grip point in one glide -- the thing's middle (or higher, up to its top,
      at the far edge), at least GRIP_Z_MIN up -- the fingers close to its width, back up the line;
-  5. the drop-off, the X3 Plus's (roboarm/config.py DROP_POSE): the base a full 90 deg to the right
+  5. the drop-off, the X3 Plus's (its roboarm/config.py DROP_POSE): the base a full 90 deg to the right
      (J1 180), the fingertips DROP_OUT out and DROP_UP above the floor -- the thing falls the last
      bit -- and a random 0..DROP_SPREAD further out along that line so they do not land on each
      other; up over the chassis and turned there, never swung across it low with something in hand;
@@ -25,9 +25,9 @@ hand cannot point down steeply enough), less far aside: further out the shoulder
 lean past its end at 0 (2026-10-01).
 
 ROS-free: the arm is whatever `call(method, *args, **kwargs)` reaches -- roboarm.web.bridge.Bridge
-in the bridge itself (tools/m3bridge.py serves /pick/*), or the bridge over HTTP from the laptop
-(tools/m3_pick.py) -- and the camera whatever `snapshot()` returns: (colour BGR, depth mm aligned to
-it, K, the believed joint pose). Every step is timed (roboarm.metrics: one run per job).
+in the bridge itself (tools/m3bridge.py serves /pick/*) -- and the camera whatever `snapshot()`
+returns: (colour BGR, depth mm aligned to it, K, the believed joint pose). Every step is timed
+(roboarm.metrics: one run per job).
 """
 
 from __future__ import annotations
@@ -169,11 +169,6 @@ def opened_for(size_m: float) -> int:
     return m3arm.gripper_angle(width) if width <= max(m3arm.GRIPPER_WIDTH) else m3arm.GRIPPER_OPEN
 
 
-def opening_m(angle: int) -> float:
-    """m between the fingers at a gripper angle (m3kinematics.finger_span)."""
-    return m3kinematics.finger_span(angle)
-
-
 def finger_clearance(pose: dict, opening: float, others: list[dict]) -> float:
     """m from the two open fingertips, at `pose`, to the nearest of `others` (their footprints as
     circles round their corners); inf with nothing about."""
@@ -189,35 +184,19 @@ def finger_clearance(pose: dict, opening: float, others: list[dict]) -> float:
 def wrist_squares(pose: dict, yaw: float, period: float = 90, opening: float = OPEN_MM / 1000,
                   others: list[dict] = ()) -> list[int]:
     """Every J5 that squares the fingers with the object (a cube's two, 90 deg apart; a lying
-    block's one), best first: the fingers furthest from `others`, then the smaller turn."""
+    block's one), best first: the fingers furthest from `others`, then the smaller turn. They close
+    along the wrist's y axis (the finger links sit either side of it, URDF), at J5 90 square to the
+    arm's own plane -- with the arm turned to reach a cube that sits square to the robot, 25 deg off
+    its faces: they caught its corners and shoved it (2026-10-01). `yaw` is a line the fingers may
+    close along, the same every `period` deg (90 a cube, 180 across a lying block); of the ways that
+    square them, the one whose open fingers keep furthest from `others` first (2026-10-01: fingers
+    opening left and right of a cube hit a 40 mm one 6.5 cm beside it)."""
     def mismatch(j5):
-        y = m3kinematics.frames({**pose, 5: j5})["arm5"][:3, 1]
-        closing = math.degrees(math.atan2(y[1], y[0]))
-        return abs((closing - yaw + period / 2) % period - period / 2)
+        return off_square({**pose, 5: j5}, yaw, period)
     best = min(range(181), key=lambda j5: (round(mismatch(j5)), abs(j5 - 90)))
     squared = [j5 for j5 in {best, best - 90, best + 90} if 0 <= j5 <= 180 and round(mismatch(j5)) <= round(mismatch(best)) + 1]
     return sorted(squared, key=lambda j5: (-min(finger_clearance({**pose, 5: j5}, opening, others), 0.03)
                                            if others else 0.0, abs(j5 - 90)))
-
-
-def wrist_for(pose: dict, yaw: float, period: float = 90, opening: float = OPEN_MM / 1000,
-              others: list[dict] = ()) -> int:
-    """J5 that squares the fingers with the object: they close along the wrist's y axis (the
-    finger links sit either side of it, URDF), at J5 90 square to the arm's own plane -- with the
-    arm turned to reach a cube that sits square to the robot, 25 deg off its faces: they caught its
-    corners and shoved it (2026-10-01). `yaw` is a line the fingers may close along, the same every
-    `period` deg (90 a cube, 180 across a lying block): the smallest turn -- but of the ways that
-    square them (a cube's two), the one whose open fingers keep furthest from `others` (2026-10-01:
-    fingers opening left and right of a cube hit a 40 mm one 6.5 cm beside it)."""
-    def mismatch(j5):
-        y = m3kinematics.frames({**pose, 5: j5})["arm5"][:3, 1]
-        closing = math.degrees(math.atan2(y[1], y[0]))
-        return abs((closing - yaw + period / 2) % period - period / 2)
-    best = min(range(181), key=lambda j5: (round(mismatch(j5)), abs(j5 - 90)))
-    if not others:
-        return best
-    squared = [j5 for j5 in {best, best - 90, best + 90} if 0 <= j5 <= 180 and round(mismatch(j5)) <= round(mismatch(best)) + 1]
-    return max(squared, key=lambda j5: (min(finger_clearance({**pose, 5: j5}, opening, others), 0.03), -abs(j5 - 90)))
 
 
 def off_square(pose: dict, yaw: float, period: float = 90) -> float:
@@ -313,10 +292,11 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
     (2026-10-01: 24.7-26.3 cm out at 18-30 mm up). `prefer` (pitch, lift): tried first -- after the
     close look the aim moves a few mm, and a plan at another pitch would put the pre-grasp
     somewhere else, the way there maybe over the chassis (2026-10-01: refused at 17 cm over it).
-    `wrist(grip pose) -> J5 or [J5s, best first]` and `gripper` (J6): the plan as it will be driven
-    -- the turned wrist tilts the open fingers, one lower (m3kinematics.outline): checked with them,
-    set in the poses; `held` (J6 shut on the thing): the way back up checked with that (2026-10-02:
-    up with the open fingers passed, with them shut on a 40 mm cube the arm refused)."""
+    `wrist(grip pose) -> (J5s square, best first; J5s off square)` (wrist_choices) and `gripper`
+    (J6): the plan as it will be driven -- the turned wrist tilts the open fingers, one lower
+    (m3kinematics.outline): checked with them, set in the poses; `held` (J6 shut on the thing): the
+    way back up checked with that (2026-10-02: up with the open fingers passed, with them shut on a
+    40 mm cube the arm refused)."""
     base = np.asarray(m3kinematics.CHAIN[0][0][:2])
     yaw = math.atan2(centre[1] - base[1], centre[0] - base[0])
     radius = float(np.hypot(*(np.asarray(centre[:2]) - base)))
@@ -338,12 +318,7 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
             bottom = reached[lift, pitch]
             if bottom is None:
                 continue
-            j5s = wrist(bottom) if wrist is not None else [bottom[5]]
-            if isinstance(j5s, tuple):      # (square ones, off square)
-                j5s = j5s[0] if squared else j5s[1]
-            else:
-                j5s = j5s if isinstance(j5s, list) else [j5s]
-                j5s = j5s[:1] if squared else j5s[1:]
+            j5s = [bottom[5]] if wrist is None else wrist(bottom)[0 if squared else 1]
             j5s = [j5 for j5 in j5s   # at the grip a turned finger is lowest: the line only if one fits
                    if m3kinematics.problem({**bottom, 5: j5, **hand}, floor_clear) is None]
             if not j5s:
@@ -368,12 +343,6 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
     return None
 
 
-def drop_pose(extra: float) -> dict | None:
-    """The drop-off pose, `extra` m further out than DROP_OUT along the line 90 deg right (drop_at's
-    pitches: 2026-10-02, the arm's shell kept off the front-right lidar, its first five had none)."""
-    return drop_at(DROP_OUT + extra, DROP_UP, 180.0)
-
-
 # The drop-off box (2026-10-02): a printed marker inside its lid, which stands up at the far side --
 # the box found from it with one look to the right, empty or full (its black walls give the depth
 # camera nothing; the marker reads from 28 cm, 109 px). The inside: `along` the lid's hinge, `across`
@@ -393,7 +362,9 @@ ARC_STEP = 15       # deg of J1 between the carry's points
 
 
 def drop_at(radius: float, height: float, j1: float) -> dict | None:
-    """The grip point `radius` m from J1's axis, `height` m up, the arm turned to `j1`."""
+    """The grip point `radius` m from J1's axis, `height` m up, the arm turned to `j1` (the drop-off
+    line's: DROP_OUT and more, DROP_UP, J1 180 -- 2026-10-02, the arm's shell kept off the
+    front-right lidar, the first five pitches had none there)."""
     base = np.asarray(m3kinematics.CHAIN[0][0][:2])
     yaw = math.radians(90 - j1)   # J1 is mirrored: bigger turns right
     target = (base[0] + radius * math.cos(yaw), base[1] + radius * math.sin(yaw), height)
@@ -402,12 +373,6 @@ def drop_at(radius: float, height: float, j1: float) -> dict | None:
         if pose:
             return pose
     return None
-
-
-def carry_arc(here: dict, extra: float, high: float | None = None) -> list[dict] | None:
-    """Holding something, from `here` to the drop-off line's spot `extra` m further out than
-    DROP_OUT (carry_to it, J1 180)."""
-    return carry_to(here, DROP_OUT + extra, 180.0, DROP_UP, high)
 
 
 def carry_to(here: dict, radius: float, j1: float, release: float, high: float | None = None) -> list[dict] | None:
@@ -646,12 +611,12 @@ class Picker:
         return self.settings()
 
     def wrist(self, thing: dict, around: list[dict], whole: bool | None = None):
-        """grip pose -> J5 for `thing`: square to it, the fingers clear of `around` -- or straight
-        (90) while its turn is not known (seen in part)."""
+        """grip pose -> (J5s square, J5s off square) for `thing` (wrist_choices): the fingers clear
+        of `around` -- or straight (90) while its turn is not known (seen in part)."""
         if not (thing["whole"] if whole is None else whole):
-            return lambda grip: [90]
+            return lambda grip: ([90], [])
         others = [o for o in around if o is not thing]
-        span = opening_m(opened_for(thing["size"]))
+        span = m3kinematics.finger_span(opened_for(thing["size"]))
         return lambda grip: wrist_choices(grip, thing["yaw"], thing["period"], span, others)
 
     def floor_clear(self) -> float:
@@ -886,8 +851,8 @@ class Picker:
                                held=m3arm.gripper_angle(reading["size"] * 1000))
         if replanned is None:   # at the edge whole servo degrees make it all or nothing (2026-10-02: a
             # plan at y -0.1297, none at -0.1300): the first plan, a few mm off, its wrist as now read
-            choices = self.wrist(reading, others, whole=True)(planned[1][-1])
-            for j5 in [*choices[0], *choices[1]] if isinstance(choices, tuple) else choices:
+            squares, off = self.wrist(reading, others, whole=True)(planned[1][-1])
+            for j5 in [*squares, *off]:
                 poses = [{**p, 5: j5} for p in planned[1]]
                 shut = [{**p, 6: m3arm.gripper_angle(reading["size"] * 1000)} for p in poses]
                 if m3arm.glide_problem(poses[0], poses[1:], self.floor_clear()) is None \
@@ -972,9 +937,9 @@ class Picker:
             with self.step("drop"):
                 here = {int(j): v for j, v in self.call("read").items()}
                 extra = float(self.rng.uniform(0.0, DROP_SPREAD))
-                pose = drop_pose(extra) or drop_pose(0.0)
-                self.through(carry_arc(here, extra, self.carry_high()) or way_to(here, pose, direct=False),
-                             speed=self.dps("free_dps"))
+                pose = drop_at(DROP_OUT + extra, DROP_UP, 180.0) or drop_at(DROP_OUT, DROP_UP, 180.0)
+                self.through(carry_to(here, DROP_OUT + extra, 180.0, DROP_UP, self.carry_high())
+                             or way_to(here, pose, direct=False), speed=self.dps("free_dps"))
                 self.let_go()
                 self.line_drops += 1
             self.say(f"dropped {1000 * (DROP_OUT + extra):.0f} mm out on the right")

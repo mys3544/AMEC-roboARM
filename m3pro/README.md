@@ -19,28 +19,20 @@ the X3 Plus's, and their `sync_robot.py` pushes nothing from here.
   Humble with `ROS_DOMAIN_ID=30` and the workspace `~/yahboomcar_ws`. Restarting the desktop
   (gdm3) or logging out stops them until the session is back; a reboot brings them all up.
 
-## The software, copied from the X3 Plus
+## The software
 
-`roboarm/`, `tools/`, `tests/`, `vision_service/`, `docker/`, `cameras/` and the project files
-(`pyproject.toml`, `uv.lock`, `compose.yaml`, `.dockerignore`, `.gitignore`) are the X3
-Plus's as of commit 1f94700, byte for byte, except that nothing here points at the X3 Plus:
-`tools/sync_robot.py` pushes to this robot, 192.168.73.66, and the examples in
-`tools/webapp.py` and `tools/hwbridge.py` name it. Left out: the X3's docs and README, and
-`tools/wifi_hop.ps1`, its old WiFi workaround (`tools/open_hotspot.py` is the M3's).
+It began as the X3 Plus's, byte for byte as of commit 1f94700; what only the X3 used -- its
+serial arm, wrist camera, table calibration, web panel and their tools -- went on 2026-10-05
+(in git). What is here:
 
-All of it still assumes the X3 Plus's hardware -- the arm and its kinematics, the Rosmaster
-board through Rosmaster_Lib on `/dev/ttyUSB0`, the wrist camera and its calibration -- until
-it is changed here for the M3 Pro. Two differences are known already:
-
-- **Serial:** on the M3 Pro, `/dev/ttyUSB0` (`/dev/myserial`, a CP210x) is the micro-ROS base
-  board, held by the micro-ROS agent. The copied arm code must not open it until it is
-  rewritten for this robot.
-- **Cameras:** a depth camera (an Orbbec; its ROS 2 driver is in
-  `~/yahboomcar_ws/src/OrbbecSDK_ROS2`) and an RGB camera that differs from the X3 Plus's.
-  Neither was plugged in on 2026-09-28. The camera-specific code is `roboarm/config.py`
-  (`ROBOARM_CAMERA` and the lens geometry), `roboarm/camera.py`, the profiles in `cameras/`,
-  and `vision_service/depth.py`, which estimates depth from one RGB frame and could use the
-  real depth camera instead.
+- **The arm and the pick:** `tools/m3bridge.py`, started on the robot by `tools/m3bridge.sh`,
+  serves the arm (`roboarm/m3arm.py`, `m3kinematics.py` with `m3body.npz`) and the depth camera
+  over HTTP on port 8761 (`roboarm/web/bridge.py`), and runs the pick there (`roboarm/m3pick.py`,
+  `m3vision.py`, timed by `metrics.py`) for the console's M3 arm card.
+- **Measuring the arm:** `tools/m3_touch.py` (with `m3_handeye.py`) and `tools/m3_body_model.py`.
+- **The arena:** `arena/` and `tools/arena_map.py` (below).
+- **The vision container:** `vision_service/`, `docker/` and `compose.yaml`, the X3's neural
+  detector, kept.
 
 Work from this folder; it has its own `pyproject.toml` and `uv.lock`, so its own `.venv`:
 
@@ -71,7 +63,6 @@ Tuning, on a recording instead of the robot's battery:
 ```bash
 python tools/arena_map.py record NAME  # 20 s standing, the auto loop, 10 s standing -> a bag,
                                        # printing the live map's fence every 10 s
-python tools/arena_map.py calib NAME   # the lidars' range biases (+ mounting) from the standing
 python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings side by side
 ```
 
@@ -100,10 +91,11 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
   `lidars.yaml`). The board stamps everything 55-75 ms ahead of the Jetson's clock, so the
   EKF trails the scans and slam_toolbox drops most of them -- harmless (it keeps a scan every
   10 cm of travel anyway); keeping them (`scan_queue_size` 10) wrecked the map.
-- **First maps, 2026-09-30,** in `arena/maps/`: 3.213 x 2.801 m after half a metre of driving,
-  3.232 x 2.823 m after a full loop. Most of that was the lidars reading long (0.8 and 1.2 cm,
-  `lidar_calib.py`); with the biases taken off, a replay of the same drive stays within 1 cm of
-  the measured 3.2 x 2.8 m all the way (3.198 x 2.799 m at the end).
+- **First maps, 2026-09-30** (`arena_v0`, `arena_v1`; in git): 3.213 x 2.801 m after half a
+  metre of driving, 3.232 x 2.823 m after a full loop. Most of that was the lidars reading long
+  (0.8 and 1.2 cm, measured by `lidar_calib.py`, in git too; the biases are in `lidars.yaml`);
+  with the biases taken off, a replay of the same drive stays within 1 cm of the measured
+  3.2 x 2.8 m all the way (3.198 x 2.799 m at the end).
 - **The 3D scan (RTAB-Map):** `arena_map.py arm mapping` (the arm to Yahboom's mapping pose; it
   has no read-back), `start mapper:=rtabmap` (the DaBai with depth aligned to colour, the lidar
   aligning key frames), `camcheck` (the camera's height and tilt measured from the floor,
@@ -149,10 +141,13 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
 ## Network: lab WiFi at boot, hotspot off
 
 Out of the box the robot starts its own hotspot, SSID ROSMASTER at 192.168.8.88, with no
-internet. Since 2026-09-28 it joins IISLab-AMEC at boot instead (`tools/lab_wifi.py`, checked
-with a reboot). The hotspot, NetworkManager connection `Hotspot`, is still configured but not
-started, and it has no password any more (`tools/open_hotspot.py`): turned on again, it is an
-open network. If IISLab-AMEC is unavailable the robot tries its other saved networks
+internet. Since 2026-09-28 it joins IISLab-AMEC at boot instead (checked with a reboot). The
+hotspot, NetworkManager connection `Hotspot`, is still configured but not started, and it has
+no password any more: turned on again, it is an open network. Two laptop tools made those
+changes while the robot was reachable only on its hotspot, hopping this laptop's WiFi over and
+back in one run (`tools/open_hotspot.py` and `tools/lab_wifi.py`, each with a robot half that
+logged to `/var/log/m3pro-*.log`; in git, gone 2026-10-05: their job was done). If IISLab-AMEC
+is unavailable the robot tries its other saved networks
 (MIFI-5BE2, Pi_Hot, ROSMASTER-A1) and otherwise stays offline; then get in over Ethernet, or
 with a screen and keyboard. To start the hotspot at boot again, run on the robot and reboot:
 
@@ -177,18 +172,3 @@ Verified 2026-09-28:
 - **Not tried yet:** unplugging while running.
 - The first line of `check`, `/sys/class/drm/card1-DP-1` from the kernel, goes stale while X
   runs; trust the Xorg and xrandr lines below it.
-
-## WiFi tools (M3 only)
-
-These were needed while the robot was reachable only on its own hotspot, which has no
-internet: each hops this Windows laptop's WiFi over to ROSMASTER, does its job and comes back
-to IISLab-AMEC in one run, and the robot undoes the change by itself unless the laptop
-confirms it can still reach it. Run them with the system Python 3.12 (it has paramiko); the
-SSH password comes from `ROBOARM_SSH_PASSWORD` or is asked for.
-
-- `tools/open_hotspot.py`, robot half `open_hotspot.sh`: takes the password off the hotspot,
-  and holds the WiFi-hop helpers the other tool uses.
-- `tools/lab_wifi.py`, robot half `lab_wifi.sh`: makes IISLab-AMEC the boot network and stops
-  the hotspot, with the lab passphrase read from this laptop's saved WiFi profile.
-
-On the robot they log to `/var/log/m3pro-open-hotspot.log` and `/var/log/m3pro-lab-wifi.log`.
