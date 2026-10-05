@@ -383,13 +383,6 @@ BOX_LOOKS = (180, 135, 90, 45, 0)   # J1s the box is looked for at, SIDE_LOOK's 
                                     # from the arm's axis each way -- the box anywhere in the arm's half
                                     # circle, its marker facing the arm (the user's, 2026-10-02)
 CARRY_OVER = 0.02   # m the carry swings round above the drop-off's height
-# The box looked at again on the way round, before going over it, from where the camera faces its marker
-# (check_pose): over the spot the upright marker reads edge-on -- from 31 cm out it did not, and the box
-# was looked for all round, holding: the arm up and back down again (2026-10-05, the user saw it).
-CAMERA_K = ((480.84, 0.0, 323.79), (0.0, 480.89, 239.99), (0.0, 0.0, 1.0))   # the DCW2's colour, as /rgbd
-CAMERA_SIZE = (640, 480)                                                     # has it: to plan a view with
-CHECK_RANGE = (0.15, 0.45)   # m from the camera the marker may be
-CHECK_FACING = 55            # deg off its face, at most
 ARC_STEP = 15       # deg of J1 between the carry's points
 
 
@@ -446,59 +439,7 @@ def box_from_marker(centre: np.ndarray, axes: np.ndarray) -> dict:
     into = np.array([face[0], face[1]]) / np.hypot(face[0], face[1])
     along = np.array([right[0], right[1]]) / np.hypot(right[0], right[1])
     middle = hinge[:2] + into * across_m / 2
-    return {"centre": middle, "along": along, "into": into, "turn": math.degrees(math.atan2(along[1], along[0])),
-            "marker": np.asarray(centre, float), "face": np.asarray(face, float)}
-
-
-def marker_of(box: dict) -> tuple[np.ndarray, np.ndarray]:
-    """The box's marker: (its centre, base m; its face's normal) as read -- or from the box's outline,
-    the lid upright over the far wall, when it was not."""
-    if "marker" in box:
-        return np.asarray(box["marker"], float), np.asarray(box["face"], float)
-    hinge = np.asarray(box["centre"]) - np.asarray(box["into"]) * BOX_INSIDE[1] / 2
-    return np.r_[hinge, BOX_INSIDE[2] + 0.05], np.r_[box["into"], 0.0]
-
-
-def check_pose(box: dict, high: float, gripper: int | None = None) -> tuple[dict, float, float, float] | None:
-    """(pose, radius, J1, height): holding something, the grip point `high` m up or a little more,
-    pulled in towards J1's axis as little as will do (the furthest out first), turned to the box's
-    marker, where the camera faces it -- the marker
-    in the picture's upper part (what is held hangs in its lower), CHECK_FACING at most off its face,
-    CHECK_RANGE away; the guard with the gripper at `gripper`. None if nowhere."""
-    marker, face = marker_of(box)
-    axis = np.asarray(m3kinematics.CHAIN[0][0][:2])
-    d = marker[:2] - axis
-    out = float(np.linalg.norm(d))
-    u = d / out
-    j1 = 90 - math.degrees(math.atan2(d[1], d[0]))
-    if not 0 <= j1 <= 180:
-        return None
-    K, (width, height) = np.asarray(CAMERA_K), CAMERA_SIZE
-    best = None
-    for z in (high, high + 0.03, high + 0.06):
-        for r in np.arange(0.08, out - 0.05, 0.01):
-            for pitch in range(0, 75, 5):
-                pose = m3kinematics.reach(np.r_[axis + u * r, z], pitch)
-                if pose is None:
-                    continue
-                pose = pose if gripper is None else {**pose, 6: gripper}
-                if m3kinematics.problem(pose) is not None:
-                    continue
-                camera = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
-                q = np.linalg.inv(camera) @ np.r_[marker, 1.0]
-                if not CHECK_RANGE[0] <= q[2] <= CHECK_RANGE[1]:
-                    continue
-                px, py = (K @ (q[:3] / q[2]))[:2]
-                if not (40 <= px <= width - 40 and 40 <= py <= 0.6 * height):
-                    continue
-                to_camera = camera[:3, 3] - marker
-                facing = math.degrees(math.acos(float(np.clip(to_camera @ face / np.linalg.norm(to_camera), -1, 1))))
-                if facing > CHECK_FACING:
-                    continue
-                score = (-round(100 * r), round(facing / 5), abs(px - width / 2) + abs(py - 0.4 * height))
-                if best is None or score < best[0]:
-                    best = (score, (pose, float(r), float(j1), float(z)))
-    return None if best is None else best[1]
+    return {"centre": middle, "along": along, "into": into, "turn": math.degrees(math.atan2(along[1], along[0]))}
 
 
 def in_box(box: dict, point) -> np.ndarray:
@@ -1085,18 +1026,13 @@ class Picker:
             self.say(f"dropped {1000 * (DROP_OUT + extra):.0f} mm out on the right")
             return
         with self.step("drop"):
-            here = {int(j): v for j, v in self.call("read").items()}
-            check, into, again = self.box_check_way(here), None, None
-            if check is not None:   # round, pulled in, to where the camera faces the marker
-                self.through(check, speed=self.dps("free_dps"))
-                again = self.see_box("box check")
-            else:                   # no such pose: round to over the spot, the box looked at from there
-                into = self.box_way(here)
-                if into is not None:
-                    spot, way = into
-                    self.through(way[:-1], speed=self.dps("free_dps"))
-                    again = self.see_box("over the box")
-            if check is not None or into is not None:
+            # the box looked at from over the spot (a check pose on the way, tried 2026-10-05, read the
+            # marker close and askew: the box 30 deg and cm off, a cube onto its wall, the box shoved)
+            into = self.box_way({int(j): v for j, v in self.call("read").items()})
+            if into is not None:
+                spot, way = into
+                self.through(way[:-1], speed=self.dps("free_dps"))   # round, to over the spot
+                again = self.see_box("over the box")
                 if again is not None and self.same_box(again):
                     self.box = {**again, "items": self.box.get("items", [])}
                 else:
@@ -1104,11 +1040,10 @@ class Picker:
                     self.box = again if again is not None else self.box_search(holding=True)
                     if self.box is not None:
                         self.say("the box has moved: aimed at where it is now")
-                if self.box is not None and into is None:
-                    into = self.box_way({int(j): v for j, v in self.call("read").items()})
-                    if into is not None:
-                        spot, way = into
-                        self.through(way[:-1], speed=self.dps("free_dps"))   # round, to over the spot
+                        into = self.box_way({int(j): v for j, v in self.call("read").items()})
+                        if into is not None:
+                            spot, way = into
+                            self.through(way[:-1], speed=self.dps("free_dps"))
             if into is None:
                 self.put_back(back)
                 raise NothingToPick("the drop-off box is not to be found, or nowhere in it in reach: put back"
@@ -1117,19 +1052,6 @@ class Picker:
             self.let_go()
         self.box_drops.append(in_box(self.box, spot))
         self.say(f"dropped into the box at x {spot[0]:.3f} y {spot[1]:+.3f}")
-
-    def box_check_way(self, here: dict) -> list[dict] | None:
-        """The way round from `here`, holding, to check_pose -- round at its distance and height
-        (carry_to), its own pitch last; None if there is none or the guard would not."""
-        check = check_pose(self.box, self.carry_high(), here.get(m3arm.GRIPPER))
-        if check is None:
-            return None
-        pose, radius, j1, z = check
-        way = carry_to(here, radius, j1, z, z)
-        if way is None:
-            return None
-        way = [*way[:-1], {**here, **{j: pose[j] for j in (1, 2, 3, 4)}}]
-        return way if m3arm.glide_problem(here, way) is None else None
 
     def let_go(self) -> None:
         self.call("set_gripper", m3arm.GRIPPER_OPEN, speed_dps=self.dps("gripper_dps"), settle=False)
@@ -1151,8 +1073,9 @@ class Picker:
             shut = [{j: v for j, v in q.items() if j != m3arm.GRIPPER} for q in line]   # the gripper as it is
             self.go(shut[0], speed=self.dps("near_dps"), holding=True)
             self.through(shut[1:], floor_clear=self.arm_clear(), speed=self.dps("descend_dps"))
-            self.call("set_gripper", line[-1].get(m3arm.GRIPPER, m3arm.GRIPPER_OPEN),
-                      speed_dps=self.dps("gripper_dps"), settle=False)
+            self.call("set_gripper", line[-1].get(m3arm.GRIPPER, m3arm.GRIPPER_OPEN), floor_clear=self.arm_clear(),
+                      speed_dps=self.dps("gripper_dps"), settle=False)   # (2026-10-05: at the arm's own
+            # 1.5 cm, refused at the bottom -- the job stopped holding it)
             time.sleep(self.cfg["release_s"])
             self.through(list(reversed(line[:-1])), floor_clear=self.arm_clear(), speed=self.dps("lift_dps"))
         self.say("put back where it was picked")

@@ -69,7 +69,10 @@ class World:
         elif method in ("home", "engage"):
             self.pose = dict(HOME)
         elif method == "close_gripper":
-            self.pose[6] = m3arm.gripper_angle(kwargs["width_mm"])
+            goal = {**self.pose, 6: m3arm.gripper_angle(kwargs["width_mm"])}
+            why = m3kinematics.problem(goal, kwargs.get("floor_clear") or m3kinematics.FLOOR_CLEAR)
+            assert why is None, why   # as the arm's own move_to checks it
+            self.pose[6] = goal[6]
             point, _ = m3kinematics.grip(self.pose)
             near = [b for b in self.boxes if math.hypot(b[0] - point[0], b[1] - point[1]) < 0.012
                     and all(math.hypot(b[0] - x, b[1] - y) > 0.02 for x, y in self.slip)]
@@ -77,6 +80,8 @@ class World:
                 self.held = near[0]
                 self.boxes.remove(near[0])
         elif method == "set_gripper":
+            why = m3kinematics.problem({**self.pose, 6: args[0]}, kwargs.get("floor_clear") or m3kinematics.FLOOR_CLEAR)
+            assert why is None, why   # as the arm's own move_to checks it (2026-10-05: the put-back's open, refused)
             self.pose[6] = args[0]
             if self.held and args[0] < 110:   # opened past it, low: set down where the hand is
                 point = m3kinematics.grip(self.pose)[0]
@@ -535,41 +540,6 @@ def test_what_lies_where_the_job_lets_go_is_not_picked_again():
     assert not picker.dropped_here(at(x, -0.22))     # the line: only once dropped onto
     picker.line_drops = 1
     assert picker.dropped_here(at(x, -0.22)) and not picker.dropped_here(at(0.21, -0.03))
-
-
-def test_the_box_is_looked_at_from_where_its_marker_faces_the_camera():
-    """2026-10-05: from over the spot the upright marker read edge-on, and the box was looked for all
-    round, holding -- the arm up and back down. Now on the way round, a little pulled in, the marker
-    faced. The box as it stood then, 31 cm out (nearer, over the spot reads it)."""
-    world = World([(0.21, 0.03, 0, 0.03, 0.03)])
-    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
-    tags = []
-
-    def see(tag):
-        tags.append(tag)
-        return box_at(0.171, -0.286)
-    picker.see_box = see
-    picker.start("clean_up")
-    picker.wait(120)
-    assert picker.state["error"] is None and picker.state["picked"] == 1
-    assert "box check" in tags and "over the box" not in tags, tags
-    (released,) = world.released
-    rel = m3pick.in_box(box_at(0.171, -0.286), released)
-    assert abs(rel[0]) <= 0.075 and abs(rel[1]) <= 0.055
-
-
-def test_the_check_pose_faces_the_marker_above_what_is_held():
-    held = m3arm.gripper_angle(30)
-    for box in (box_at(0.171, -0.286), box_at(0.20, -0.25)):
-        pose, radius, _j1, z = m3pick.check_pose(box, 0.18, held)
-        assert z >= 0.18 and radius >= 0.15 and m3kinematics.problem(pose) is None   # hardly pulled in
-        marker, face = m3pick.marker_of(box)
-        camera = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
-        q = np.linalg.inv(camera) @ np.r_[marker, 1.0]
-        px, py = (np.asarray(m3pick.CAMERA_K) @ (q[:3] / q[2]))[:2]
-        to_camera = camera[:3, 3] - marker
-        facing = math.degrees(math.acos(float(to_camera @ face / np.linalg.norm(to_camera))))
-        assert 0 < px < 640 and 0 < py < 0.6 * 480 and facing <= m3pick.CHECK_FACING
 
 
 def test_a_square_grip_turned_over_is_tried_once_j5_turns_past_180(monkeypatch):
