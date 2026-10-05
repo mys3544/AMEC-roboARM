@@ -496,3 +496,79 @@ def test_the_slide_right_keeps_off_the_drop_off_box_and_the_line_dropped_onto():
     picker.box, picker.offset, picker.line_drops = None, np.zeros(2), 1
     near = m3pick.DROP_OUT - 0.03 - m3pick.ROBOT_Y - m3pick.DRIVE_GAP   # short of the line, 3 cm round its spots
     assert abs(picker.right_room() - near) <= 0.0055
+
+
+def test_the_side_looks_find_what_the_middle_one_cannot_see():
+    """2026-10-05, the user: every cube in reach across the front. At J1 24 deg, 21 cm out, the middle
+    look does not see it; the job's first look looks round."""
+    world = World([(0.12, 0.19, 0, 0.03, 0.03)])
+    picker = run(world, "pick_once")
+    said = [line["text"] for line in picker._log]
+    assert picker.state["error"] is None and picker.state["picked"] == 1, said
+    assert any(t.startswith("looked round:") and "x 0.12" in t for t in said), said
+
+
+def test_what_lies_where_the_job_lets_go_is_not_picked_again():
+    """The right side look sees into the drop-off box and onto the drop line: those are left."""
+    world = World([])
+    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0)
+    def at(x, y):
+        return {"centre": np.array([x, y, 0.015])}
+    picker.box = box_here()
+    assert picker.dropped_here(at(0.10, -0.21)) and picker.dropped_here(at(0.17, -0.25))   # in it, by its wall
+    assert not picker.dropped_here(at(0.21, 0.03))
+    picker.offset = np.array([0.05, 0.0])            # the base 5 cm on: the box 5 cm nearer in its frame
+    assert picker.dropped_here(at(0.05, -0.21)) and not picker.dropped_here(at(0.10, -0.10))
+    picker.box, picker.offset = None, np.zeros(2)
+    x = float(m3kinematics.CHAIN[0][0][0])
+    assert not picker.dropped_here(at(x, -0.22))     # the line: only once dropped onto
+    picker.line_drops = 1
+    assert picker.dropped_here(at(x, -0.22)) and not picker.dropped_here(at(0.21, -0.03))
+
+
+def test_the_box_is_looked_at_from_where_its_marker_faces_the_camera():
+    """2026-10-05: from over the spot the upright marker read edge-on, and the box was looked for all
+    round, holding -- the arm up and back down. Now on the way round, a little pulled in, the marker
+    faced. The box as it stood then, 31 cm out (nearer, over the spot reads it)."""
+    world = World([(0.21, 0.03, 0, 0.03, 0.03)])
+    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
+    tags = []
+
+    def see(tag):
+        tags.append(tag)
+        return box_at(0.171, -0.286)
+    picker.see_box = see
+    picker.start("clean_up")
+    picker.wait(120)
+    assert picker.state["error"] is None and picker.state["picked"] == 1
+    assert "box check" in tags and "over the box" not in tags, tags
+    (released,) = world.released
+    rel = m3pick.in_box(box_at(0.171, -0.286), released)
+    assert abs(rel[0]) <= 0.075 and abs(rel[1]) <= 0.055
+
+
+def test_the_check_pose_faces_the_marker_above_what_is_held():
+    held = m3arm.gripper_angle(30)
+    for box in (box_at(0.171, -0.286), box_at(0.20, -0.25)):
+        pose, radius, _j1, z = m3pick.check_pose(box, 0.18, held)
+        assert z >= 0.18 and radius >= 0.15 and m3kinematics.problem(pose) is None   # hardly pulled in
+        marker, face = m3pick.marker_of(box)
+        camera = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
+        q = np.linalg.inv(camera) @ np.r_[marker, 1.0]
+        px, py = (np.asarray(m3pick.CAMERA_K) @ (q[:3] / q[2]))[:2]
+        to_camera = camera[:3, 3] - marker
+        facing = math.degrees(math.acos(float(to_camera @ face / np.linalg.norm(to_camera))))
+        assert 0 < px < 640 and 0 < py < 0.6 * 480 and facing <= m3pick.CHECK_FACING
+
+
+def test_a_square_grip_turned_over_is_tried_once_j5_turns_past_180(monkeypatch):
+    """2026-10-05, the user's: the finger motor's housing turned away from the lidar -- J5 turned
+    180 deg. Yahboom drives the M3's J5 to 270; ours stays 180 until a turn on the robot shows it free."""
+    grip = m3kinematics.reach(np.array([0.21, 0.03, 0.02]), 70, floor_clear=0.003)
+    squares, _off = m3pick.wrist_choices(grip, 20, 90)
+    assert max(squares) <= 180
+    monkeypatch.setitem(m3arm.SAFE_LIMITS, 5, (0, 270))
+    turned, off = m3pick.wrist_choices(grip, 20, 90)
+    assert any(j5 > 180 for j5 in turned) and set(squares) <= set(turned)
+    assert all(abs((j5 - s + 180) % 360 - 180) in (0, 90, 180) for j5 in turned for s in squares)
+    assert all(j5 <= 270 for j5 in off)

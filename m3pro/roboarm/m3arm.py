@@ -41,6 +41,8 @@ JOINTS = (1, 2, 3, 4, 5, 6)
 GRIPPER = 6
 # the URDF's limits (+-90 deg about 90) for 1-5; the gripper 0 (widest) .. 180 (shut)
 SAFE_LIMITS = {1: (0, 180), 2: (0, 180), 3: (0, 180), 4: (0, 180), 5: (0, 180), 6: (0, 180)}
+# J5: 0-180 as the X3's -- Yahboom's own gamepad node drives the M3's to 270 (yahboom_joy_M3Pro.py):
+# 270 once a slow turn on the robot has shown it free; the planner then tries square grips turned over
 POSES = {
     "home": (90, 180, 5, 0, 90, 0),     # Yahboom's mapping pose: folded over the base, camera level
     "survey": (90, 120, 30, 0, 90, 0),  # the camera 34.9 deg down, 0.358 m up (measured)
