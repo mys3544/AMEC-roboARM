@@ -9,9 +9,11 @@ const STOPS = {   // what STOP means for each kind of robot
   m3: robot => call(robot, 'api/stop', {}),
   x3: robot => Promise.all([call(robot, 'api/auto/stop', {}), call(robot, 'api/arm/hold', {})]),
   m3arm: robot => call(robot, 'pick/stop', {}),   // the M3's arm: the pick service on its bridge
+  x3arm: robot => call(robot, 'pick/stop', {}),   // the X3's arm: the same interface, on its panel
 };
-const STATES = { m3arm: 'pick/state' };
-const LOW_V = 10.8;   // the M3's battery: its arm refuses below 10.5 V, the board went silent at ~10.4   // where a kind of robot says how it is, if not api/state
+const STATES = { m3arm: 'pick/state', x3arm: 'pick/state' };   // where a kind of robot says how it is, if not api/state
+const LOW_V = { m3arm: 10.8, x3arm: 10.5 };   // battery warnings: the M3's arm refuses below 10.5 V (its board
+                                              // went silent at ~10.4), the X3's below 10.0
 const store = {   // per-viewer conveniences only; the page works without them
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
@@ -284,11 +286,13 @@ class X3Card extends Card {
   }
 }
 
-class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot (m3pro/roboarm/m3pick.py)
+class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*: the M3's (m3pro/roboarm/m3pick.py)
+                               // and the X3's (x3plus/roboarm/web/session.py)
   constructor(robot) {
     super(robot, 'the arm camera, live');
     const controls = $('#m3arm-controls').content.firstElementChild.cloneNode(true);
     $('.controls', this.el).append(controls);
+    if (robot.kind === 'x3arm') $('.stepwise', controls).style.display = 'none';   // the X3 does not drive yet
     const drive = () => $('.drive', controls).checked;
     controls.querySelectorAll('[data-pick]').forEach(b => {
       b.onclick = () => this.act(`${b.textContent}: started`,
@@ -306,7 +310,7 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
     this.armlog = $('.armlog', controls);
     const volts = document.createElement('span');   // the battery, in the card's head
     volts.className = 'pill volts';
-    volts.title = "the M3's battery (the arm refuses below 10.5 V)";
+    volts.title = `${robot.name}: the battery (a warning below ${LOW_V[robot.kind]} V)`;
     $('.mode', this.el).after(volts);
     this.look = document.createElement('img');   // the last look, marked: what the robot made of it
     this.look.className = 'look';
@@ -324,6 +328,7 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
     const rows = [];
     for (const s of list) {
       if (s.key === 'speed') {
+        Object.assign(this.speed, { min: s.min, max: s.max });   // each robot's own range
         this.speed.value = s.value;
         this.speed.oninput();
         continue;
@@ -335,7 +340,7 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
       Object.assign(input, { type: 'number', min: s.min, max: s.max, step: s.step, value: s.value });
       input.dataset.key = s.key;
       input.onchange = () => this.setting(s.key, input.value, input);
-      label.htmlFor = input.id = `m3arm-${s.key}`;
+      label.htmlFor = input.id = `${this.robot.id}-${s.key}`;
       const unit = document.createElement('span');
       unit.className = 'unit';
       unit.textContent = s.unit;
@@ -403,9 +408,10 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
       this.offline();
       return;
     }
+    const low = LOW_V[this.robot.kind];
     this.setPill(s.busy ? `${s.job.replace('_', ' ')}: ${s.step}` : 'idle', s.busy);
     $('.volts', this.el).textContent = s.battery_v == null ? '' : `${s.battery_v.toFixed(1)} V`;
-    $('.volts', this.el).classList.toggle('low', s.battery_v != null && s.battery_v < LOW_V);
+    $('.volts', this.el).classList.toggle('low', s.battery_v != null && s.battery_v < low);
     $('.note', this.el).textContent = s.busy ? `${Math.round(s.now - s.since)} s in this step` : (s.error || '');
     if (s.looks !== this.looks) {
       this.looks = s.looks;
@@ -417,12 +423,12 @@ class M3ArmCard extends Card {   // the M3's arm and its pick, run on the robot 
     $('.facts', this.el).textContent = [
       `job      ${s.busy ? `${s.job.replace('_', ' ')} -- ${s.step}` : 'none'}     picked ${s.picked}, missed ${s.missed}`,
       `battery  ${s.battery_v == null ? '-' : `${s.battery_v.toFixed(2)} V`}` +
-        `${s.battery_v != null && s.battery_v < LOW_V ? '   LOW: below ' + LOW_V + ' V the arm stops -- charge it' : ''}`,
+        `${s.battery_v != null && s.battery_v < low ? `   LOW: under ${low} V -- charge it before the arm stops` : ''}`,
       `last     ${last ? `${last.picked ? 'picked' : 'MISSED'} the ${last.kind} in ${last.seconds} s` +
         ` (approach ${last.pitch} deg, fingers along ${last.yaw_deg} deg from the ${last.yaw_from} look, J5 ${last.j5})` : '-'}`,
       `in view  ${seen.length ? seen.join('; ') : 'no cube or block'}`,
       `box      ${s.box ? `at ${(100 * s.box.x).toFixed(1)}, ${(100 * s.box.y).toFixed(1)} cm, turned ${s.box.turn.toFixed(0)} deg;` +
-        ` ${s.box.in_it} in it when seen, ${s.box.drops} dropped in since` : 'not seen: drops go on the line out on the right'}`,
+        ` ${s.box.in_it} in it when seen, ${s.box.drops} dropped in since` : 'not seen: drops go out on the right'}`,
       `base     ${s.moved_cm && (s.moved_cm[0] || s.moved_cm[1])
         ? `${s.moved_cm[0]} cm forward, ${s.moved_cm[1]} cm left of where the job began` : 'where the job began'}`,
     ].join('\n');
@@ -568,7 +574,7 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
   }
 }
 
-const CARDS = { m3: M3Card, x3: X3Card, m3arm: M3ArmCard };
+const CARDS = { m3: M3Card, x3: X3Card, m3arm: ArmCard, x3arm: ArmCard };
 
 async function main() {
   const robots = (await (await fetch('/robots.json')).json()).map(spec => new Robot(spec));
@@ -613,9 +619,9 @@ async function main() {
   $('#stopall').onclick = stopAll;
 
   // What a voice command may do (voice.js calls these with the command it heard): each answers
-  // with what was done, or throws why not. The X3's are its card's buttons. The M3's arm is a
-  // robot of its own in robots.json -- id and kind "m3arm", the pick service on the M3's bridge
-  // (http://192.168.73.66:8761) -- and until it is listed there it is "not connected".
+  // with what was done, or throws why not. Each arm is a robot of its own in robots.json, id and
+  // kind "m3arm" (the pick service on the M3's bridge, :8761) or "x3arm" (the same interface on
+  // the X3's panel, :8080); without "x3arm" an X3 command goes to its panel card's buttons.
   const JOBS = {   // [path, body, what it is called]
     x3: {
       pick: () => ['api/auto/oneclick', { detector: 'auto', job: 'pick' }, 'Pick one started'],
@@ -628,13 +634,15 @@ async function main() {
       home: () => ['pick/home', {}, 'home'],
     },
   };
+  JOBS.x3arm = JOBS.m3arm;
   async function job(command) {
-    const kind = command.robot === 'x3' ? 'x3' : 'm3arm';
+    const arm = command.robot === 'x3' ? 'x3arm' : 'm3arm';
+    const kind = command.robot === 'x3' && !robots.some(r => r.id === arm) ? 'x3' : arm;
     const robot = robots.find(r => r.id === kind);
     if (!robot) throw new Error(kind === 'x3' ? 'no X3 in robots.json' : 'M3 arm not connected');
     const [path, body, done] = JOBS[kind][command.action](command);
     await call(robot, path, body);
-    const asked = kind === 'x3' && [command.colour, command.size_mm && `${command.size_mm} mm`].filter(Boolean);
+    const asked = kind !== 'm3arm' && [command.colour, command.size_mm && `${command.size_mm} mm`].filter(Boolean);
     return `${robot.name}: ${done}${asked?.length ? ` (it takes what it finds first, not "${asked.join(' ')}")` : ''}`;
   }
   window.consoleActions = {

@@ -545,3 +545,102 @@ def test_scans_walk_only_the_configured_looks(monkeypatch):
     assert [e[2] for e in session.Session._scan_calibrated(owner)] == ["primary", "outer", "near"]
     monkeypatch.setattr(cfg, "SCAN_LOOKS", ("high",))    # not calibrated: fall back to all
     assert len(session.Session._scan_calibrated(owner)) == 3
+
+
+# ------------------------------------------- the M3's /pick/* interface ---
+def picked_and_done(url: str, timeout: float = 30.0) -> dict:
+    """Wait for the arm card's job to end and return /pick/state."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = get(url, "/pick/state")
+        if not state["busy"]:
+            return state
+        time.sleep(0.03)
+    raise AssertionError("the pick did not finish")
+
+
+def test_the_arm_cards_pick_runs_and_reports_like_the_m3s(world, url):
+    """The console's arm card drives the X3 with the M3's calls and reads the M3's state."""
+    code, body = post(url, "/pick/start", {"drive": True})
+    assert code == 200 and body == {"ok": True, "job": "pick_once"}
+    state = picked_and_done(url)
+    assert state["job"] == "pick_once" and state["error"] is None
+    assert state["picked"] == 1 and state["missed"] == 0
+    last = state["last"]
+    assert last["picked"] and last["kind"] == "cube" and last["seconds"] > 0
+    assert isinstance(last["pitch"], int) and isinstance(last["j5"], int)
+    assert state["looks"] >= 1 and state["moved_cm"] == [0.0, 0.0] and state["box"] is None
+    assert at_drop_pose(world.blocks[0])
+    lines = get(url, "/pick/log?since=0")["lines"]
+    assert lines and {"n", "t", "text"} <= set(lines[0])
+    assert any("does not drive yet" in x["text"] for x in lines), "drive is refused out loud"
+    assert get(url, f"/pick/log?since={lines[-1]['n']}")["lines"] == []
+    with urllib.request.urlopen(url + "/pick/frame.jpg", timeout=5) as r:
+        assert r.read(2) == b"\xff\xd8"
+    assert get(url, "/api/metrics")["runs"][0]["name"] == "pick"
+
+
+def test_a_pick_of_a_kind_that_is_not_there_says_so(world, url):
+    code, _body = post(url, "/pick/start", {"kind": "block"})
+    assert code == 200
+    state = picked_and_done(url)
+    assert state["error"] == "no block here can be picked up"
+    assert state["picked"] == 0 and not world.blocks[0].held
+    found = [o for o in state["found"] if o["kind"]]
+    assert [o["kind"] for o in found] == ["cube"] and found[0]["reach"]
+    assert found[0]["name"].endswith("mm cube")
+
+
+def test_a_second_start_while_one_runs_is_refused(url):
+    assert post(url, "/pick/cleanup", {})[0] == 200
+    code, body = post(url, "/pick/start", {})
+    assert code == 409 and "still running" in body["error"]
+    assert post(url, "/pick/stop", {})[0] == 200
+    assert not get(url, "/pick/state")["busy"]
+
+
+def test_home_is_a_job_the_card_can_start(url):
+    post(url, "/api/arm/move", {"joints": {"1": 60}})
+    code, body = post(url, "/pick/home", {})
+    assert code == 200 and body["job"] == "home"
+    state = picked_and_done(url)
+    assert state["job"] == "home" and state["error"] is None
+    pose = get(url, "/api/state")["arm"]["pose"]
+    assert all(pose[str(j)] == cfg.HOME_POSE[j] for j in (1, 2, 3, 4))
+
+
+def test_settings_are_held_to_their_range_and_scale_the_job_speeds(sess, url):
+    keys = [s["key"] for s in get(url, "/pick/settings")["settings"]]
+    assert keys[0] == "speed" and {"scan_dps", "settle_s", "reach_offset_mm"} <= set(keys)
+    _code, body = post(url, "/pick/settings", {"speed": 500})
+    assert next(s for s in body["settings"] if s["key"] == "speed")["value"] == 100
+    post(url, "/pick/settings", {"speed": 50, "settle_s": 0.1})
+    assert sess._dps("station_dps") == session.STATION_DPS / 2
+    assert sess.settle_s == 0.1, "the settle the jobs use"
+    code, body = post(url, "/pick/settings", {"warp": 9})
+    assert code == 400 and "warp" in body["error"]
+
+
+def test_settings_and_every_look_are_kept(tmp_path, world):
+    arm = sim.SimArm(world, time_scale=0)
+    s = session.Session(arm_factory=lambda: arm, stream=lambda: sim.SimStream(arm, fps=40),
+                        calibration=sim.calibration, out_dir=tmp_path)
+    s.settle_s = 0.05
+    s.start()
+    try:
+        _wait(lambda: s.stream.latest()[0] is not None)
+        s.set_settings({"scan_dps": 10})
+        s.pick_start("pick", {})
+        _wait(lambda: not s._job_running(), timeout=30)
+        assert s.job.status == "done", s.job.message
+    finally:
+        s.close()
+    records = sorted((tmp_path / "pick" / "looks").glob("*.json"))
+    assert records and len(records) == len(list((tmp_path / "pick" / "looks").glob("*.jpg")))
+    record = json.loads(records[0].read_text())
+    assert record["job"] == "pick" and record["look"] == "primary"
+    assert {"1", "2", "3", "4", "5"} <= set(record["pose"]) and record["read"]
+    assert record["size"] == list(cfg.WRIST_CAM_SIZE) and record["found"]
+    again = session.Session(arm_factory=lambda: arm, stream=lambda: sim.SimStream(arm),
+                            calibration=sim.calibration, out_dir=tmp_path)
+    assert again.tuning["scan_dps"] == 10, "settings.json is read back at the next start"

@@ -10,9 +10,10 @@ a STOP on each and STOP ALL always on screen (Space or Esc too). Plan v2.3, M1, 
 
 then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fake` and `console`).
 
-- **The robots** are listed in `robots.json`: the X3's panel running on this laptop
-  (`x3plus/tools/webapp.py --robot http://192.168.73.210:8761 --port 8091`, launch config
-  `webapp-robot`) and the M3's drive page (`m3pro/tools/arena_map.py start`, port 8095).
+- **The robots** are listed in `robots.json`: the X3's panel, on the robot since 2026-10-06
+  (`docker compose --profile web up -d web` in `~/roboarm`, port 8080; the laptop copy,
+  launch config `webapp-robot`, still works against the bridge instead), its arm card on the
+  same port, and the M3's drive page (`m3pro/tools/arena_map.py start`, port 8095).
   `robots.fake.json` points at `x3plus/tools/webapp.py --sim` and `m3pro/arena/fake_m3.py`, which
   `--fake` starts: the M3's real drive logic on the saved arena map, with a ray-cast lidar.
 - **X3 card:** the wrist camera, arm / job / camera state, Pick one, Clear the table, Home;
@@ -27,6 +28,9 @@ then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fak
   the last attempt, what is in view and whether it is in reach; Pick nearest / a cube / a block,
   Clean up all in reach (to the drop-off, one by one), Home; where each step's time went (the
   robot's `/api/metrics`) and the robot's own narration of the job.
+- **X3 arm card** (`x3arm`): the same card on the X3's panel, which serves the M3's `/pick/*`
+  (`x3plus/roboarm/web/session.py`): its jobs are the panel's one-click pick and clear the
+  table; no driving yet (the box is hidden), no drop-off box yet (drops at its fixed pose).
 - **STOP ALL** lets go of any held key, stops every robot in `robots.json` -- shown or not --
   and logs how long each took to confirm (pretend robots: M3 20 ms, X3 about 0.8 s).
 - **3D scan:** the M3's coloured 3D scans of the arena, as `m3pro/tools/arena_map.py
@@ -84,7 +88,8 @@ it, and typed commands still work.
 - **What is done** (`console.js` hands `window.consoleActions` to `voice.js`): stop is the bar's
   STOP ALL. The X3's pick / clean up / home are its card's Pick one / Clear the table / Home (it
   picks what it finds first: a colour or size is shown, not passed on). The M3's go to its arm's
-  pick service, robots.json id and kind `m3arm` (the M3's bridge, port 8761): `pick/start` with
+  pick service, robots.json id and kind `m3arm` (the M3's bridge, port 8761), and the X3's go to
+  `x3arm` the same way when it is listed (else to its panel card's buttons): `pick/start` with
   `{"kind", "colour", "size_mm"}`, `pick/cleanup`, `pick/home`, and STOP ALL sends `pick/stop`;
   the page polls `pick/state`. Until that entry is in `robots.json`, an M3 command says "M3 arm
   not connected".

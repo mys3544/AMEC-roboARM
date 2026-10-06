@@ -32,6 +32,17 @@ stream open does not block the JSON calls the same page is making.
                                 job runs with their breakdown (roboarm.metrics)
     POST /api/metrics/reset
 
+The M3's pick interface, the same shape as its bridge's, for the console's arm card and voice:
+
+    POST /pick/start            {kind?: "cube"|"block", at?: [x, y] m, drive?}: one pick, to the drop
+    POST /pick/cleanup          {kind?}: clear the table
+    POST /pick/home             the arm home, as a job
+    POST /pick/stop             stop the job and hold
+    GET  /pick/state            job, step, picked/missed, the last attempt, what was found
+    GET  /pick/log?since=N      the log as {n, t, text}
+    GET  /pick/settings         the tunable speeds and pauses; POST {key: value} changes them
+    GET  /pick/frame.jpg        the newest look a job took, marked
+
 Errors come back as {"error": "..."} with 400 (bad request / arm refused it),
 409 (busy, or wrong mode) or 500 (a bug).
 """
@@ -143,6 +154,16 @@ def _routes(session: Session) -> dict:
         ("POST", "/api/auto/stop"): lambda p: (session.stop(), {"ok": True})[1],
         ("GET", "/api/metrics"): lambda p: metrics.snapshot(events=p.get("events", "1") != "0"),
         ("POST", "/api/metrics/reset"): lambda p: (metrics.reset(), {"ok": True})[1],
+        # The M3's pick interface (m3pro/tools/m3bridge.py), so the console's arm card and voice
+        # drive both robots the same way.
+        ("POST", "/pick/start"): lambda p: session.pick_start("pick", p),
+        ("POST", "/pick/cleanup"): lambda p: session.pick_start("pickall", p),
+        ("POST", "/pick/home"): lambda p: session.pick_start("home", p),
+        ("POST", "/pick/stop"): lambda p: (session.stop(), {"ok": True})[1],
+        ("GET", "/pick/state"): lambda p: session.pick_state(),
+        ("GET", "/pick/log"): lambda p: {"lines": session.pick_log(int(p.get("since", 0)))},
+        ("GET", "/pick/settings"): lambda p: {"settings": session.settings()},
+        ("POST", "/pick/settings"): lambda p: {"settings": session.set_settings(p)},
     }
 
 
@@ -207,6 +228,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._stream(view)
             else:
                 self._snapshot(view)
+        elif url.path == "/pick/frame.jpg":
+            jpeg = self.session.pick_frame()
+            if jpeg is None:
+                send_json(self, {"error": "no look yet"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            else:
+                send_bytes(self, jpeg, "image/jpeg")
         else:
             params = {k: v[-1] for k, v in parse_qs(url.query).items()}
             self._dispatch("GET", params)

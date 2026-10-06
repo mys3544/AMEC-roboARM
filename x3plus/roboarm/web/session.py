@@ -29,6 +29,7 @@ from __future__ import annotations
 import collections
 import contextlib
 import io
+import json
 import math
 import sys
 import threading
@@ -117,6 +118,37 @@ SCAN_POLL_S = 0.02
 # and the search's skipped re-look is where that went uncorrected. 3 deg keeps
 # the skip for a cube that really is dead ahead and costs 2.5 s otherwise.
 REFINE_IF_OFF_DEG = 3
+
+# What the console's arm card tunes: the M3's /pick/settings, in its shape -- key -> (what it is,
+# unit, lowest, highest, step, default). "speed" scales the moves between looks; the grasp's own
+# speeds (grasp.py) stay as measured. At most 100 % until a faster scan is measured: above
+# SCAN_DPS the wrist camera's rolling exposure smears (see there).
+SETTINGS = {
+    "speed": ("arm speed, the moves between looks", "%", 30, 100, 5, 100),
+    "station_dps": ("to a look, and back after a miss", "deg/s", 10, 60, 5, STATION_DPS),
+    "scan_dps": ("the base turning while it looks", "deg/s", 4, 24, 1, SCAN_DPS),
+    "return_dps": ("back from the drop-off, empty-handed", "deg/s", 20, 90, 5, RETURN_DPS),
+    "settle_s": ("still before a look", "s", 0.0, 2.0, 0.05, SETTLE_S),
+    "reach_offset_mm": ("aim this much further out than seen", "mm", -30, 40, 1,
+                        round(cfg.REACH_OFFSET_M * 1000)),
+}
+SETTING_ATTRS = ("settle_s", "reach_offset_mm")   # these two are the Session's own attributes
+# The M3's names for the jobs, which the console's arm card and voice use.
+PICK_JOBS = {"pick": "pick_once", "pickall": "clean_up", "home": "home"}
+BLOCK_RATIO = 1.5   # a top face this much longer than wide is a block (the kit's is 30 x 60)
+
+
+def kind_of(target: detect.Target) -> str | None:
+    """"cube" or "block", the M3's kinds (and the console's buttons); None for what the gripper
+    cannot take."""
+    if not target.graspable:
+        return None
+    return "block" if target.length_m >= BLOCK_RATIO * target.width_m else "cube"
+
+
+def name_of(target: detect.Target) -> str:
+    width, length = round(target.width_m * 1000), round(target.length_m * 1000)
+    return f"{width} x {length} mm block" if kind_of(target) == "block" else f"{width} mm cube"
 
 
 class Busy(RuntimeError):
@@ -244,6 +276,18 @@ class Session:
 
         self._threads: list[threading.Thread] = []
         self._closing = threading.Event()
+
+        # For the M3's /pick/* interface (the console's arm card): the tunable speeds, this job's
+        # tally, the last attempt, and the jobs' looks -- each one saved, the newest one marked.
+        self.tuning = {key: spec[5] for key, spec in SETTINGS.items() if key not in SETTING_ATTRS}
+        self.picked = self.missed = 0
+        self.last_pick: dict | None = None
+        self.looks = 0
+        self.look_jpeg: bytes | None = None
+        saved = self._settings_path()
+        if saved is not None and saved.is_file():
+            with contextlib.suppress(ValueError, OSError):
+                self.set_settings(json.loads(saved.read_text()), save=False)
 
     # ------------------------------------------------------------- lifecycle --
     def start(self) -> Session:
@@ -576,6 +620,101 @@ class Session:
             "log_seq": log_seq,
         }
 
+    # ------------------------------------------ the M3's /pick/* interface --
+    # The console's arm card, voice and timing speak this to both robots (m3pro/tools/m3bridge.py
+    # serves the M3's). Here it is a thin layer over the jobs above.
+    def pick_start(self, job: str, params: dict) -> dict:
+        """POST /pick/start (job "pick"), /pick/cleanup ("pickall"), /pick/home ("home")."""
+        kind = params.get("kind") if params.get("kind") in ("cube", "block") else None
+        if params.get("drive"):
+            self.log("asked to drive closer: the X3 does not drive yet -- picking from here")
+        if job == "home":
+            if self._job_running():
+                raise Busy(f"{self.job.name} is still running -- stop it first")
+            self.set_mode("auto")
+            self.start_job("home")
+        else:
+            at = params.get("at")
+            self.one_click("auto", None, job, kind=kind,
+                           at=None if at is None else [float(v) for v in at][:2])
+        return {"ok": True, "job": PICK_JOBS[job]}
+
+    def pick_state(self) -> dict:
+        """GET /pick/state, in the M3's shape (its m3pick.Picker.status)."""
+        job = self.job
+        busy = self._job_running()
+        with self._log_lock:
+            newest = self._log[-1] if self._log else None
+        failed = job is not None and not busy and job.status in ("failed", "stopped")
+        return {
+            "job": PICK_JOBS.get(job.name, job.name) if job else None,
+            "step": newest[2].strip()[:80] if busy and newest else "idle",
+            "since": newest[1] if busy and newest else (job.finished if job and job.finished else time.time()),
+            "busy": busy,
+            "error": job.message if failed else None,
+            "last": self.last_pick,
+            "picked": self.picked,
+            "missed": self.missed,
+            "looks": self.looks,
+            "now": time.time(),
+            "battery_v": None if self._battery is None else round(float(self._battery), 2),
+            "moved_cm": [0.0, 0.0],   # the X3 does not drive yet (x3plus/PLAN.md X6)
+            "box": None,              # nor look for the drop-off box (X5)
+            "found": [{"kind": kind_of(t), "name": name_of(t), "x": round(float(t.x), 3),
+                       "y": round(float(t.y), 3), "yaw": round(float(t.angle_deg), 1),
+                       "reach": self._plannable(t)}
+                      for t in self.sweep_targets],
+        }
+
+    def pick_log(self, since: int = 0) -> list[dict]:
+        """GET /pick/log?since=N: the log in the M3's shape."""
+        return [{"n": line["seq"], "t": line["t"], "text": line["text"]}
+                for line in self.log_since(since)]
+
+    def pick_frame(self) -> bytes | None:
+        """GET /pick/frame.jpg: the newest look a job took, marked; else the live view."""
+        if self.look_jpeg is not None:
+            return self.look_jpeg
+        frame, _seq = self.frame()
+        if frame is None:
+            return None
+        ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        return jpeg.tobytes() if ok else None
+
+    def settings(self) -> list[dict]:
+        """GET /pick/settings: every tunable with its range, as the M3's card lists them."""
+        def value(key):
+            return getattr(self, key) if key in SETTING_ATTRS else self.tuning[key]
+        return [{"key": key, "label": spec[0], "unit": spec[1], "min": spec[2], "max": spec[3],
+                 "step": spec[4], "default": spec[5], "value": value(key)}
+                for key, spec in SETTINGS.items()]
+
+    def set_settings(self, values: dict, save: bool = True) -> list[dict]:
+        """POST /pick/settings: unknown keys refused, values held to their range; they count from
+        the next move, and are kept for the next start (out/pick/settings.json)."""
+        for key in values:
+            if key not in SETTINGS:
+                raise ValueError(f"no setting {key!r}")
+        for key, given in values.items():
+            lo, hi = SETTINGS[key][2], SETTINGS[key][3]
+            held = min(max(float(given), lo), hi)
+            if key in SETTING_ATTRS:
+                setattr(self, key, held)
+            else:
+                self.tuning[key] = held
+        path = self._settings_path()
+        if save and path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({s["key"]: s["value"] for s in self.settings()}, indent=1))
+        return self.settings()
+
+    def _settings_path(self) -> Path | None:
+        return None if self.out_dir is None else Path(self.out_dir) / "pick" / "settings.json"
+
+    def _dps(self, key: str) -> float:
+        """A job speed from the settings, scaled by "speed"."""
+        return self.tuning[key] * self.tuning["speed"] / 100
+
     def _lock_held(self) -> bool:
         if self._lock.acquire(blocking=False):
             self._lock.release()
@@ -809,10 +948,12 @@ class Session:
             "pickall": self._job_pickall,
             "place": self._job_place,
             "survey": self._job_survey,
+            "home": self._job_home,
         }.get(name)
         if runner is None:
             raise ValueError(f"no job called {name!r}")
         self.job = Job(name)
+        self.picked = self.missed = 0
         self._stop.clear()
         self._job_thread = threading.Thread(
             target=self._run_job, args=(self.job, runner, params), name=f"job-{name}",
@@ -821,7 +962,7 @@ class Session:
         return self.job
 
     def one_click(self, detector: str = "auto", object_mm: float | None = None,
-                  job: str = "pick") -> Job:
+                  job: str = "pick", **choose) -> Job:
         """The whole demo behind one button: choose the detector and the declared
         object width (None: measure it), switch to automatic, and run
         sweep -> refine -> pick -> drop at cfg.DROP_POSE. `job` "pickall" is
@@ -830,14 +971,15 @@ class Session:
 
         Refused while a job runs, like any other start. Switching the mode here is
         deliberate: the button is meant for someone who does not want to know that
-        there is a mode."""
+        there is a mode. `choose` narrows what is picked: kind ("cube" | "block") and, for
+        one pick, at ([x, y] m: the nearest to it rather than the surest)."""
         if self._job_running():
             raise Busy(f"{self.job.name} is still running -- stop it first")
         if job not in ("pick", "pickall"):
             raise ValueError(f"the one-click job is pick or pickall, not {job!r}")
         self.set_view(detector=detector, object_mm=object_mm, view="detect")
         self.set_mode("auto")
-        return self.start_job(job, refine=True, first=True)
+        return self.start_job(job, refine=True, first=True, **choose)
 
     def _run_job(self, job: Job, runner, params: dict) -> None:
         self.log(f"--- {job.name} ---")
@@ -884,7 +1026,7 @@ class Session:
         yaw_only = before is not None and all(
             abs(before[j] - look.pose[j]) <= 1 for j in (2, 3, 4, 5))
         with metrics.span("look.move"):
-            self.arm.move_to(look.pose, speed_dps=STATION_DPS, repeatable=True)
+            self.arm.move_to(look.pose, speed_dps=self._dps("station_dps"), repeatable=True)
             self._refresh()
         settle = min(self.settle_s, YAW_SETTLE_S) if yaw_only else self.settle_s
         with metrics.span("camera.settle"):
@@ -907,6 +1049,13 @@ class Session:
         # so the view shows what the job saw instead.
         annotated = detect.annotate(frame, look.matrix, found)
         self._annotated = annotated
+        ok, jpeg = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if ok:
+            self.look_jpeg = jpeg.tobytes()
+        self.looks += 1
+        if self.out_dir is not None:
+            with metrics.span("detect.save_look"):
+                self._save_look(look, frame, found)
         if self.out_dir is not None:
             tag = f"sweep_{look.dyaw:+05.1f}.jpg".replace("+", "p").replace("-", "m")
             if look.name != "primary":
@@ -914,6 +1063,38 @@ class Session:
             with contextlib.suppress(camera.CameraError), metrics.span("detect.save_frame"):
                 camera.write_image(str(self.out_dir / tag), annotated)
         return kept, clipped
+
+    def _save_look(self, look: sweep.Look, frame, found: list[detect.Target]) -> None:
+        """Every look a job takes, kept as the M3 keeps its own: the picture as the camera gave it
+        (undistorted, unmarked), the pose it was taken from and what was found in it -- the raw
+        material for depth from one camera (x3plus/PLAN.md X2) and for track D. out/pick/looks/,
+        never overwritten (the sweep_*.jpg beside them are, per station)."""
+        folder = Path(self.out_dir) / "pick" / "looks"
+        now = time.time()
+        stem = time.strftime("%Y%m%d_%H%M%S", time.localtime(now)) + f"_{int(now * 1000) % 1000:03d}"
+        stem += f"_{look.name}_{look.dyaw:+05.1f}"
+        lens = cfg.WRIST_CAM_LENS
+        record = {
+            "stamp": round(now, 3), "job": self.job.name if self.job else None,
+            "look": look.name, "dyaw": float(look.dyaw),
+            "pose": {str(j): float(a) for j, a in look.pose.items()},   # where the job believes it was
+            "read": {str(j): float(a) for j, a in (self.pose() or {}).items()},   # the newest read-back
+            "camera": cfg.WRIST_CAMERA, "size": list(frame.shape[1::-1]),
+            # The picture is already undistorted, so this matrix holds with no distortion.
+            "K": None if lens is None else [list(map(float, row)) for row in lens[0]],
+            "found": [{"label": t.label, "x": round(float(t.x), 4), "y": round(float(t.y), 4),
+                       "width": round(float(t.width_m), 4), "length": round(float(t.length_m), 4),
+                       "angle": round(float(t.angle_deg), 1),
+                       "height": None if t.height_m is None else round(float(t.height_m), 4),
+                       "confidence": round(float(t.confidence), 3), "clipped": bool(t.clipped)}
+                      for t in found],
+        }
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            camera.write_image(str(folder / f"{stem}.jpg"), frame)
+            (folder / f"{stem}.json").write_text(json.dumps(record))
+        except (OSError, camera.CameraError) as exc:
+            self.log(f"could not save the look: {exc}")
 
     def _span(self, target: detect.Target) -> float:
         """What has to be wholly in shot for this rung's measurement to be trusted.
@@ -943,9 +1124,14 @@ class Session:
             return None
         return self.detector_url
 
+    def _job_home(self, **_ignored) -> None:
+        """The arm card's Home: a job like the others, so STOP and the timing cover it."""
+        with metrics.span("home"):
+            self.arm.home(speed_dps=self._dps("station_dps"))
+
     def _job_survey(self) -> None:
         with metrics.span("move"):
-            self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
+            self.arm.move_to(self._primary_look(), speed_dps=self._dps("station_dps"), repeatable=True)
 
     def _lap(self, what: str | None = None) -> None:
         """Log how long the stage since the last call took, and start the next.
@@ -998,7 +1184,7 @@ class Session:
         matrix, survey, name = entry
         first = sweep.pose_at(survey, dyaws[0])
         with metrics.span("scan.move"):
-            self.arm.move_to(first, speed_dps=STATION_DPS, repeatable=True)
+            self.arm.move_to(first, speed_dps=self._dps("station_dps"), repeatable=True)
             self._refresh()
         with metrics.span("camera.settle"):
             frame = self.stream.settled(self.settle_s)
@@ -1012,7 +1198,7 @@ class Session:
         """The moving part of _ride(): from the first station, yaw steadily to
         the last, a frame at each station's yaw as it goes by."""
         _matrix, survey, _name = entry
-        goal = self.arm.glide(sweep.pose_at(survey, dyaws[-1]), speed_dps=SCAN_DPS)
+        goal = self.arm.glide(sweep.pose_at(survey, dyaws[-1]), speed_dps=self._dps("scan_dps"))
         ahead = 1 if goal[1] > first[1] else -1
         pending = [sweep.pose_at(survey, d)[1] for d in dyaws[1:]]
         last_j1, still = None, 0
@@ -1116,7 +1302,7 @@ class Session:
                      f"left  {info['width_mm']} x {info['length_mm']} mm   {verdict}")
         if not stopped_early:
             with metrics.span("move"):
-                self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
+                self.arm.move_to(self._primary_look(), speed_dps=self._dps("station_dps"), repeatable=True)
         self._lap("search" if first else "sweep")
         return merged
 
@@ -1168,17 +1354,22 @@ class Session:
         return True
 
     def _job_pick(self, index: int | None = None, dry_run: bool = False,
-                  refine: bool = True, first: bool = True, **_ignored) -> None:
+                  refine: bool = True, first: bool = True, kind: str | None = None,
+                  at: list[float] | None = None, **_ignored) -> None:
         if index is None or not self.sweep_targets:
             targets = self._job_sweep(first=first)
-            # The SUREST plannable target, not the nearest. 2026-09-18: the outer
-            # look returned the red cube at 0.45 and its shadow, ranged as a 45 mm
-            # cube, at 0.20; the shadow was 4 mm nearer and got picked -- "closed
-            # on nothing". Confidence is the one number that told them apart.
-            target = max((t for t in targets if self._plannable(t)),
-                         key=lambda t: t.confidence, default=None)
+            todo = [t for t in targets if self._plannable(t) and kind in (None, kind_of(t))]
+            if at is not None:   # the one nearest the point asked for
+                target = min(todo, key=lambda t: math.hypot(t.x - at[0], t.y - at[1]), default=None)
+            else:
+                # The SUREST plannable target, not the nearest. 2026-09-18: the outer
+                # look returned the red cube at 0.45 and its shadow, ranged as a 45 mm
+                # cube, at 0.20; the shadow was 4 mm nearer and got picked -- "closed
+                # on nothing". Confidence is the one number that told them apart.
+                target = max(todo, key=lambda t: t.confidence, default=None)
             if target is None:
-                raise ValueError("nothing here can be picked up")
+                raise ValueError(f"no {kind} here can be picked up" if kind
+                                 else "nothing here can be picked up")
         else:
             if not (0 <= int(index) < len(self.sweep_targets)):
                 raise ValueError(f"no target #{index}")
@@ -1203,6 +1394,7 @@ class Session:
         deserves one from a standstill."""
         self.log(f"picking {target.label} at {target.x * 1000:.0f} mm fwd, "
                  f"{target.y * 1000:+.0f} mm left")
+        started = time.monotonic()
         home = back_to if back_to is not None else self._primary_look()
         where = "the station" if back_to is not None else "survey"
         if refine:
@@ -1215,10 +1407,11 @@ class Session:
             held = grasp.pick(self.arm, target, reach_offset_m=self.reach_offset_mm / 1000)
             self._refresh()
         self._lap("pick")
+        self._tally(target, held, time.monotonic() - started)
         if not held:
             self.log("the gripper closed on nothing")
             with metrics.span("return"):
-                self.arm.move_to(home, speed_dps=STATION_DPS, repeatable=True)
+                self.arm.move_to(home, speed_dps=self._dps("station_dps"), repeatable=True)
             return False
         self.log("holding it")
         with metrics.span("drop"):
@@ -1229,12 +1422,28 @@ class Session:
         # Repeatable, so it arrives exactly: the scan that follows starts from
         # this very pose and then has nothing to move.
         with metrics.span("return"):
-            self.arm.move_to(home, speed_dps=RETURN_DPS, settle=False, repeatable=True)
+            self.arm.move_to(home, speed_dps=self._dps("return_dps"), settle=False, repeatable=True)
         self.sweep_targets = []
         self._lap(f"return to {where}")
         return True
 
-    def _job_pickall(self, refine: bool = True, **_ignored) -> None:
+    def _tally(self, target: detect.Target, held: bool, seconds: float) -> None:
+        """One attempt, for /pick/state: what it was, how it was taken, whether it is held."""
+        if held:
+            self.picked += 1
+        else:
+            self.missed += 1
+        try:
+            step = grasp.plan(grasp.aim_for(target, self.reach_offset_mm / 1000), reach_offset_m=0.0)
+        except grasp.GraspError:
+            step = None
+        self.last_pick = {"picked": held, "kind": kind_of(target) or target.label,
+                          "seconds": round(seconds, 1),
+                          "pitch": None if step is None else round(float(step.pitch)),
+                          "yaw_deg": round(float(target.angle_deg), 1), "yaw_from": "outline",
+                          "j5": None if step is None else int(step.roll)}
+
+    def _job_pickall(self, refine: bool = True, kind: str | None = None, **_ignored) -> None:
         """Clear the table, picking as it goes: walk the ring of stations, and
         at one that shows something graspable pick the surest thing, drop it,
         come BACK to that station and look again (a grasp can shove a
@@ -1258,7 +1467,7 @@ class Session:
             self._station_line(look, found, clipped)
             self.sweep_targets = sweep.merge([(look, t) for t in found])
             self.sweep_when = time.time()
-            todo = [t for t in found if self._plannable(t)]
+            todo = [t for t in found if self._plannable(t) and kind in (None, kind_of(t))]
             return (look, max(todo, key=lambda t: t.confidence)) if todo else None
 
         # ONE round (user, 2026-09-22 evening): the confirming second ride cost a
@@ -1297,7 +1506,7 @@ class Session:
                  f"{picked} picked up{missed_note}]")
         self.log(f"the ring is done: {picked} picked up in all{missed_note}; going home")
         with metrics.span("home"):
-            self.arm.home(speed_dps=STATION_DPS)
+            self.arm.home(speed_dps=self._dps("station_dps"))
 
     def _refine(self, target: detect.Target, force: bool = False) -> detect.Target:
         try:
@@ -1328,7 +1537,7 @@ class Session:
     def _job_place(self, x: float, y: float, **_ignored) -> None:
         grasp.place(self.arm, float(x) / 1000, float(y) / 1000,
                     reach_offset_m=self.reach_offset_mm / 1000)
-        self.arm.move_to(self._primary_look(), speed_dps=STATION_DPS, repeatable=True)
+        self.arm.move_to(self._primary_look(), speed_dps=self._dps("station_dps"), repeatable=True)
 
 
 class LogTee(io.TextIOBase):
