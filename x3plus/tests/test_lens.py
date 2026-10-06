@@ -57,3 +57,24 @@ def test_the_camera_looks_along_the_tool_with_the_base_at_the_bottom():
     assert R[1, 0] < -0.95, "picture right = the robot's right (-y)"
     nadir = kin.camera_nadir({**pose})
     assert abs(c[0] - nadir[0]) < 0.06 and abs(c[1]) < 0.01
+
+
+
+def test_sag_is_fitted_back_too():
+    """Views rendered through a sagging arm: the fit with sag finds it, and does better than one
+    without it."""
+    mount, turn, shift, sag = (0.085, 0.041, 0.004), (math.radians(-6), 0.0, 0.0), (0.004, -0.057, -1.8), (23.0, -16.0, 0.0)
+
+    def through(views_in):
+        out = []
+        for v in views_in:
+            pose = {int(j): a for j, a in v["pose"].items()}
+            px = lens.project(lens.table_points(v["table"], shift), pose, K, DIST, mount, turn, sag)
+            out.append({**v, "pixels": px.tolist()})
+        return out
+
+    views = through(views_through(mount, turn, shift, noise_px=0.0))
+    with_sag = lens.fit(views, K, DIST, sag=True)
+    without = lens.fit(views, K, DIST)
+    assert with_sag["rms_px"] < 0.5 < without["rms_px"]
+    assert np.allclose(with_sag["sag_deg_per_m"][:2], sag[:2], atol=3.0), with_sag["sag_deg_per_m"]

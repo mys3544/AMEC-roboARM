@@ -295,14 +295,15 @@ def handeye(path: Path) -> int:
         return 1
     K, dist = known
     views = json.loads(path.read_text())
-    result = lens.fit(views, K, dist)
+    result = lens.fit(views, K, dist, sag=True)
     groups = sorted({v["label"].split(" yaw")[0] for v in views})
     held_out = []
     for group in groups:
         rest = [v for v in views if not v["label"].startswith(group + " yaw")]
         left = [v for v in views if v["label"].startswith(group + " yaw")]
-        part = lens.fit(rest, K, dist)
-        err = lens.residuals(np.array(part["mount_m"] + part["turn_rad"] + part["board_shift"]), left, K, dist)
+        part = lens.fit(rest, K, dist, sag=True)
+        err = lens.residuals(np.array(part["mount_m"] + part["turn_rad"] + part["board_shift"]
+                                      + part["sag_deg_per_m"]), left, K, dist)
         held_out.append(float(np.sqrt(np.mean(err.reshape(-1, 2) ** 2) * 2)))
     result.update(held_out_px=[round(v, 2) for v in held_out], groups=groups, views_file=path.name,
                   K=K, dist=dist, when=time.strftime("%Y-%m-%d %H:%M"))
@@ -315,6 +316,7 @@ def handeye(path: Path) -> int:
           f"across {mm[1]:.1f} +- {mm_sd[1]:.1f}, sideways {mm[2]:+.1f} +- {mm_sd[2]:.1f}")
     print("  (cfg._LENS: {:.0f}, {:.0f}, {:+.0f})".format(*(1000 * v for v in lens.NOMINAL_MOUNT)))
     print("turned from the tool axis, deg: {:+.2f} {:+.2f} {:+.2f}".format(*(math.degrees(v) for v in turn)))
+    print("sag, deg per m of lever: J2 {:+.1f}  J3 {:+.1f}  J4 {:+.1f}".format(*result["sag_deg_per_m"]))
     print(f"board moved: {1000 * shift[0]:+.1f} mm forward, {1000 * shift[1]:+.1f} mm left, turned {shift[2]:+.2f} deg")
     out = DATA / "lens_on_arm.json"
     out.write_text(json.dumps(result, indent=1))
