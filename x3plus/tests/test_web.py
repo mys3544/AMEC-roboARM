@@ -644,3 +644,10 @@ def test_settings_and_every_look_are_kept(tmp_path, world):
     again = session.Session(arm_factory=lambda: arm, stream=lambda: sim.SimStream(arm),
                             calibration=sim.calibration, out_dir=tmp_path)
     assert again.tuning["scan_dps"] == 10, "settings.json is read back at the next start"
+
+
+def test_the_fine_pose_is_served_for_calibration(url):
+    pose = get(url, "/api/arm/fine")["pose"]
+    state = get(url, "/api/state")["arm"]["pose"]
+    assert set(pose) == {"1", "2", "3", "4", "5"}
+    assert all(abs(pose[j] - state[j]) < 1 for j in pose)

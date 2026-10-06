@@ -236,6 +236,23 @@ class Arm:
             )
         return {j: v for j, v in pose.items() if v is not None}
 
+    def read_fine(self, joints=(1, 2, 3, 4, 5)) -> dict[int, float]:
+        """The joints from each servo's raw count, to 0.08 deg rather than read()'s whole
+        degrees: for placing the camera (roboarm/lens.py), where one degree is 3-4 mm. Slower
+        -- one query per joint, 50 ms apart (see read_pose) -- so only at a standstill."""
+        fine = {}
+        with self._io:
+            for joint in joints:
+                for _ in range(3):
+                    time.sleep(0.05)
+                    read_id, raw = self.bot.get_uart_servo_value(joint)
+                    if read_id == joint and raw > 0:
+                        fine[joint] = round(cfg.angle_from_raw_exact(joint, raw), 3)
+                        break
+                else:
+                    raise ArmError(f"J{joint} gave no raw count")
+        return fine
+
     def out_of_range(self, pose: Pose | None = None) -> Pose:
         """Joints sitting outside their hard limits. Real positions, not faults."""
         pose = self.read() if pose is None else pose

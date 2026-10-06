@@ -237,12 +237,14 @@ def panel_call(panel: str, path: str, body: dict | None = None) -> dict:
         return json.loads(reply.read())
 
 
-def capture_eye(panel: str, path: Path) -> int:
+def capture_eye(panel: str, path: Path, min_lift: float = 0.0) -> int:
     """Drive the arm over the A3 board through EYE_TARGETS x EYE_YAWS (through the panel, which
     checks every move), and keep each view's marker corners with the pose READ BACK there."""
     panel_call(panel, "/api/mode", {"mode": "manual"})
     views = []
     for fwd, lift, pitch in EYE_TARGETS:
+        if lift < min_lift:   # things on the table: keep the hand well above them
+            continue
         try:
             pose, _ = kin.solve(fwd, 0.0, -cfg.TABLE_BELOW_PLATE + lift,
                                 pitches=kin.GRASP_PITCHES if pitch is None else (pitch,))
@@ -267,6 +269,10 @@ def capture_eye(panel: str, path: Path) -> int:
                 continue
             time.sleep(EYE_SETTLE_S)
             read = panel_call(panel, "/api/state")["arm"]["pose"]
+            try:   # the joints to 0.08 deg (Arm.read_fine): whole degrees left this fit at 9 px
+                read = {**read, **panel_call(panel, "/api/arm/fine")["pose"]}
+            except urllib.error.HTTPError:
+                pass
             frames = [grab(panel) for _ in range(3)]
             pixels, table = ws.average_corners([f for f in frames if f is not None])
             print(f"  {label}: {len(pixels)} corners, read J2..J4 {read['2']}/{read['3']}/{read['4']} "
@@ -332,9 +338,11 @@ def main() -> int:
                      help="a JSON list of {pose, pixels, table}: the corners seen and where they lie")
     eye.add_argument("--capture", action="store_true", help="take the views first: THE ARM MOVES")
     eye.add_argument("--panel", default=PANEL, help="the robot's panel (it owns the arm and camera)")
+    eye.add_argument("--min-lift-mm", type=float, default=0,
+                     help="leave out targets with the fingertips lower than this over the table")
     args = parser.parse_args()
     if args.what == "handeye":
-        if args.capture and capture_eye(args.panel, args.views):
+        if args.capture and capture_eye(args.panel, args.views, args.min_lift_mm / 1000):
             return 1
         return handeye(args.views)
 

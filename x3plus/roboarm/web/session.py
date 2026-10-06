@@ -534,6 +534,10 @@ class Session:
     def pose(self) -> Pose | None:
         return dict(self._pose) if self._pose else None
 
+    def fine_pose(self) -> dict:
+        """GET /api/arm/fine: the joints to 0.08 deg (Arm.read_fine), for camera calibration."""
+        return {"pose": {str(j): a for j, a in self._with_arm(lambda arm: arm.read_fine()).items()}}
+
     def set_mode(self, mode: str) -> None:
         if mode not in MODES:
             raise ValueError(f"mode must be one of {MODES}")

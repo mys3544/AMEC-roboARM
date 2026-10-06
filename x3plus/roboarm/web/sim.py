@@ -123,6 +123,9 @@ class SimArm:
             raise ArmError("arm is not connected -- use `with Arm() as arm:`")
         return dict(self.pose)
 
+    def read_fine(self, joints=(1, 2, 3, 4, 5)) -> dict[int, float]:
+        return {j: float(a) for j, a in self.read().items() if j in joints}
+
     def out_of_range(self, pose: Pose | None = None) -> Pose:
         pose = self.read() if pose is None else pose
         return {j: v for j, v in pose.items()

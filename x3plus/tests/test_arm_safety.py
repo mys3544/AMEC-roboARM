@@ -579,3 +579,17 @@ def test_a_move_from_far_out_of_range_glides_back_from_where_the_arm_is(monkeypa
         assert max(abs(c - p) for c, p in zip(command, previous)) <= cfg.MAX_STEP_DEG + 1, (previous, command)
         previous = command
     assert board.pose == {j: cfg.HOME_POSE[j] for j in cfg.JOINT_IDS}
+
+
+def test_the_fine_reading_is_the_raw_count_unrounded(monkeypatch):
+    """read() says whole degrees; read_fine() what the counts say -- 0.08 deg a count."""
+    a, board = build(monkeypatch, pose={**RESTING, 2: 55, 3: 23, 4: 10})
+    raw = {2: 2001, 3: 2650, 4: 2989}   # 98.9, 36.8 and 9.08 deg: not whole degrees
+    monkeypatch.setattr(board, "get_uart_servo_value", lambda sid: (sid, raw.get(sid, _raw_for_angle(sid, board.pose[sid]))))
+    with a:
+        fine = a.read_fine()
+    assert set(fine) == {1, 2, 3, 4, 5}
+    for joint, count in raw.items():
+        assert fine[joint] == round(cfg.angle_from_raw_exact(joint, count), 3)
+        assert abs(fine[joint] - cfg.angle_from_raw(joint, count)) <= 0.5
+    assert fine[2] != round(fine[2])

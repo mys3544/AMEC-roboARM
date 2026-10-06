@@ -126,6 +126,7 @@ def _routes(session: Session) -> dict:
 
     return {
         ("GET", "/api/state"): lambda p: session.snapshot(),
+        ("GET", "/api/arm/fine"): lambda p: session.fine_pose(),
         ("GET", "/api/log"): lambda p: {"lines": session.log_since(int(p.get("since", 0)))},
         ("POST", "/api/mode"): lambda p: (session.set_mode(p["mode"]), {"ok": True})[1],
         ("POST", "/api/view"): lambda p: (session.set_view(

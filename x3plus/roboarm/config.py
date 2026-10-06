@@ -597,6 +597,16 @@ def angle_from_raw(joint: int, raw: int) -> int:
     return math.floor((180 - 0) * (raw - 900) / (3100 - 900) + 0 + 0.5)
 
 
+def angle_from_raw_exact(joint: int, raw: int) -> float:
+    """angle_from_raw unrounded: a count is about 0.08 deg, where the angle readers give whole
+    degrees -- and 1 deg at the wrist camera is 3-4 mm (2026-10-06)."""
+    if joint <= 4:
+        return (raw - 900) * (0 - 180) / (3100 - 900) + 180
+    if joint == 5:
+        return (270 - 0) * (raw - 380) / (3700 - 380)
+    return (180 - 0) * (raw - 900) / (3100 - 900)
+
+
 def raw_from_angle(joint: int, angle: int) -> int:
     """Degrees -> raw position pulse, exactly as the SDK's angle calls convert it
     (Rosmaster.__arm_convert_value), for a joint sent below its SDK_RANGE."""
