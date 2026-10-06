@@ -134,17 +134,25 @@ def coverage(views: list, size: tuple[int, int], cells: tuple[int, int] = (6, 4)
     return len(seen) / (cells[0] * cells[1])
 
 
+FX_SD_GOOD = 0.01    # the focal length pinned to 1 %: at 0.3 m that is 3 mm of range
+TILT_GOOD_DEG = 30   # what pins it: views tilted this much (2026-10-06: tilts of 2-17 deg left
+                     # fx at 476 +- 9 px, and 476 / 487 / 501 by the distortion terms fitted)
+
+
 def fit(views: list, size: tuple[int, int]) -> dict:
-    """K and the residual distortion (k1 k2 p1 p2; k3 held at 0) from the kept views."""
-    rms, K, dist, rvecs, tvecs = cv2.calibrateCamera(
+    """K and the residual distortion (k1 k2 p1 p2; k3 held at 0) from the kept views, with
+    how well the views pin them: the focal length's standard deviation and the strongest tilt."""
+    rms, K, dist, rvecs, tvecs, sd, _sd_extr, _per = cv2.calibrateCameraExtended(
         [o for o, _ in views], [i for _, i in views], size, None, None, flags=cv2.CALIB_FIX_K3)
+    tilts = [math.degrees(math.acos(min(1.0, abs(cv2.Rodrigues(r)[0][2, 2])))) for r in rvecs]
     per_view = []
     for (obj, img), rvec, tvec in zip(views, rvecs, tvecs, strict=True):
         projected, _ = cv2.projectPoints(obj, rvec, tvec, K, dist)
         per_view.append(float(np.sqrt(np.mean(np.sum((projected.reshape(-1, 2) - img) ** 2, axis=1)))))
     return {"K": K.tolist(), "dist": dist.ravel().tolist(), "rms_px": float(rms),
             "per_view_px": [round(e, 3) for e in per_view], "views": len(views),
-            "coverage": round(coverage(views, size), 2), "size": list(size)}
+            "coverage": round(coverage(views, size), 2), "size": list(size),
+            "fx_sd_px": round(float(sd[0, 0]), 2), "tilts_deg": [round(v) for v in tilts]}
 
 
 def grab(panel: str) -> np.ndarray | None:
@@ -161,6 +169,7 @@ def capture(panel: str, board, folder: Path, seconds: float, wait: float = 0.0):
     folder.mkdir(parents=True, exist_ok=True)
     kept: dict[tuple, int] = {}
     end = time.monotonic() + wait + seconds
+    started = time.strftime("%H%M%S")   # names that a later --add capture does not overwrite
     seen = False
     print(f"hold the board up to the camera; tilt it, move it near and far, into the corners "
           f"({seconds:.0f} s, up to {MAX_VIEWS} views)", flush=True)
@@ -190,7 +199,7 @@ def capture(panel: str, board, folder: Path, seconds: float, wait: float = 0.0):
             time.sleep(0.2)
             continue
         kept[key] = len(kept)
-        cv2.imwrite(str(folder / f"view_{len(kept):02d}.png"), frame)
+        cv2.imwrite(str(folder / f"view_{started}_{len(kept):02d}.png"), frame)
         print(f"  view {len(kept):2d}: {len(found[0])} corners, tilt {key[0] * TILT_BIN_DEG:+d}/"
               f"{key[1] * TILT_BIN_DEG:+d} deg, ~{key[2] * DISTANCE_BIN_M:.1f} m", flush=True)
     print(f"{len(kept)} views kept", flush=True)
@@ -207,12 +216,13 @@ def main() -> int:
     intr.add_argument("--seconds", type=float, default=120, help="capturing, from the board's first sighting")
     intr.add_argument("--wait", type=float, default=0, help="how long to wait for the board to be held up")
     intr.add_argument("--refit", action="store_true", help="fit the views saved last time again")
+    intr.add_argument("--add", action="store_true", help="capture more views next to the saved ones")
     args = parser.parse_args()
 
     board = a4_board() if args.board == "a4" else None
     folder = ROOT / "out" / "camera_model" / "intrinsics"
     if not args.refit:
-        for old in folder.glob("view_*.png"):
+        for old in () if args.add else folder.glob("view_*.png"):
             old.unlink()
         board = capture(args.panel, board, folder, args.seconds, args.wait)
     views, size, what = [], None, "docs/board_a4.png"
@@ -244,6 +254,11 @@ def main() -> int:
           f"rms {result['rms_px']:.2f} px over {result['views']} views, "
           f"picture covered {100 * result['coverage']:.0f} %")
     print(f"residual distortion k1 k2 p1 p2: {' '.join(f'{v:+.4f}' for v in result['dist'][:4])}")
+    pinned = result["fx_sd_px"] / K[0][0]
+    steepest = max(result["tilts_deg"])
+    print(f"focal length +- {result['fx_sd_px']:.1f} px ({100 * pinned:.1f} %), steepest view {steepest} deg: "
+          + ("good enough" if pinned <= FX_SD_GOOD else
+             f"NOT pinned -- tilt the board more (at least {TILT_GOOD_DEG} deg) and into the corners"))
     if result["before"]:
         print(f"before: fx {result['before'][0][0]}  (cfg.WRIST_CAM_LENS)")
     print(f"saved {out}")

@@ -57,6 +57,7 @@ def test_the_fit_recovers_the_camera_from_tilted_views():
     assert result["rms_px"] < 0.5 and max(result["per_view_px"]) < 1.0
     assert max(abs(v) for v in result["dist"][:4]) < 0.05, "no distortion was rendered"
     assert result["views"] == 12 and result["coverage"] > 0.4
+    assert result["fx_sd_px"] < 3 and max(result["tilts_deg"]) >= 35, "tilted views pin the focal length"
 
 
 def test_holding_the_board_still_keeps_one_view():
