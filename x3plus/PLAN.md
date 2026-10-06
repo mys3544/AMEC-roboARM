@@ -75,7 +75,8 @@ What was measured on the robot, and what it changed in the plan:
   intrinsics`); the config's 416.5 came from down-looking views that cannot pin it.
 - **The lens on the arm (X2.1).** `roboarm/lens.py`: mount 85 / 41 / +4 mm (the ruler: 85 / 39 / 0),
   turned ~6 deg. The arm's own pose is the limit: 8.5 px (~3 mm) with the joints read to 0.08 deg
-  (`Arm.read_fine`); a gravity-sag term (J2/J3 give 2-3.5 deg at full lever) brings it to 6.0 px.
+  (`Arm.read_fine`); a gravity-sag term (J2/J3 give 2-3.5 deg at full lever) brings it to 6.0 px
+  (7.6 on views left out of the fit; `lens.sagged`).
   So FK places the camera to ~1 deg / 2.5-3 mm -- the calibrated looks stay the precise path.
 - **Depth anchored to the floor (X2.3) works for the TABLE, not for the PIECES.** On an angled look
   the scale is pinned (+-0.03 %) and the table comes out flat to +-2 mm; looking straight down it
@@ -90,6 +91,7 @@ What was measured on the robot, and what it changed in the plan:
   | MoGe-2 S / B / L | 15-35 | 9-38 | 16-47 | 0.5-1.2 s |
   | Depth Anything 3 Large, 3 views + our poses | 33-34 | 19-25 | 22-27 | 259 ms |
   | the same on 2x crops | 31-42 | 30, 30, 56 | 26-35 | ~1 s |
+  | MoGe-3 Large (July 2026, fine detail) | 27-33 | 26-37 | 17-29 | ~2 min here (Triton kernels compiled on Windows) |
 
   Every network flattens small pieces in a wide picture; their own metric scale is useless at
   20-60 cm (heights 0.1-0.7 m off). Fitting to the table is always needed.
@@ -100,7 +102,7 @@ What was measured on the robot, and what it changed in the plan:
 
 **So the X2 design changes:** a network finds and outlines things (and anchors the table); heights
 come from parallax between looks the arm takes anyway (the base turns of the ride, the close look);
-the kit's sizes snap the result. MoGe-3 (the 2026 fine-detail model) is still being measured.
+the kit's sizes snap the result. MoGe-3 flattens them too (its table is the flattest: 0.7-3 mm).
 
 ## The two robots side by side
 
