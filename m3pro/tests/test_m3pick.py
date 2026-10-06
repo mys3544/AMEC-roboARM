@@ -609,6 +609,33 @@ def test_a_block_lying_across_in_front_of_the_wheel_has_the_careful_grip():
     picker = run(world, "pick_once")
     said = " ".join(line["text"] for line in picker._log)
     assert picker.state["error"] is None and picker.state["picked"] == 1 and "careful grip" in said, said
+    assert "looked again turned onto it" in said, said   # by the bumper the first close look cuts it
+
+
+def test_the_careful_grip_goes_down_only_on_a_whole_close_look(monkeypatch):
+    """2026-10-05: the blue block's close look cut it, the wide look aimed, and the careful grip's near
+    finger -- 4.5 mm off it by plan -- came down on its edge and rolled it over. Not seen whole: left."""
+    monkeypatch.setattr(m3pick, "look_at", lambda *a: None)   # no look again
+    block = (0.150, 0.079, 94, 0.06, 0.03)
+    world = World([block])
+    picker = run(world, "pick_once")
+    assert "careful grip goes down only on a whole close look" in picker.state["error"], picker.state["error"]
+    assert world.boxes == [block] and not any(m == "close_gripper" for m, _a, _k in world.calls)
+
+
+def test_a_look_again_turns_the_camera_onto_what_the_first_cut():
+    K = np.array([[480.84, 0, 323.79], [0, 480.89, 239.99], [0, 0, 1]])
+    block = {"centre": np.array([0.150, 0.079, 0.015]), "height": 0.03, "size": 0.03, "length": 0.06, "yaw": 4.0,
+             "period": 180.0, "whole": True, "kind": "block", "footprint": (0.06, 0.03)}
+    picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
+    pre = picker.plan(block, [block])[1][0]
+    look = {**pre, 5: 90}
+    assert not m3pick.in_picture(look, block, K)   # its near half below the picture, as on the robot
+    again = m3pick.look_at(look, pre, block, K)
+    assert again is not None and m3pick.in_picture(again, block, K)
+    assert all(abs(again[j] - look[j]) <= 30 for j in (1, 2, 3, 4)) and (again[5], again[6]) == (look[5], look[6])
+    camera = m3kinematics.frames(again)["arm4"] @ m3kinematics.camera_optical()
+    assert camera[2, 1] <= -0.15   # at a slant: floor_plane takes no floor seen straight from above
 
 
 def test_a_cube_is_not_picked_careful_where_the_plain_grip_does():

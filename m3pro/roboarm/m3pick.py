@@ -540,6 +540,48 @@ def held_problem(start: dict, poses: list[dict], below: float) -> str | None:
     return None
 
 
+# The close look again when the first saw the thing cut by the picture's edge, or not at all (2026-10-05:
+# a block by the bumper, its near half below the picture -- aimed by the wide look, a careful grip's
+# finger came down on its edge and rolled it over): the camera turned onto it, J1 up to 15 deg and J2-J4
+# up to RELOOK_DEG, the least move that has its top face whole in the picture, clear of the fingers at the
+# bottom (to v LOOK_BOTTOM), LOOK_NEAR_M off at least (the depth answers from ~19 cm).
+RELOOK_DEG, LOOK_BOTTOM, LOOK_NEAR_M = 30, 420, 0.19
+_RELOOKS = sorted(itertools.product(range(-15, 16, 5), *[range(-RELOOK_DEG, RELOOK_DEG + 1, 5)] * 3),
+                  key=lambda d: sum(map(abs, d)))[1:]
+
+
+def in_picture(pose: dict, thing: dict, K, size: tuple[int, int] = (640, 480), margin: float = 0.005) -> bool:
+    """`thing`'s top face (its size along the line the fingers close on, its length across it, `margin`
+    round it) whole in the picture from `pose`, 20 px in from its edges and above LOOK_BOTTOM, the
+    camera LOOK_NEAR_M off it at least -- and looking down at a slant: m3vision.floor_plane takes no
+    floor seen straight from above (its normal must point against the picture's down)."""
+    along = np.array([math.cos(math.radians(thing["yaw"])), math.sin(math.radians(thing["yaw"]))])
+    across = np.array([-along[1], along[0]])
+    w, length = thing["size"], thing.get("length", thing["size"])
+    face = [np.r_[thing["centre"][:2] + along * a * (w / 2 + margin) + across * b * (length / 2 + margin), thing["height"]]
+            for a in (-1, 1) for b in (-1, 1)]
+    camera = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
+    if camera[2, 1] > -0.15:
+        return False
+    q = (np.linalg.inv(camera) @ np.c_[np.array(face), np.ones(4)].T)[:3]
+    if q[2].min() < LOOK_NEAR_M:
+        return False
+    u, v = (np.asarray(K) @ (q / q[2]))[:2]
+    return bool(u.min() >= 20 and u.max() <= size[0] - 20 and v.min() >= 20 and v.max() <= LOOK_BOTTOM)
+
+
+def look_at(here: dict, pre: dict, thing: dict, K) -> dict | None:
+    """A pose near `here` -- the least move of J1-J4 (_RELOOKS) -- from which `thing` is whole in the
+    picture, that the guard allows and the arm glides to, and from it to `pre` (the pre-grasp); None."""
+    for d in _RELOOKS:
+        pose = {**here, **{j: here[j] + dj for j, dj in zip((1, 2, 3, 4), d)}}
+        if all(0 <= pose[j] <= 180 for j in (1, 2, 3, 4)) and in_picture(pose, thing, K) \
+                and m3kinematics.problem(pose) is None and m3arm.glide_problem(here, [pose]) is None \
+                and m3arm.glide_problem(pose, [pre]) is None:
+            return pose
+    return None
+
+
 def view_way(here: dict, view: dict, below: float) -> list[list[dict]]:
     """Holding something, from the lift to the box `view` (a whole pose: SIDE_LOOK at box_dir) without
     going up and down, as glides one after another: risen in place into the view's shape and turned
@@ -820,6 +862,7 @@ class Picker:
                    self.cfg["settle_close_s" if tag == "close" else "settle_wide_s"])
         self.check()
         image, depth, K, pose = self.snapshot()
+        self.K = K   # (look_at plans a look again with it)
         with metrics.span("detect"):
             model = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
             normal, height, _ = m3vision.floor_plane(depth, K)
@@ -983,6 +1026,20 @@ class Picker:
         with self.step("look.close"):
             _camera, close = self.look("close", target["centre"])
         again = [o for o in close if o["kind"] and np.linalg.norm(o["centre"][:2] - target["centre"][:2]) < MATCH_M]
+        looked_again = False
+        if not (again and again[0]["whole"]):   # cut by the picture's edge, or not there: the camera onto it
+            relook = look_at(look_from, pre, target, self.K)
+            if relook is not None:
+                with self.step("look.close"):
+                    self.through([relook], speed=self.dps("near_dps"))
+                    try:
+                        _camera, close2 = self.look("close", target["centre"])
+                    except ValueError as exc:   # no floor in it: the first look's, then
+                        self.say(f"the look again failed ({exc})")
+                        close2 = []
+                again2 = [o for o in close2 if o["kind"] and np.linalg.norm(o["centre"][:2] - target["centre"][:2]) < MATCH_M]
+                if again2 and (again2[0]["whole"] or not again):
+                    close, again, looked_again = close2, again2, True
         reading, yaw_from = turn_of(again[0] if again else None, target)
         # the aim: the close look's -- unless it saw the thing only in part and the wide look whole: a cut
         # outline is grown to size on a guess, 11-14 mm off (2026-10-02), the arm repeats to ~5-9
@@ -991,7 +1048,8 @@ class Picker:
         if reading is not aim:   # the turn read from the other look: its height
             centre = np.r_[centre[:2], reading["centre"][2]]
         found_how = ("found it" if aim is not target
-                     else "seen in part, the wide look aimed" if again else "not found, the wide look kept")
+                     else "seen in part, the wide look aimed" if again else "not found, the wide look kept") \
+            + (", looked again turned onto it" if looked_again else "")
         self.say(f"close look: {found_how}, moved {1000 * np.linalg.norm(centre[:2] - target['centre'][:2]):.1f} mm")
         # what is round it: the close look's, and the wide look's -- the close one sees less round it
         others = [o for o in close if np.linalg.norm(o["centre"][:2] - centre[:2]) > MATCH_M] + others
@@ -1012,6 +1070,10 @@ class Picker:
                     break
         if replanned is None:   # the corrected aim, the turn read: no way down the arm allows
             raise Refused(centre, "refused: no way down with the fingers turned as this one needs")
+        if careful and not (again and again[0]["whole"]):   # a finger a few mm off it: on a guess it came
+            # down on the thing's edge and rolled it over (2026-10-05)
+            raise Refused(centre, "refused: the careful grip goes down only on a whole close look, and the close"
+                                  " looks saw it cut or not at all")
         pitch, poses, _lift = replanned
         j5 = poses[-1][5]
         off = off_square(poses[-1], reading["yaw"], reading["period"])
