@@ -517,3 +517,13 @@ def test_without_hints_the_other_rungs_still_stand_in_when_depth_cannot(monkeypa
                               nadir=(0.139, -0.05), lens_m=None, url="http://x",
                               note=lambda s: None, hints=False)
     assert [t.label for t in found] == ["cup"]
+
+
+def test_the_raw_depth_map_travels_as_float16_npy():
+    """POST /depth's body: the engine's map as it is (FP16), for measuring rather than looking."""
+    disp = np.linspace(0.5, 7.25, 518 * 910, dtype=np.float32).reshape(518, 910)
+    data = vdepth.encode_map(disp)
+    assert data[:6] == b"\x93NUMPY" and len(data) < 1_000_000
+    back = vdepth.decode_map(data)
+    assert back.shape == (518, 910) and back.dtype == np.float32
+    assert np.allclose(back, disp, rtol=1e-3)

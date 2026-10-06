@@ -24,6 +24,7 @@ ROBOARM_CAMERA picks the engine, see ENGINES.
 from __future__ import annotations
 
 import base64
+import io
 import os
 import time
 
@@ -131,6 +132,19 @@ def preprocess(bgr: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return np.ascontiguousarray(x.transpose(2, 0, 1)[None])
 
 
+def encode_map(disp: np.ndarray) -> bytes:
+    """The relative depth as .npy bytes, float16: what POST /depth answers. The engine is FP16,
+    so nothing is lost, and the 518 x 910 map is 0.9 MB."""
+    buffer = io.BytesIO()
+    np.save(buffer, disp.astype(np.float16), allow_pickle=False)
+    return buffer.getvalue()
+
+
+def decode_map(data: bytes) -> np.ndarray:
+    """encode_map's bytes -> the map, float32."""
+    return np.load(io.BytesIO(data), allow_pickle=False).astype(np.float32)
+
+
 class Depth:
     """The engine, loaded once. `infer(jpeg)` answers in the /detect wire format."""
 
@@ -173,6 +187,16 @@ class Depth:
             out = self._out.clone()
         self._stream.synchronize()
         return out.cpu().numpy().reshape(self.height, self.width)
+
+    def raw(self, jpeg: bytes) -> tuple[bytes, float]:
+        """POST /depth: the relative inverse depth itself (encode_map), for measuring -- depth
+        anchored to the floor, x3plus/PLAN.md X2.3 -- and the model's milliseconds."""
+        frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("the body is not a decodable JPEG")
+        started = time.perf_counter()
+        disp = self.depth_map(frame)
+        return encode_map(disp), round(1000 * (time.perf_counter() - started), 1)
 
     def infer(self, jpeg: bytes, want_map: bool = False) -> dict:
         """The raised regions; with `want_map` also "map", the relative depth as

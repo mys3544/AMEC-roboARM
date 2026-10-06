@@ -12,6 +12,8 @@ framework.
     POST /raised   same body, same reply shape, from the depth model: the
                    outlines of what stands up on the table (vision_service.depth).
                    503 when no depth engine is built; the client then skips it.
+    POST /depth    same body; the depth model's map itself, as .npy float16 at the
+                   engine's size (depth.encode_map), the model's time in X-Model-Ms.
 
 The model is loaded once at startup, not per request, so a bad ROBOARM_VISION_MODEL
 fails the container immediately rather than on the first pick attempt.
@@ -57,6 +59,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         url = urlparse(self.path)
         options = {}
+        if url.path == "/depth":
+            self._depth()
+            return
         if url.path == "/detect":
             model = self.detector
         elif url.path == "/raised":
@@ -76,6 +81,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json(model.infer(body, **options))
         except Exception as exc:  # noqa: BLE001 -- the client must hear about it
             self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+
+
+    def _depth(self) -> None:
+        if self.depth is None:
+            self._json({"error": "no depth engine is built -- see vision_service/depth.py"}, 503)
+            return
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        try:
+            data, model_ms = self.depth.raw(body)
+        except Exception as exc:  # noqa: BLE001 -- the client must hear about it
+            self._json({"error": f"{type(exc).__name__}: {exc}"}, 400 if isinstance(exc, ValueError) else 500)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Model-Ms", str(model_ms))
+        self.end_headers()
+        self.wfile.write(data)
 
 
 def main() -> None:
