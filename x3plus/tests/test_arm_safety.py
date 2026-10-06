@@ -561,3 +561,21 @@ def test_after_going_elsewhere_the_detour_is_back(monkeypatch):
         board.sent.clear()
         a.move_to(goal, repeatable=True)
         assert max(pose[2] for pose in _sent_poses(board)) == 70 + Arm.APPROACH_DEG
+
+
+def test_a_move_from_far_out_of_range_glides_back_from_where_the_arm_is(monkeypatch):
+    """2026-10-06: found leaning back over the mast by hand (J2 162, J3 -44). Clamping the
+    start to the safe range made the first command jump J2 56 and J3 44 degrees; now every
+    command, the first included, is one ordinary step from the last."""
+    found = {1: 91, 2: 162, 3: -44, 4: 26, 5: 90, 6: 9}
+    a, board = build(monkeypatch, pose=found)
+    with a:
+        a.home(speed_dps=15)
+    raw = [[cfg.angle_from_raw(j, p) for j, p in zip(cfg.JOINT_IDS, pulses)] for pulses, _t in board.raw_sent]
+    commands = raw + [angles for angles, _t in board.sent]   # J3 is below 0 first, then above
+    assert raw, "J3 below the angle API goes as raw pulses"
+    previous = [found[j] for j in cfg.JOINT_IDS]
+    for command in commands:
+        assert max(abs(c - p) for c, p in zip(command, previous)) <= cfg.MAX_STEP_DEG + 1, (previous, command)
+        previous = command
+    assert board.pose == {j: cfg.HOME_POSE[j] for j in cfg.JOINT_IDS}

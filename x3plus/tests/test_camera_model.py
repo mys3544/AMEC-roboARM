@@ -75,3 +75,13 @@ def test_a_picture_without_enough_of_the_board_is_no_view():
     half = render(board, 0, 0, 0.45)
     half[:, 330:] = 200   # most of the board hidden
     assert camera_model.find_board(half, board) is None
+
+
+def test_the_held_up_board_is_recognised_from_a_picture():
+    board = camera_model.a4_board(SQUARE_M)
+    known = camera_model.identify(render(board, 25, -15, 0.45))
+    assert known is not None
+    found, what = known
+    assert what.startswith("DICT_5X5_1000, 9 x 7 squares, markers 0.75"), what
+    view = render(board, -30, 20, 0.5)
+    assert len(camera_model.find_board(view, found)[0]) == len(camera_model.find_board(view, board)[0])

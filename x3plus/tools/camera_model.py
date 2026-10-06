@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """The wrist camera as a measuring instrument (x3plus/PLAN.md X2.1), step one: its lens.
 
-    python tools/camera_model.py intrinsics --square-mm 29.7            # capture, then fit
-    python tools/camera_model.py intrinsics --square-mm 29.7 --refit    # fit the saved views again
+    python tools/camera_model.py intrinsics            # capture, then fit
+    python tools/camera_model.py intrinsics --refit    # fit the saved views again
 
-Someone holds the A4 ChArUco board (docs/board_a4.png, printed and taped to card) in front
-of the wrist camera at many TILTS and distances while this takes pictures from the robot's
-panel (it owns the camera; the pictures are already undistorted by cfg.WRIST_CAM_LENS). The
-A3 board on the table shares its marker ids, so it must be COVERED, not moved, meanwhile.
+Someone holds a ChArUco board (docs/board_a4.png printed and taped to card, or any other) in
+front of the wrist camera at many TILTS and distances while this takes pictures from the
+robot's panel (it owns the camera; the pictures are already undistorted by cfg.WRIST_CAM_LENS).
+Which board it is -- dictionary, squares, marker size -- is read off the first picture it is
+in; its real size does not matter for the lens (a board twice as big twice as far away looks
+the same), so it is not asked for. The A3 board on the table shares marker ids with the A4
+one, so it must be out of view or COVERED, not moved, meanwhile.
 
 Why tilts: every earlier fit came from views looking straight down at the table, and the focal
 length came out anywhere from 416 to 501 px -- a plane seen square-on cannot tell a near small
@@ -44,9 +47,52 @@ TILT_BIN_DEG = 12    # views are kept one per (tilt x, tilt y, distance, where i
 DISTANCE_BIN_M = 0.10
 
 
-def a4_board(square_m: float) -> cv2.aruco.CharucoBoard:
+SQUARE_M = 0.030     # nominal: the lens does not depend on it (see above)
+# What a held-up board may be: the families our boards and Yahboom's use, at their largest size
+# (the smaller dictionaries are their first ids), and the marker sizes boards are printed with.
+DICTIONARIES = ("DICT_5X5_1000", "DICT_4X4_1000", "DICT_6X6_1000", "DICT_7X7_1000")
+MARKER_RATIOS = (0.75, 0.7, 0.8, 0.6, 0.5)
+LAYOUT_RMS_PX = 3.0  # a wrong layout puts corners in the wrong places: they stop lying on a plane
+
+
+def a4_board(square_m: float = SQUARE_M) -> cv2.aruco.CharucoBoard:
     dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, A4["dict"]))
     return cv2.aruco.CharucoBoard(A4["squares"], square_m, square_m * A4["marker_ratio"], dictionary)
+
+
+def identify(frame: np.ndarray):
+    """(board, its description) for the ChArUco board in `frame`, or None: the dictionary with
+    the most markers, then the layout (squares, marker size, legacy pattern) under which the most
+    corners are found AND they lie on one plane."""
+    grey = frame if frame.ndim == 2 else cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    best = None
+    for name in DICTIONARIES:
+        dictionary = cv2.aruco.getPredefinedDictionary(getattr(cv2.aruco, name))
+        _corners, ids, _rejected = cv2.aruco.ArucoDetector(dictionary).detectMarkers(grey)
+        if ids is None or len(ids) < 4:
+            continue
+        top = int(ids.max())
+        for cols in range(3, 15):
+            for rows in range(3, 15):
+                if not top < cols * rows // 2 <= top + 15:   # a board's markers are ids 0..n-1
+                    continue
+                for ratio in MARKER_RATIOS:
+                    for legacy in (False, True) if rows % 2 == 0 else (False,):
+                        board = cv2.aruco.CharucoBoard((cols, rows), SQUARE_M, SQUARE_M * ratio, dictionary)
+                        board.setLegacyPattern(legacy)
+                        found = find_board(grey, board)
+                        if found is None or (best is not None and len(found[0]) <= best[0]):
+                            continue
+                        _H, _mask = cv2.findHomography(found[0][:, :2], found[1], 0)
+                        if _H is None:
+                            continue
+                        mapped = cv2.perspectiveTransform(found[0][None, :, :2], _H)[0]
+                        rms = float(np.sqrt(np.mean(np.sum((mapped - found[1]) ** 2, axis=1))))
+                        if rms <= LAYOUT_RMS_PX:
+                            what = (f"{name}, {cols} x {rows} squares, markers {ratio:.2f} of a square"
+                                    + (", legacy pattern" if legacy else ""))
+                            best = (len(found[0]), board, what)
+    return None if best is None else (best[1], best[2])
 
 
 def find_board(frame: np.ndarray, board: cv2.aruco.CharucoBoard):
@@ -107,12 +153,16 @@ def grab(panel: str) -> np.ndarray | None:
     return cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 
-def capture(panel: str, board, folder: Path, seconds: float) -> None:
+def capture(panel: str, board, folder: Path, seconds: float, wait: float = 0.0):
+    """Keep one picture per kind of view of the held-up board; the board, recognised from the
+    first picture it is in when not given. The `seconds` start when the board is first seen,
+    up to `wait` seconds from now: whoever holds it need not be told when to start."""
     K = np.array(cfg.WRIST_CAM_LENS[0], np.float64) if cfg.WRIST_CAM_LENS else None
     folder.mkdir(parents=True, exist_ok=True)
     kept: dict[tuple, int] = {}
-    end = time.monotonic() + seconds
-    print(f"hold the A4 board up to the camera; tilt it, move it near and far, into the corners "
+    end = time.monotonic() + wait + seconds
+    seen = False
+    print(f"hold the board up to the camera; tilt it, move it near and far, into the corners "
           f"({seconds:.0f} s, up to {MAX_VIEWS} views)", flush=True)
     while time.monotonic() < end and len(kept) < MAX_VIEWS:
         frame = grab(panel)
@@ -121,10 +171,20 @@ def capture(panel: str, board, folder: Path, seconds: float) -> None:
         size = frame.shape[1::-1]
         if K is None:
             K = np.array([[size[0], 0, size[0] / 2], [0, size[0], size[1] / 2], [0, 0, 1]], np.float64)
+        if board is None:
+            known = identify(frame)
+            if known is None:
+                time.sleep(0.2)
+                continue
+            board, what = known
+            print(f"  the board: {what}", flush=True)
+            (folder / "board.txt").write_text(what)
         found = find_board(frame, board)
         if found is None:
             time.sleep(0.2)
             continue
+        if not seen:   # the clock starts now
+            seen, end = True, time.monotonic() + seconds
         key = view_key(*found, K, size)
         if key is None or key in kept:
             time.sleep(0.2)
@@ -134,29 +194,36 @@ def capture(panel: str, board, folder: Path, seconds: float) -> None:
         print(f"  view {len(kept):2d}: {len(found[0])} corners, tilt {key[0] * TILT_BIN_DEG:+d}/"
               f"{key[1] * TILT_BIN_DEG:+d} deg, ~{key[2] * DISTANCE_BIN_M:.1f} m", flush=True)
     print(f"{len(kept)} views kept", flush=True)
+    return board
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="what", required=True)
     intr = sub.add_parser("intrinsics", help="the lens: K and residual distortion")
-    intr.add_argument("--square-mm", type=float, required=True,
-                      help="one black square of the PRINTED A4 board, measured")
+    intr.add_argument("--board", choices=("auto", "a4"), default="auto",
+                      help="recognise the board from the pictures (default), or docs/board_a4.png")
     intr.add_argument("--panel", default=PANEL, help="the robot's panel (it owns the camera)")
-    intr.add_argument("--seconds", type=float, default=120)
+    intr.add_argument("--seconds", type=float, default=120, help="capturing, from the board's first sighting")
+    intr.add_argument("--wait", type=float, default=0, help="how long to wait for the board to be held up")
     intr.add_argument("--refit", action="store_true", help="fit the views saved last time again")
     args = parser.parse_args()
 
-    board = a4_board(args.square_mm / 1000)
+    board = a4_board() if args.board == "a4" else None
     folder = ROOT / "out" / "camera_model" / "intrinsics"
     if not args.refit:
         for old in folder.glob("view_*.png"):
             old.unlink()
-        capture(args.panel, board, folder, args.seconds)
-    views, size = [], None
+        board = capture(args.panel, board, folder, args.seconds, args.wait)
+    views, size, what = [], None, "docs/board_a4.png"
     for path in sorted(folder.glob("view_*.png")):
         frame = cv2.imread(str(path))
         size = frame.shape[1::-1]
+        if board is None:
+            known = identify(frame)
+            if known is None:
+                continue
+            board, what = known
         found = find_board(frame, board)
         if found is not None:
             views.append(found)
@@ -164,7 +231,9 @@ def main() -> int:
         print(f"only {len(views)} usable views: at least 8, tilted different ways, are needed")
         return 1
     result = fit(views, size)
-    result.update(camera=cfg.WRIST_CAMERA, square_mm=args.square_mm, board="docs/board_a4.png",
+    if (folder / "board.txt").is_file() and args.board == "auto":
+        what = (folder / "board.txt").read_text()
+    result.update(camera=cfg.WRIST_CAMERA, board=what,
                   frames="undistorted by cfg.WRIST_CAM_LENS", when=time.strftime("%Y-%m-%d %H:%M"),
                   before=None if cfg.WRIST_CAM_LENS is None else cfg.WRIST_CAM_LENS[0])
     out = ROOT / "data" / "cameras" / cfg.WRIST_CAMERA / "intrinsics.json"

@@ -116,6 +116,18 @@ def send_pose(bot: Rosmaster, pose: Pose, run_time: int) -> None:
         bot.set_uart_servo_angle_array([pose[j] for j in cfg.JOINT_IDS], run_time=run_time)
 
 
+def _sendable(joint: int, angle: float) -> int:
+    """The nearest angle send_pose() can command for `joint`: inside the SDK's range, or
+    below it as far as a raw pulse reaches."""
+    lo, hi = cfg.SDK_RANGE[joint]
+    if angle >= lo:
+        return int(min(angle, hi))
+    held = math.ceil(angle)
+    while not cfg.RAW_PULSE_RANGE[0] <= cfg.raw_from_angle(joint, held) <= cfg.RAW_PULSE_RANGE[1]:
+        held += 1
+    return held
+
+
 def _arm_ctrl(bot: Rosmaster, pulses: list[int], run_time: int) -> None:
     """The packet set_uart_servo_angle_array() sends, byte for byte, minus its
     angle check. Reaches into the vendored SDK's private fields, so a re-vendored
@@ -394,15 +406,14 @@ class Arm:
         With `cancel`, the move stops at its last sent step as soon as the event
         is set (that is a glide() being held or superseded).
         """
-        # A joint that has sagged out of range cannot be glided back: every
-        # intermediate angle is out of range too, and the SDK discards the lot.
-        # Clamping the START means the first command jumps it to the nearest legal
-        # angle and the rest of the move glides normally -- the same compromise
-        # engage() makes, and the only one available.
-        start = {
-            j: int(min(max(v, *cfg.SAFE_LIMITS[j][:1]), cfg.SAFE_LIMITS[j][1]))
-            for j, v in start.items()
-        }
+        # A joint outside our safe range glides back from WHERE IT IS whenever a
+        # command can say that angle -- the SDK's range, or below it by raw pulses
+        # (send_pose) -- so it comes back in steps like any move. Clamping the start
+        # to the safe range instead made the first command jump it there: from the
+        # pose the arm was found in on 2026-10-06 (J2 162, J3 -44, left there by
+        # hand) that was 56 and 44 degrees in one step. Only an angle no command can
+        # express is still clamped, to the nearest one that can.
+        start = {j: _sendable(j, v) for j, v in start.items()}
 
         biggest = max(abs(goal[j] - start[j]) for j in cfg.JOINT_IDS)
         if biggest == 0:
