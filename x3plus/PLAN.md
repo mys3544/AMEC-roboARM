@@ -65,6 +65,43 @@ Assumed unless you say otherwise:
   rung and the continuous ride scan. The plan builds on these rather than copying the M3's
   workarounds for not having them.
 
+## Results so far (2026-10-06, stage 1 and the start of X2)
+
+What was measured on the robot, and what it changed in the plan:
+
+- **X1 done.** The panel runs on the robot and serves the M3's `/pick/*`; the console's arm card
+  drives both robots. First live pick through it: 20.0 s, landed 2.3 mm from the aim.
+- **The lens (X2.1).** fx 506.9 +- 1.4 px from 49 hand-held tilted views (`camera_model.py
+  intrinsics`); the config's 416.5 came from down-looking views that cannot pin it.
+- **The lens on the arm (X2.1).** `roboarm/lens.py`: mount 85 / 41 / +4 mm (the ruler: 85 / 39 / 0),
+  turned ~6 deg. The arm's own pose is the limit: 8.5 px (~3 mm) with the joints read to 0.08 deg
+  (`Arm.read_fine`); a gravity-sag term (J2/J3 give 2-3.5 deg at full lever) brings it to 6.0 px.
+  So FK places the camera to ~1 deg / 2.5-3 mm -- the calibrated looks stay the precise path.
+- **Depth anchored to the floor (X2.3) works for the TABLE, not for the PIECES.** On an angled look
+  the scale is pinned (+-0.03 %) and the table comes out flat to +-2 mm; looking straight down it
+  cannot be pinned (the September failure, explained). But Depth Anything V2 S reads the 30/40 mm
+  pieces as ~15 mm.
+- **Better networks (X2.5), same views, fitted to the table** (true 40 / 30 / 30 mm):
+
+  | model | red 40 | yellow 30 | blue 30 | per picture (RTX 2070S) |
+  |---|---|---|---|---|
+  | Depth Anything V2 Small | 15 | 15 | 15 | 26 ms (robot, TensorRT) |
+  | Depth Anything 3 Metric-Large | 14-16 | 6-12 | 12-15 | 214 ms |
+  | MoGe-2 S / B / L | 15-35 | 9-38 | 16-47 | 0.5-1.2 s |
+  | Depth Anything 3 Large, 3 views + our poses | 33-34 | 19-25 | 22-27 | 259 ms |
+  | the same on 2x crops | 31-42 | 30, 30, 56 | 26-35 | ~1 s |
+
+  Every network flattens small pieces in a wide picture; their own metric scale is useless at
+  20-60 cm (heights 0.1-0.7 m off). Fitting to the table is always needed.
+- **Heights from geometry (X2.4) work.** `roboarm/parallax.py`: two base yaws of the same look, the
+  table's map measured from the board (taking out the arm's rotation error, 2.6-7 px), the height
+  that makes the views agree. Real: red 40 -> 42, yellow 30 -> 27, blue 30 -> 30 mm (means over
+  views), from the pieces' edges.
+
+**So the X2 design changes:** a network finds and outlines things (and anchors the table); heights
+come from parallax between looks the arm takes anyway (the base turns of the ride, the close look);
+the kit's sizes snap the result. MoGe-3 (the 2026 fine-detail model) is still being measured.
+
 ## The two robots side by side
 
 | | M3 Pro | X3 Plus |
