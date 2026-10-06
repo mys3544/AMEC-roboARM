@@ -81,3 +81,14 @@ def test_the_way_back_to_the_sonix_is_kept():
     saved = json.loads((ROOT / "cameras" / "sonix" / "table_homography.json").read_text())
     assert [e["name"] for e in saved["also"]] == ["outer", "near"]
     assert len(saved["homography"]) == 3
+
+
+def test_the_measured_lens_is_used_when_there_is_one(tmp_path):
+    from roboarm import camera
+    fitted = tmp_path / "intrinsics.json"
+    fitted.write_text(json.dumps({"K": [[506.9, 0, 436.0], [0, 506.2, 254.4], [0, 0, 1]],
+                                  "dist": [0.003, -0.028, 0.005, 0.004, 0.0]}))
+    K, dist = camera.intrinsics(fitted)
+    assert K[0][0] == 506.9 and dist[1] == -0.028
+    # Without a fit: the correction's own matrix (the Sonix the suite runs as has none).
+    assert camera.intrinsics(tmp_path / "missing.json") is None

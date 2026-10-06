@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""The wrist camera as a measuring instrument (x3plus/PLAN.md X2.1), step one: its lens.
+"""The wrist camera as a measuring instrument (x3plus/PLAN.md X2.1): its lens, and where it sits.
 
-    python tools/camera_model.py intrinsics            # capture, then fit
+    python tools/camera_model.py intrinsics            # the lens: capture, then fit
     python tools/camera_model.py intrinsics --refit    # fit the saved views again
+    python tools/camera_model.py handeye               # the lens on the arm (roboarm/lens.py), from
+                                                       # board views with their poses
+    python tools/camera_model.py handeye --capture     # first take those views: the ARM MOVES over
+                                                       # the A3 board, ~60 poses, read back at each
 
 Someone holds a ChArUco board (docs/board_a4.png printed and taped to card, or any other) in
 front of the wrist camera at many TILTS and distances while this takes pictures from the
@@ -28,6 +32,7 @@ import json
 import math
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -36,7 +41,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from roboarm import camera, lens, sweep
 from roboarm import config as cfg
+from roboarm import kinematics as kin
+from roboarm import workspace as ws
 
 ROOT = Path(__file__).resolve().parents[1]
 PANEL = "http://192.168.73.210:8080"
@@ -206,6 +214,108 @@ def capture(panel: str, board, folder: Path, seconds: float, wait: float = 0.0):
     return board
 
 
+DATA = ROOT / "data" / "cameras" / cfg.WRIST_CAMERA
+# The views for the lens on the arm: (fingertip forward, lift above the table, tool pitch or None
+# for solve's choice) x base yaws. The first eight are 2026-09-24's (handeye_views.json, which kept
+# the COMMANDED pose -- the arm stops up to 2 deg short -- and fitted no better than 10 px); the
+# other four add camera heights of 17-27 cm at tilts of 150-165 deg. Steeper than 150 nothing
+# both reachable and looking at the board was found (2026-10-06, a grid over 130-145 deg).
+EYE_TARGETS = ((0.150, 0.090, None), (0.150, 0.140, None), (0.110, 0.110, 180.0), (0.190, 0.125, None),
+               (0.210, 0.120, 150.0), (0.190, 0.080, 160.0), (0.150, 0.100, 170.0), (0.170, 0.130, 160.0),
+               (0.170, 0.160, 150.0), (0.230, 0.060, 150.0), (0.150, 0.160, 155.0), (0.130, 0.140, 165.0))
+EYE_YAWS = (-25, -10, 0, 10, 25)
+EYE_DPS = 20
+EYE_SETTLE_S = 0.8
+MIN_EYE_CORNERS = 8
+
+
+def panel_call(panel: str, path: str, body: dict | None = None) -> dict:
+    data = None if body is None else json.dumps(body).encode()
+    request = urllib.request.Request(panel + path, data=data, headers={"Content-Type": "application/json"},
+                                     method="GET" if body is None else "POST")
+    with urllib.request.urlopen(request, timeout=60) as reply:
+        return json.loads(reply.read())
+
+
+def capture_eye(panel: str, path: Path) -> int:
+    """Drive the arm over the A3 board through EYE_TARGETS x EYE_YAWS (through the panel, which
+    checks every move), and keep each view's marker corners with the pose READ BACK there."""
+    panel_call(panel, "/api/mode", {"mode": "manual"})
+    views = []
+    for fwd, lift, pitch in EYE_TARGETS:
+        try:
+            pose, _ = kin.solve(fwd, 0.0, -cfg.TABLE_BELOW_PLATE + lift,
+                                pitches=kin.GRASP_PITCHES if pitch is None else (pitch,))
+        except kin.Unreachable as exc:
+            print(f"  {fwd * 1000:.0f}/{lift * 1000:.0f}: not reachable ({exc})", flush=True)
+            continue
+        pose[cfg.GRIPPER_ID] = cfg.GRIPPER_OPEN
+        for yaw in EYE_YAWS:
+            label = f"{fwd * 1000:.0f}/{lift * 1000:.0f}/{pitch or 'auto'} yaw {yaw:+d}"
+            try:
+                command = sweep.pose_at(pose, yaw)
+            except sweep.NoLook:
+                continue
+            try:
+                panel_call(panel, "/api/arm/move", {"joints": {str(j): v for j, v in command.items()},
+                                                    "speed_dps": EYE_DPS})
+            except urllib.error.HTTPError as exc:
+                reason = json.loads(exc.read()).get("error", exc.reason)
+                print(f"  {label}: refused or stopped -- {reason}", flush=True)
+                if "interrupt" in str(reason) or "stopped" in str(reason):
+                    return 1
+                continue
+            time.sleep(EYE_SETTLE_S)
+            read = panel_call(panel, "/api/state")["arm"]["pose"]
+            frames = [grab(panel) for _ in range(3)]
+            pixels, table = ws.average_corners([f for f in frames if f is not None])
+            print(f"  {label}: {len(pixels)} corners, read J2..J4 {read['2']}/{read['3']}/{read['4']} "
+                  f"(sent {command[2]}/{command[3]}/{command[4]})", flush=True)
+            if len(pixels) >= MIN_EYE_CORNERS:
+                views.append({"label": label, "pose": read, "command": {str(j): v for j, v in command.items()},
+                              "pixels": pixels.tolist(), "table": table.tolist()})
+            path.write_text(json.dumps(views))   # kept as it goes: a stop loses nothing taken
+    print(f"{len(views)} views saved to {path}", flush=True)
+    panel_call(panel, "/api/arm/preset", {"name": "survey"})
+    return 0
+
+
+def handeye(path: Path) -> int:
+    """Fit roboarm/lens.py's mount to the views in `path`, check it on views it was not fitted
+    to (each pose's three yaws left out in turn), and save it beside the lens fit."""
+    known = camera.intrinsics(DATA / "intrinsics.json")
+    if known is None:
+        print("no lens yet: run `intrinsics` first")
+        return 1
+    K, dist = known
+    views = json.loads(path.read_text())
+    result = lens.fit(views, K, dist)
+    groups = sorted({v["label"].split(" yaw")[0] for v in views})
+    held_out = []
+    for group in groups:
+        rest = [v for v in views if not v["label"].startswith(group + " yaw")]
+        left = [v for v in views if v["label"].startswith(group + " yaw")]
+        part = lens.fit(rest, K, dist)
+        err = lens.residuals(np.array(part["mount_m"] + part["turn_rad"] + part["board_shift"]), left, K, dist)
+        held_out.append(float(np.sqrt(np.mean(err.reshape(-1, 2) ** 2) * 2)))
+    result.update(held_out_px=[round(v, 2) for v in held_out], groups=groups, views_file=path.name,
+                  K=K, dist=dist, when=time.strftime("%Y-%m-%d %H:%M"))
+    mount, turn, shift, sd = result["mount_m"], result["turn_rad"], result["board_shift"], result["sd"]
+    print(f"{result['views']} views, {sum(len(v['pixels']) for v in views)} corners: "
+          f"rms {result['rms_px']:.2f} px, held out {np.mean(held_out):.2f} px "
+          f"(worst pose {max(held_out):.2f})")
+    mm, mm_sd = [1000 * v for v in mount], [1000 * v for v in sd[:3]]
+    print(f"lens on the forearm, mm: along the tool {mm[0]:.1f} +- {mm_sd[0]:.1f}, "
+          f"across {mm[1]:.1f} +- {mm_sd[1]:.1f}, sideways {mm[2]:+.1f} +- {mm_sd[2]:.1f}")
+    print("  (cfg._LENS: {:.0f}, {:.0f}, {:+.0f})".format(*(1000 * v for v in lens.NOMINAL_MOUNT)))
+    print("turned from the tool axis, deg: {:+.2f} {:+.2f} {:+.2f}".format(*(math.degrees(v) for v in turn)))
+    print(f"board moved: {1000 * shift[0]:+.1f} mm forward, {1000 * shift[1]:+.1f} mm left, turned {shift[2]:+.2f} deg")
+    out = DATA / "lens_on_arm.json"
+    out.write_text(json.dumps(result, indent=1))
+    print(f"saved {out}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="what", required=True)
@@ -217,7 +327,16 @@ def main() -> int:
     intr.add_argument("--wait", type=float, default=0, help="how long to wait for the board to be held up")
     intr.add_argument("--refit", action="store_true", help="fit the views saved last time again")
     intr.add_argument("--add", action="store_true", help="capture more views next to the saved ones")
+    eye = sub.add_parser("handeye", help="the lens on the arm, from board corners seen from many poses")
+    eye.add_argument("--views", type=Path, default=DATA / "handeye_views_read.json",
+                     help="a JSON list of {pose, pixels, table}: the corners seen and where they lie")
+    eye.add_argument("--capture", action="store_true", help="take the views first: THE ARM MOVES")
+    eye.add_argument("--panel", default=PANEL, help="the robot's panel (it owns the arm and camera)")
     args = parser.parse_args()
+    if args.what == "handeye":
+        if args.capture and capture_eye(args.panel, args.views):
+            return 1
+        return handeye(args.views)
 
     board = a4_board() if args.board == "a4" else None
     folder = ROOT / "out" / "camera_model" / "intrinsics"

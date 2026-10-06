@@ -8,8 +8,10 @@ copy is easier to keep honest than three.
 
 from __future__ import annotations
 
+import json
 import threading
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -203,6 +205,24 @@ def grab(count: int = 1) -> list:
             f"is another process holding it?"
         )
     return frames
+
+
+# The lens as measured by tools/camera_model.py intrinsics, for the frames Stream hands out.
+INTRINSICS_PATH = Path("/app/data/cameras") / cfg.WRIST_CAMERA / "intrinsics.json"
+
+
+def intrinsics(path: Path = INTRINSICS_PATH) -> tuple[list, list] | None:
+    """(K, distortion) of the pictures this module hands out -- already undistorted, so the
+    distortion is only what that correction leaves: tools/camera_model.py's fit when there is
+    one. Else cfg.WRIST_CAM_LENS's matrix with none left, which is what the correction assumes
+    but whose focal length was never pinned (416.5 px; the C930e measured 506.9 +- 1.4 on
+    2026-10-06). None when neither is known."""
+    if path.is_file():
+        fitted = json.loads(path.read_text())
+        return fitted["K"], fitted["dist"]
+    if cfg.WRIST_CAM_LENS is not None:
+        return [list(row) for row in cfg.WRIST_CAM_LENS[0]], [0.0] * 5
+    return None
 
 
 def write_image(path: str, frame) -> None:

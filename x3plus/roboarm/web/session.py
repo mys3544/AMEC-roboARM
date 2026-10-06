@@ -284,6 +284,10 @@ class Session:
         self.last_pick: dict | None = None
         self.looks = 0
         self.look_jpeg: bytes | None = None
+        try:
+            self.lens = camera.intrinsics()   # for the saved looks' K
+        except (OSError, ValueError, KeyError):
+            self.lens = None
         saved = self._settings_path()
         if saved is not None and saved.is_file():
             with contextlib.suppress(ValueError, OSError):
@@ -1073,15 +1077,16 @@ class Session:
         now = time.time()
         stem = time.strftime("%Y%m%d_%H%M%S", time.localtime(now)) + f"_{int(now * 1000) % 1000:03d}"
         stem += f"_{look.name}_{look.dyaw:+05.1f}"
-        lens = cfg.WRIST_CAM_LENS
+        lens = self.lens
         record = {
             "stamp": round(now, 3), "job": self.job.name if self.job else None,
             "look": look.name, "dyaw": float(look.dyaw),
             "pose": {str(j): float(a) for j, a in look.pose.items()},   # where the job believes it was
             "read": {str(j): float(a) for j, a in (self.pose() or {}).items()},   # the newest read-back
             "camera": cfg.WRIST_CAMERA, "size": list(frame.shape[1::-1]),
-            # The picture is already undistorted, so this matrix holds with no distortion.
+            # The picture is already undistorted: K and what distortion is left (camera.intrinsics).
             "K": None if lens is None else [list(map(float, row)) for row in lens[0]],
+            "dist": None if lens is None else [float(v) for v in lens[1]],
             "found": [{"label": t.label, "x": round(float(t.x), 4), "y": round(float(t.y), 4),
                        "width": round(float(t.width_m), 4), "length": round(float(t.length_m), 4),
                        "angle": round(float(t.angle_deg), 1),
