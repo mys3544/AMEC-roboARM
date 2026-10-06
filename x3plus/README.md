@@ -21,9 +21,10 @@ really does lift one. Almost everything you will write can be finished there.
 ## Get the code
 
     git clone https://github.com/mys3544/AMEC-roboARM.git
-    cd AMEC-roboARM
+    cd AMEC-roboARM/x3plus
 
-Every command below is run from that folder. If your instructor handed you a
+Every command below is run from that folder (`x3plus/`: the X3 Plus's own project;
+the M3 Pro's is `m3pro/`, the console for both is `console/`). If your instructor handed you a
 zip instead, unpack it and use that folder -- it is the same tree.
 
 ## Install (for 1 and 2)
