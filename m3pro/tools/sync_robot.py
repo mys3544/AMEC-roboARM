@@ -17,7 +17,7 @@ import sys
 
 import paramiko
 
-HOST, USER = "192.168.73.66", "jetson"   # the M3 Pro; the X3 Plus is ../../tools/sync_robot.py
+HOST, USER = "192.168.73.66", "jetson"   # the M3 Pro; the X3 Plus is ../../x3plus/tools/sync_robot.py
 LOCAL = pathlib.Path(__file__).resolve().parents[1]
 REMOTE = "/home/jetson/roboarm"
 

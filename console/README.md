@@ -11,9 +11,9 @@ a STOP on each and STOP ALL always on screen (Space or Esc too). Plan v2.3, M1, 
 then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fake` and `console`).
 
 - **The robots** are listed in `robots.json`: the X3's panel running on this laptop
-  (`tools/webapp.py --robot http://192.168.73.210:8761 --port 8091`, launch config
+  (`x3plus/tools/webapp.py --robot http://192.168.73.210:8761 --port 8091`, launch config
   `webapp-robot`) and the M3's drive page (`m3pro/tools/arena_map.py start`, port 8095).
-  `robots.fake.json` points at `tools/webapp.py --sim` and `m3pro/arena/fake_m3.py`, which
+  `robots.fake.json` points at `x3plus/tools/webapp.py --sim` and `m3pro/arena/fake_m3.py`, which
   `--fake` starts: the M3's real drive logic on the saved arena map, with a ray-cast lidar.
 - **X3 card:** the wrist camera, arm / job / camera state, Pick one, Clear the table, Home;
   everything else on its own page (the "own page" link).
@@ -64,7 +64,7 @@ uv pip install sherpa-onnx                      # into .venv, from the repo root
                                                 # releases, unpacked to 670 MB in console/models/
 ```
 
-(`pip install sherpa-onnx` elsewhere. pyproject.toml's `voice` group has the locked pair,
+(`pip install sherpa-onnx` elsewhere. x3plus/pyproject.toml's `voice` group has the locked pair,
 sherpa-onnx 1.13.8 and sherpa-onnx-core, but `uv sync` would also take out anything installed
 by hand.) `console/models/` is gitignored (`models/` anywhere). Without sherpa-onnx or the
 model, the console runs as before, the Voice box says which is missing and the line that fixes

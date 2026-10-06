@@ -1,6 +1,6 @@
 [
   {"id": "x3", "name": "X3 Plus (pretend)", "kind": "x3", "color": "#e07b39",
-   "url": "http://127.0.0.1:8180", "note": "tools/webapp.py --sim"},
+   "url": "http://127.0.0.1:8180", "note": "x3plus/tools/webapp.py --sim"},
   {"id": "m3", "name": "M3 Pro (pretend)", "kind": "m3", "color": "#2f6fdf",
    "url": "http://127.0.0.1:8195", "note": "m3pro/arena/fake_m3.py on arena_v2"}
 ]

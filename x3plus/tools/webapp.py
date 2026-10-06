@@ -59,7 +59,7 @@ def remote_session(url: str) -> session.Session:
     from roboarm.web import remote
 
     # Detection runs HERE, so the sweep pictures live here.
-    out_dir = Path("out")
+    out_dir = Path(__file__).resolve().parents[1] / "out"
     out_dir.mkdir(exist_ok=True)
     return session.Session(
         arm_factory=lambda: remote.RemoteArm(url),

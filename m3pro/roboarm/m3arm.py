@@ -1,4 +1,4 @@
-"""The M3 Pro's arm, behind the same calls as the X3's (roboarm.arm.Arm at the repo's root), so
+"""The M3 Pro's arm, behind the same calls as the X3's (roboarm.arm.Arm in x3plus/), so
 that the bridge and everything above it stay as they are. It is commanded over ROS 2 --
 /arm6_joints, six servo angles in degrees and a time in ms, to the micro-ROS board -- through a
 `send(pose, ms)` given by the caller (tools/m3bridge.py publishes it); this module has no ROS in it.

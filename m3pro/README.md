@@ -2,8 +2,8 @@
 
 The lab's second robot. It has the same Jetson board as the X3 Plus but different hardware
 around it, so its software lives in this folder and is changed here. It started on 2026-09-28
-as a copy of the X3 Plus software (below); `roboarm/` and `tools/` at the top of the repo stay
-the X3 Plus's, and their `sync_robot.py` pushes nothing from here.
+as a copy of the X3 Plus software (below); the X3 Plus's own copy lives in `../x3plus/`
+(since 2026-10-06), and its `sync_robot.py` pushes nothing from here.
 
 ## The robot
 

@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+data/
+models/
+# Regenerate with tools/vendor_sdk.sh on the robot.
+vendor/Rosmaster_Lib/
+
+# Annotated frames from runs, and student bundles: not source.
+out/
+*.zip
+
+# Per-robot compose settings, e.g. the wrist camera (cameras/README.md).
+.env
