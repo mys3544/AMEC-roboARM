@@ -99,6 +99,23 @@ What was measured on the robot, and what it changed in the plan:
   table's map measured from the board (taking out the arm's rotation error, 2.6-7 px), the height
   that makes the views agree. Real: red 40 -> 42, yellow 30 -> 27, blue 30 -> 30 mm (means over
   views), from the pieces' edges.
+- **2026-10-07: the models on the robot, as engines (X9).** `~/roboarm/.venv-ml` (`tools/ml_env.sh`)
+  runs PyTorch, DA3 and Ultralytics beside JetPack's TensorRT 10.7. DA3 Small / Base / Large, 3 views
+  + poses at 280x504, FP16: **46 / 82 / 208 ms for the 3 views** (PyTorch FP16 on the Orin: 152 /
+  145 / 289 ms per picture), within 0.12-0.4 % (median) of PyTorch after two export fixes in
+  `tools/export_da3.py` (the attention scale; the camera encoder's q k v split). They must be fed
+  the poses the way DA3's API normalises them (`da3_pose.normalised`); raw metres read every piece
+  ~12 mm. Heights as before: Large 33 / 19 / 27.
+- **What each model sees** (`out/depth_test/20261006_112651/what_each_model_sees.jpg`; the pieces'
+  places re-measured from the survey picture -- the blue block lay at -63 deg, yellow at -30;
+  sizes came back at 38.5x38.3, 29.9x29.1, 64.8x30.3 mm):
+
+  | model (TensorRT FP16, Orin) | the pieces, 4 looks | |
+  |---|---|---|
+  | YOLO26n/s-seg (COCO), 28 / 33 ms | none, ever | a "dining table" |
+  | YOLOE-26s prompt-free, 65 ms | all 3 from above (IoU 0.84-0.93), 2 of 3 in each angled look | named "envelope", "recreational vehicle", "extrude" at 0.26-0.83; ~100 other masks |
+  | YOLOE-26s, text ("cube", "block", "wooden block", "toy block", "box"), 37 ms | 1 a look at most, mostly yellow | no false masks |
+  | parallax, read as the 90th percentile over each piece's silhouette | 39/39/42, 28/30/29, 29/30/28 mm | all 9 within 2 mm |
 
 **So the X2 design changes:** a network finds and outlines things (and anchors the table); heights
 come from parallax between looks the arm takes anyway (the base turns of the ride, the close look);

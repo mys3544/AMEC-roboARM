@@ -94,8 +94,11 @@ def height_map(a: dict, others: list[dict], K, table_z: float, heights=HEIGHTS) 
     return heights[best] + np.clip(shift, -0.5, 0.5) * step, score.max(axis=0) / max(1, len(others))
 
 
-def object_height(height: np.ndarray, agreement: np.ndarray, region: np.ndarray) -> float | None:
-    """A thing's height from the believed pixels of `region` (its outline, a little grown): the
-    median, or None when too few pixels agree."""
+def object_height(height: np.ndarray, agreement: np.ndarray, region: np.ndarray, percentile: float = 90) -> float | None:
+    """A thing's height from the believed pixels of `region` (its mask: top, sides and all): a
+    high percentile, as most of a mask is side faces lower than the top; None when too few pixels
+    agree. On the 2026-10-06 views (3 base yaws, each piece's silhouette) the 90th read 39/39/42,
+    28/30/29 and 29/30/28 mm for pieces of 40, 30 and 30; the median of the outline grown 6 px
+    read 14, 3 and 11 (the middle view)."""
     good = height[region & (agreement > GOOD_NCC)]
-    return float(np.median(good)) if good.size >= 20 else None
+    return float(np.percentile(good, percentile)) if good.size >= 20 else None

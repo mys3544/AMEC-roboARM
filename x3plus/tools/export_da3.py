@@ -16,7 +16,11 @@ that disagreed with PyTorch by 6.5 % median, in FP32 as in FP16, on TensorRT 10.
   * ATTENTION SCALE. torch's scaled_dot_product_attention, exported without a scale, computes
     1/sqrt(head_dim) from the tensor's shape at run time, and TensorRT misread it: the first
     block's softmax already differed by 100 %. Here the attention is written out with the scale
-    a constant. With this alone the engine matches PyTorch to 0.07 % (corr 0.999995).
+    a constant. With this alone the pose-free engine matches PyTorch to 0.07 % (corr 0.999995).
+  * The CAMERA ENCODER's attention (3 tokens, one a view) reshaped q k v to (B, N, 3, heads, d),
+    permuted and unbound them; TensorRT fused that into q @ k^T wrongly -- 100 % off even in FP32,
+    while q and k^T alone were right -- and the posed engine was 5.4 % off. Here q, k and v are
+    sliced off the channels instead: the posed engine then matches to 0.12 % in FP16.
   * The camera POSE CODE (quaternion by argmax / one-hot / boolean indexing) is computed outside
     the engine -- roboarm/da3_pose.py -- and the engine takes it as its "pose" input.
   * The SKY step (100k random samples, a quantile) is left out: the table fit needs none of it.
@@ -56,6 +60,19 @@ def _attention(q, k, v, attn_mask=None, dropout_p=0.0, is_causal=False, scale=No
     return torch.matmul(attn.softmax(dim=-1), v)
 
 
+def _split_heads_forward(self, x, pos=None, attn_mask=None):
+    """depth_anything_3.model.utils.attention.Attention.forward with q, k, v sliced off the channels."""
+    B, N, C = x.shape
+    qkv = self.qkv(x)
+    q, k, v = (qkv[..., i * C:(i + 1) * C].reshape(B, N, self.num_heads, self.head_dim).transpose(1, 2)
+               for i in range(3))
+    q, k = self.q_norm(q), self.k_norm(k)
+    q = self.rope(q, pos) if self.rope is not None else q
+    k = self.rope(k, pos) if self.rope is not None else k
+    x = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
+    return self.proj_drop(self.proj(x.transpose(1, 2).reshape(B, N, C)))
+
+
 class Exportable(torch.nn.Module):
     """DA3's network as the engine runs it: images (1, N, 3, H, W), ImageNet-normalised, and with
     poses a (1, N, 9) pose code -> depth and confidence (1, N, H, W)."""
@@ -85,6 +102,7 @@ def main() -> int:
         parser.error("the size must be a multiple of the 14 px patch")
 
     from depth_anything_3.api import DepthAnything3
+    from depth_anything_3.model.utils import attention
     register_custom_op_symbolic("aten::mT", _mT, 17)
     torch.cartesian_prod = _cartesian_prod
 
@@ -102,6 +120,7 @@ def main() -> int:
     with torch.no_grad():
         before = model(*inputs)[0]
         torch.nn.functional.scaled_dot_product_attention, original = _attention, torch.nn.functional.scaled_dot_product_attention
+        attention.Attention.forward = _split_heads_forward
         after = model(*inputs)[0]
     print(f"the written-out attention changes the depth by at most {float((after - before).abs().max()):.1e}")
     name = f"{args.model.lower()}_{'free' if args.free else 'enc'}_{args.views}x{h}x{w}.onnx"

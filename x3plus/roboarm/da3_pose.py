@@ -40,6 +40,17 @@ def pose_code(world_to_camera: np.ndarray, K: np.ndarray, size_hw: tuple[int, in
     return np.concatenate([t, mat_to_quat(R), fov_h[:, None], fov_w[:, None]], -1).astype(np.float32)
 
 
+def normalised(world_to_camera: np.ndarray) -> np.ndarray:
+    """(N, 4, 4) poses as DA3's API hands them to the network (DepthAnything3._normalize_extrinsics):
+    relative to the first camera, whose pose becomes the identity, and the translations divided by
+    the cameras' median distance from it (torch's median: the lower middle), at least 0.1."""
+    rel = world_to_camera @ np.linalg.inv(world_to_camera[0])
+    centres = -np.einsum("nji,nj->ni", rel[:, :3, :3], rel[:, :3, 3])
+    dists = np.sort(np.linalg.norm(centres, axis=1))
+    rel[:, :3, 3] /= max(float(dists[(len(dists) - 1) // 2]), 0.1)
+    return rel
+
+
 def world_to_camera(R: np.ndarray, c: np.ndarray) -> np.ndarray:
     """roboarm.lens.camera_pose's (R with the camera axes as columns, centre c) as a 4x4 matrix."""
     T = np.eye(4)

@@ -45,3 +45,17 @@ def test_the_code_is_the_camera_centre_its_turn_and_its_fields_of_view():
     assert np.allclose(code[:3], c, atol=1e-6), "the translation is the camera's centre"
     assert np.allclose(code[7], 2 * math.atan(140 / 300)) and np.allclose(code[8], 2 * math.atan(252 / 300))
     assert np.allclose(da3_pose.mat_to_quat(R[None])[0], code[3:7])
+
+
+def test_poses_are_normalised_like_the_api():
+    R = rotation_z(30) @ np.diag([1.0, -1.0, -1.0])
+    cams = [da3_pose.world_to_camera(rotation_z(a) @ R, np.array(c))
+            for a, c in ((0, [0.1, 0.0, 0.3]), (10, [0.1, 0.4, 0.3]), (-10, [0.1, -0.2, 0.3]))]
+    rel = da3_pose.normalised(np.stack(cams))
+    assert np.allclose(rel[0], np.eye(4)), "the first camera is the origin"
+    centres = [np.linalg.norm(-r[:3, :3].T @ r[:3, 3]) for r in rel]
+    assert np.allclose(sorted(centres), [0.0, 1.0, 2.0]), "distances in units of the median one (0.2 m)"
+    near = da3_pose.normalised(np.stack([cams[0], da3_pose.world_to_camera(R, np.array([0.13, 0.0, 0.3]))]))
+    assert np.isclose(np.linalg.norm(near[1][:3, 3]), 0.03 / 0.1), "a baseline under 0.1 is divided by 0.1"
+    # relative rotations are kept: camera i's turn from camera 0
+    assert np.allclose(rel[1][:3, :3], cams[1][:3, :3] @ cams[0][:3, :3].T)
