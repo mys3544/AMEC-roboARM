@@ -19,6 +19,7 @@ than leaving a strip of table nobody looks at.
 import argparse
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -131,13 +132,14 @@ def do_look(arm: Arm, calibrated, step_deg: float) -> int:
         frame = camera.grab(6)[-1]
         found = detect.markers(frame, look.matrix, tag_m=cfg.OBJECT_TAG_M,
                                nadir=look.nadir)
-        name = f"/out/sweep_{look.dyaw:+05.1f}.jpg".replace("+", "p").replace("-", "m")
+        name = str(Path(__file__).resolve().parents[1] / "out"
+                   / f"sweep_{look.dyaw:+05.1f}.jpg".replace("+", "p").replace("-", "m"))
         camera.write_image(name, detect.annotate(frame, look.matrix, found))
         seen = ", ".join(f"{t.label} at {t.x * 1000:.0f},{t.y * 1000:+.0f}"
                          for t in found) or "nothing"
         print(f"  J1={look.pose[1]:3d} (dyaw {look.dyaw:+6.1f}): {seen}")
     arm.move_to(survey, speed_dps=20)
-    print("\nwrote /out/sweep_*.jpg, one per station.")
+    print("\nwrote out/sweep_*.jpg, one per station.")
     return 0
 
 

@@ -40,20 +40,19 @@ from __future__ import annotations
 
 import argparse
 import base64
-import json
 import math
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
 import numpy as np
-from roboshared import metrics
+from roboshared import metrics, serve
 
 from roboarm import camera, m3arm, m3pick
 from roboarm.m3arm import ArmError
@@ -94,76 +93,19 @@ class Frames:
         }
 
 
-def blank_frame() -> bytes:
-    image = np.zeros((480, 640, 3), np.uint8)
-    cv2.putText(image, "no look yet", (220, 240), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (200, 200, 200), 2, cv2.LINE_AA)
-    return cv2.imencode(".jpg", image)[1].tobytes()
-
-
 def make_handler(the_bridge: bridge.Bridge, frames: Frames, picker: m3pick.Picker | None = None):
-    blank = blank_frame()
+    """The M3's bridge contract (roboarm.web.bridge) with the jobs' /pick/* and /api/metrics, both
+    robots' (roboshared.serve), and the M3's own /rgbd."""
 
     class Handler(bridge.Handler):
-        def send_bytes(self, data: bytes, kind: str) -> None:
-            self.send_response(200)
-            self.send_header("Content-Type", kind)
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            self.wfile.write(data)
-
         def do_POST(self) -> None:
-            url = urlparse(self.path)
-            if picker is None or not url.path.startswith("/pick/"):
+            if not serve.handle(self, picker, the_bridge.interrupt, "POST"):
                 super().do_POST()
-                return
-            length = int(self.headers.get("Content-Length") or 0)
-            try:
-                body = json.loads(self.rfile.read(length) or b"{}") if length else {}
-            except ValueError:
-                send_json(self, {"error": "the body is not JSON"}, 400)
-                return
-            kind = body.get("kind") if body.get("kind") in ("cube", "block") else None
-            if url.path == "/pick/stop":
-                picker.stop()
-                the_bridge.interrupt()
-                reply = {"ok": True}
-            elif url.path == "/pick/start":
-                reply = picker.start("pick_once", kind=kind, at=body.get("at"), drive=bool(body.get("drive")))
-            elif url.path == "/pick/cleanup":
-                reply = picker.start("clean_up", kind=kind, drive=bool(body.get("drive")))
-            elif url.path == "/pick/home":
-                reply = picker.start("home")
-            elif url.path == "/pick/settings":
-                try:
-                    reply = {"settings": picker.set_settings(body)}
-                except ValueError as e:
-                    reply = {"error": str(e)}
-            else:
-                send_json(self, {"error": f"no {url.path}"}, 404)
-                return
-            send_json(self, reply, 409 if "error" in reply else 200)
 
         def do_GET(self) -> None:
-            url = urlparse(self.path)
-            if picker is not None and url.path == "/pick/state":
-                send_json(self, picker.status())
+            if serve.handle(self, picker, the_bridge.interrupt, "GET"):
                 return
-            if picker is not None and url.path == "/pick/log":
-                since = parse_qs(url.query).get("since", ["0"])[0]
-                send_json(self, {"lines": picker.log(int(since) if since.isdigit() else 0)})
-                return
-            if picker is not None and url.path == "/pick/settings":
-                send_json(self, {"settings": picker.settings()})
-                return
-            if picker is not None and url.path == "/pick/frame.jpg":
-                self.send_bytes(picker.frame or blank, "image/jpeg")
-                return
-            if url.path == "/api/metrics":
-                send_json(self, metrics.snapshot(events="events=0" not in url.query))
-                return
-            if url.path == "/rgbd":
+            if urlparse(self.path).path == "/rgbd":
                 arm = the_bridge.arm
                 try:
                     joints = arm.read() if arm is not None else None
@@ -251,25 +193,6 @@ def make_node(frames: Frames, stream: camera.Stream):
     return M3Node()
 
 
-def arm_caller(the_bridge: bridge.Bridge, picker):
-    """The picker's way to the arm: the bridge's own calls (one at a time, on its lock), with the
-    arm's interrupt also asking the picker -- a stop between two calls would otherwise be wiped by
-    the next call, which clears the bridge's interrupt before it starts."""
-    def call(method, *args, **kwargs):
-        if the_bridge.arm is None:
-            the_bridge.connect()
-        arm = the_bridge.arm
-        if arm is not None and not getattr(arm.interrupt, "asks_picker", False):
-            plain = arm.interrupt
-
-            def interrupt() -> bool:
-                return picker().stopping() or bool(plain is not None and plain())
-            interrupt.asks_picker = True
-            arm.interrupt = interrupt
-        return the_bridge.call(method, list(args), kwargs)
-    return call
-
-
 def snapshot(the_bridge: bridge.Bridge, frames: Frames):
     color, depth, K = frames.arrays()
     return color, depth, K, the_bridge.call("read", [], {})
@@ -335,7 +258,7 @@ def main() -> int:
         return m3arm.M3Arm(node.send, lambda: node.volts)
 
     the_bridge = bridge.Bridge(make_arm, lambda: stream)
-    picker = m3pick.Picker(arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT,
+    picker = m3pick.Picker(serve.arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT,
                            drive=lambda dx, dy, v: drive(node, dx, dy, v, lambda: picker.stopping()),
                            battery=lambda: node.volts)
     metrics.REGISTRY.log_path = OUT / "metrics.jsonl"

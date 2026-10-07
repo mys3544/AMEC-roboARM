@@ -18,6 +18,7 @@ is the height at which it is obvious and harmless.
 import argparse
 import sys
 import time
+from pathlib import Path
 
 from roboarm import camera, detect
 from roboarm import config as cfg
@@ -85,8 +86,9 @@ def do_find(arm: Arm, pose: dict[int, int], matrix, reach: bool,
               f"the camera's)")
         report(targets)
 
-    camera.write_image("/out/detected.jpg", detect.annotate(frame, matrix, targets))
-    print("\nwrote /out/detected.jpg -- check the boxes land on the objects")
+    out = Path(__file__).resolve().parents[1] / "out" / "detected.jpg"
+    camera.write_image(str(out), detect.annotate(frame, matrix, targets))
+    print(f"\nwrote {out} -- check the boxes land on the objects")
 
     if not reach:
         return 0

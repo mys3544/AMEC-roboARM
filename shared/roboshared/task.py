@@ -371,20 +371,25 @@ class Task:
                     at = at - went
                 found = self.wide_look()
         grip = self.grip(target, planned, found)   # down to it, shut on it, back up: the robot's own way
-        self.drop(back=(self.offset.copy(), grip.get("line")))
+        held = grip.get("held")   # True / False where the robot can tell (the X3's gripper); None: the look after says
+        if held is False:
+            self.say("the fingers closed on nothing: nothing to drop off")
+        else:
+            self.drop(back=(self.offset.copy(), grip.get("line")))
         with self.step("look.after"):   # the next pick's wide look, too
             after = self.wide_look()
         centre = grip["centre"]
         left = [o for o in after if np.linalg.norm(o["centre"][:2] - centre[:2]) < MATCH_M]
+        picked = (not left) if held is None else bool(held)
         reading = grip["reading"]
         record = {"when": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.monotonic() - started, 1),
                   "kind": name(reading), "target": np.round(centre, 4).tolist(), "size_mm": round(reading["size"] * 1000),
-                  "yaw_deg": round(reading["yaw"], 1), **grip.get("record", {}), "picked": not left}
+                  "yaw_deg": round(reading["yaw"], 1), **grip.get("record", {}), "picked": picked}
         self._remember(record)
         with self._lock:
-            self.state["missed" if left else "picked"] += 1
-        if left:
-            self.say(f"NOT picked: still there -- {describe(left)}")
+            self.state["picked" if picked else "missed"] += 1
+        if not picked:
+            self.say(f"NOT picked: still there -- {describe(left)}" if left else "NOT picked: closed on nothing")
         else:
             self.say(f"picked the {name(reading)}: {record['seconds']:.0f} s from the wide look to the next")
         return record, after
@@ -575,7 +580,8 @@ class Task:
     def grip(self, target: dict, planned, found: list[dict]) -> dict:
         """Down to `target` by `planned`, shut on it, back up holding it: {"reading" (the found dict it
         was gripped by), "centre" (where it was), "line" (what put_back needs to put it back), "record"
-        (the robot's own part of the pick's record)}; raises Refused where the arm will not."""
+        (the robot's own part of the pick's record), "held" (True / False where the robot can tell it
+        holds something; left out, the look after the drop says)}; raises Refused where the arm will not."""
         raise NotImplementedError
 
     def approach(self, refused: list[dict], found: list[dict], kit: list[dict], at) -> tuple[tuple[float, float] | None, str]:

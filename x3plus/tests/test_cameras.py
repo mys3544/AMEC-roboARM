@@ -52,7 +52,7 @@ def test_the_c930e_is_the_default():
     got = settings(None)
     assert got["camera"] == "c930e"
     assert got["size"] == [848, 480]
-    assert got["calibration"] == "/app/data/cameras/c930e/table_homography.json"
+    assert got["calibration"].replace("\\", "/").endswith("/data/cameras/c930e/table_homography.json")
     assert got["corrects"] is True
     assert got["other_sizes_untouched"] is True
 
@@ -61,7 +61,7 @@ def test_the_sonix_gets_everything_it_had_before_the_swap():
     got = settings("sonix")
     assert got["size"] == [640, 480]
     assert got["lens"] == [0.065, 0.0, 0.050, -1]
-    assert got["calibration"] == "/app/data/cameras/sonix/table_homography.json"
+    assert got["calibration"].replace("\\", "/").endswith("/data/cameras/sonix/table_homography.json")
     assert got["corrects"] is False
 
 

@@ -208,7 +208,7 @@ def grab(count: int = 1) -> list:
 
 
 # The lens as measured by tools/camera_model.py intrinsics, for the frames Stream hands out.
-INTRINSICS_PATH = Path("/app/data/cameras") / cfg.WRIST_CAMERA / "intrinsics.json"
+INTRINSICS_PATH = Path(__file__).resolve().parents[1] / "data" / "cameras" / cfg.WRIST_CAMERA / "intrinsics.json"
 
 
 def intrinsics(path: Path = INTRINSICS_PATH) -> tuple[list, list] | None:

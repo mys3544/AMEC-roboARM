@@ -22,6 +22,7 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 
 from roboarm import camera, detect
 from roboarm import config as cfg
@@ -72,8 +73,9 @@ def do_find(arm: Arm, pose: dict[int, int], matrix, reach: bool, url: str) -> in
         return 1
 
     report(targets)
-    camera.write_image("/out/vision.jpg", detect.annotate(frame, matrix, targets))
-    print("\nwrote /out/vision.jpg -- check the boxes land on the objects")
+    out = Path(__file__).resolve().parents[1] / "out" / "vision.jpg"
+    camera.write_image(str(out), detect.annotate(frame, matrix, targets))
+    print(f"\nwrote {out} -- check the boxes land on the objects")
 
     if not reach:
         return 0

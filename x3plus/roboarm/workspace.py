@@ -37,8 +37,9 @@ import numpy as np
 from roboarm import config as cfg
 
 # One per camera: a homography is only valid for the lens it was fitted through.
-# (The Sonix's lived at data/table_homography.json until 2026-09-24.)
-CALIBRATION_PATH = Path("/app/data/cameras") / cfg.WRIST_CAMERA / "table_homography.json"
+# (The Sonix's lived at data/table_homography.json until 2026-09-24.) Next to the code: ~/roboarm/data
+# on the robot (it was /app/data in the containers, until 2026-10-07).
+CALIBRATION_PATH = Path(__file__).resolve().parents[1] / "data" / "cameras" / cfg.WRIST_CAMERA / "table_homography.json"
 
 
 def board() -> cv2.aruco.CharucoBoard:
