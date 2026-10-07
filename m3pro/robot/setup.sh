@@ -21,6 +21,9 @@ mkdir -p "$HOME/.config/systemd/user" out
 cp robot/roboarm-*.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable roboarm-m3bridge.service
+if ! cmp -s robot/jetson-clocks.service /etc/systemd/system/jetson-clocks.service; then
+    echo "the clocks at maximum at every boot, once: sudo cp robot/jetson-clocks.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now jetson-clocks"
+fi
 if ! loginctl show-user "$USER" -p Linger | grep -q yes; then
     echo "the service starts at boot only with lingering on; once: sudo loginctl enable-linger $USER"
 fi

@@ -1,0 +1,16 @@
+# The Jetson's CPU, GPU and memory clocks pinned at their maximum after every boot, after nvpmodel
+# has set the power mode (MAXN_SUPER): the models run at their measured speed (Depth Anything V2
+# at 518x910 26 ms rather than 35-80 with the clocks scaling). The fan stays automatic (no --fan).
+# A SYSTEM unit (jetson_clocks needs root), once, from ~/roboarm:
+#   sudo cp robot/jetson-clocks.service /etc/systemd/system/ && sudo systemctl enable --now jetson-clocks
+[Unit]
+Description=Jetson clocks at maximum (jetson_clocks), for the RoboARM models
+After=nvpmodel.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/jetson_clocks
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
