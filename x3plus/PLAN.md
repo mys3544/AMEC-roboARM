@@ -117,6 +117,11 @@ What was measured on the robot, and what it changed in the plan:
   | YOLOE-26s, text ("cube", "block", "wooden block", "toy block", "box"), 37 ms | 1 a look at most, mostly yellow | no false masks |
   | parallax, read as the 90th percentile over each piece's silhouette | 39/39/42, 28/30/29, 29/30/28 mm | all 9 within 2 mm |
 
+  A second layout the same afternoon (`out/depth_test/20261007_130616`, pieces 4 cm nearer, turned):
+  the same picture. Parallax red 40/40/42, blue 31/28/29 mm; the yellow cube sat below the angled
+  looks' frame in two of the three, and parallax needs two views of a thing. DA3-Large red 35-36,
+  blue 22-28; YOLOE prompt-free all 3 from above again ("gift", "extrude", "envelope").
+
 **So the X2 design changes:** a network finds and outlines things (and anchors the table); heights
 come from parallax between looks the arm takes anyway (the base turns of the ride, the close look);
 the kit's sizes snap the result. MoGe-3 flattens them too (its table is the flattest: 0.7-3 mm).
