@@ -2,7 +2,7 @@
 with a STOP for each and STOP ALL always on screen.
 
     python console/serve.py            # the real robots, as console/robots.json lists them
-    python console/serve.py --fake     # a pretend X3 (x3plus/tools/webapp.py --sim) and M3
+    python console/serve.py --fake     # a pretend X3 (x3plus/tools/x3bridge.py --sim) and M3
                                        # (m3pro/arena/fake_m3.py) started alongside, in the
                                        # project venv: .venv/Scripts/python console/serve.py --fake
     -> http://localhost:8099/
@@ -39,7 +39,7 @@ ROOT = HERE.parent
 PORT = 8099
 CLOUDS = ROOT / "m3pro" / "out" / "arena" / "rtab"   # the 3D scans, from arena_map.py rtab-export
 FAKES = [   # --fake starts these; robots.fake.json points at them
-    [sys.executable, str(ROOT / "x3plus" / "tools" / "webapp.py"), "--sim", "--port", "8180", "--out", ""],
+    [sys.executable, str(ROOT / "x3plus" / "tools" / "x3bridge.py"), "--sim", "--port", "8180", "--out", ""],
     [sys.executable, str(ROOT / "m3pro" / "arena" / "fake_m3.py"), "--port", "8195"],
 ]
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
