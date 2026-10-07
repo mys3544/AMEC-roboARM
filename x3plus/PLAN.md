@@ -121,6 +121,11 @@ What was measured on the robot, and what it changed in the plan:
   the same picture. Parallax red 40/40/42, blue 31/28/29 mm; the yellow cube sat below the angled
   looks' frame in two of the three, and parallax needs two views of a thing. DA3-Large red 35-36,
   blue 22-28; YOLOE prompt-free all 3 from above again ("gift", "extrude", "envelope").
+  A third (`20261007_131444`, turned again, no hands): red 39/39/38 -- but the blue block, lying
+  end-on with its near end below the frame, read 46/60/38: only the far edge of its plain top was
+  in shot, against the board behind it. **Parallax needs a piece's outline in two views**; the
+  pick's centring look gives that, and the kit's sizes reject a 60. The angled look sees the table
+  from 150 mm out (the survey up to 262 mm): a test layout wants centres at 190-230 mm.
 
 **So the X2 design changes:** a network finds and outlines things (and anchors the table); heights
 come from parallax between looks the arm takes anyway (the base turns of the ride, the close look);
