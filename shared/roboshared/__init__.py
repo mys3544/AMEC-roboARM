@@ -1,5 +1,9 @@
-"""What both robots do the same way (the repo's shared/, README.md): the timings (metrics) for
-now; the jobs, the drop-off box and the robot side's HTTP surface as they move here from the M3.
+"""What both robots do the same way (the repo's shared/, README.md):
+
+    task     the jobs -- pick once, clean up, home, drop -- their flow, settings and what the
+             console watches; a robot's subclass is its body (m3pro/roboarm/m3pick.py)
+    box      the drop-off box: its marker (ArUco 4x4 id 10) and the inside from it
+    metrics  where the time goes
 
 ROS-free and robot-free: each robot's own package (x3plus/roboarm, m3pro/roboarm) supplies the arm,
 the camera, the wheels and how it finds things. On the laptop it is installed in the workspace's
