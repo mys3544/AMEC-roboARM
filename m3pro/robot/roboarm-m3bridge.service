@@ -1,0 +1,27 @@
+# The M3 Pro's bridge: arm, DCW2 camera and the pick on port 8761, for the console's M3 arm card
+# (tools/m3bridge.py --camera). A systemd user unit, installed by robot/setup.sh;
+# `systemctl --user status roboarm-m3bridge`. Not with the rtabmap mapping stack, which runs the
+# camera itself: stop this first.
+[Unit]
+Description=RoboARM M3 Pro bridge and pick (port 8761)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/roboarm
+Environment=PYTHONUNBUFFERED=1
+# the venv sees ROS 2's rclpy and arm_msgs once ros.sh is sourced (--system-site-packages)
+# The arm is found once, at start, through Yahboom's micro-ROS agent -- which their desktop
+# autostart (~/.config/autostart/agent_autostart.desktop) starts at login, maybe after this: wait
+# for it to listen on /arm6_joints, a minute at most (20 looks of 2 s, no ROS daemon left behind
+# in this unit), then start anyway (the camera still serves).
+ExecStartPre=/bin/bash -c 'source robot/ros.sh; for i in $(seq 20); do ros2 topic info --no-daemon --spin-time 2 /arm6_joints 2>/dev/null | grep -q "Subscription count: [1-9]" && exit 0; sleep 1; done; echo "no micro-ROS agent on /arm6_joints after a minute; starting without the arm"'
+TimeoutStartSec=180
+ExecStart=/bin/bash -c 'source robot/ros.sh && exec .venv/bin/python tools/m3bridge.py --camera'
+# SIGINT, so it unwinds: the arm is left holding, the camera driver stopped
+KillSignal=SIGINT
+TimeoutStopSec=15
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

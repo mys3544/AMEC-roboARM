@@ -3,10 +3,11 @@
 8761, so that our ROS-free code drives the M3 as it drives the X3 -- plus GET /rgbd, a colour
 frame with its aligned depth, for the depth detector and for recording test sets.
 
-On the robot, from ~/roboarm (python tools/sync_robot.py puts it there), with ROS 2 and Yahboom's
-workspaces sourced (arm_msgs) -- tools/m3bridge.sh does both:
+On the robot, from ~/roboarm (tools/sync_robot.py puts it there), in its uv venv with ROS 2 and
+Yahboom's workspaces sourced (arm_msgs, robot/ros.sh) -- the service roboarm-m3bridge runs it
+with --camera at boot (robot/roboarm-m3bridge.service); tools/m3bridge.sh by hand:
 
-    python3 tools/m3bridge.py [--camera]     # --camera: start the DCW2's driver too (depth
+    .venv/bin/python tools/m3bridge.py [--camera]    # --camera: start the DCW2's driver too (depth
                                              # aligned to colour); leave it off when the mapping
                                              # stack already runs the camera
 

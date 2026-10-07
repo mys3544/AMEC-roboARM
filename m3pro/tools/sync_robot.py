@@ -27,7 +27,9 @@ REMOTE = "/home/jetson/roboarm"
 MEMBER = "roboarm-m3"   # this robot's project in the workspace (../../pyproject.toml)
 
 PATTERNS = ["roboarm/**/*.py", "roboarm/*.npz", "tools/*.py", "tests/*.py",
-            "vision_service/*.py", "docker/*", "compose.yaml", "pyproject.toml",
+            "vision_service/*.py", "pyproject.toml",
+            # its venv and systemd unit (robot/setup.sh)
+            "robot/*",
             ".dockerignore", ".gitignore",
             # the robot's desktop setup, applied on the host by tools/display_setup.sh
             "tools/*.sh", "tools/*.conf", "tools/*.xml"]
@@ -36,7 +38,7 @@ PATTERNS = ["roboarm/**/*.py", "roboarm/*.npz", "tools/*.py", "tests/*.py",
 def pins(folder: pathlib.Path) -> pathlib.Path:
     """This robot's pins from the workspace lock, as a requirements file in `folder`."""
     out = folder / "requirements.txt"
-    subprocess.run(["uv", "export", "--frozen", "--quiet", "--package", MEMBER, "--no-emit-workspace",
+    subprocess.run(["uv", "export", "--frozen", "--quiet", "--no-header", "--package", MEMBER, "--no-emit-workspace",
                     "--no-default-groups", "--group", "dev", "--output-file", str(out)],
                    cwd=LOCAL, check=True)
     return out
@@ -62,6 +64,7 @@ def run(client, command: str, echo: bool = True):
 
 
 def main() -> int:
+    sys.stdout.reconfigure(errors="replace")   # the robot's output may not fit a Windows console
     password = os.environ.get("ROBOARM_SSH_PASSWORD") or getpass.getpass(f"{USER}@{HOST} password: ")
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())

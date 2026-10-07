@@ -22,8 +22,8 @@ then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fak
   or W/A/S/D (sideways on A/D), Q/E to turn; the auto loop. The robot's own limits apply: at
   most 0.15 m/s, stopped 0.4 s after the page stops repeating a command; the loop also stops
   35 cm short of anything in its path, driving by hand has no distance limit.
-- **M3 arm card** (`m3arm` in `robots.json`: the M3's bridge, `m3pro/tools/m3bridge.sh start
-  --camera`, which runs the pick itself, `m3pro/roboarm/m3pick.py`): the arm camera live with the
+- **M3 arm card** (`m3arm` in `robots.json`: the M3's bridge, the service `roboarm-m3bridge`
+  on the robot, which runs the pick itself, `m3pro/roboarm/m3pick.py`): the arm camera live with the
   last look inset (what was found, marked; click to swap), the job and its step, picked and missed,
   the last attempt, what is in view and whether it is in reach; Pick nearest / a cube / a block,
   Clean up all in reach (to the drop-off, one by one), Home; where each step's time went (the

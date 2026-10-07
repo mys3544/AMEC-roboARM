@@ -43,11 +43,14 @@ HOST, USER = "192.168.73.66", "jetson"
 HERE = pathlib.Path(__file__).resolve().parents[1]
 ARENA = HERE / "arena"
 REMOTE = f"/home/{USER}/arena"
+# The robot's Python: the uv venv of robot/setup.sh (it sees ROS 2's packages), else the system's.
+PY = "$( [ -x ~/roboarm/.venv/bin/python ] && echo ~/roboarm/.venv/bin/python || echo python3 )"
 ROS = ("source /opt/ros/humble/setup.bash && source ~/yahboomcar_ws/install/setup.bash"
        " && source ~/M3Pro_ws/install/setup.bash"
        " && export ROS_DOMAIN_ID=30 RMW_IMPLEMENTATION=rmw_cyclonedds_cpp")
 SAVER = "ros2 run nav2_map_server map_saver_cli --free 0.196 --occ 0.65 -f"   # Yahboom's thresholds
 PGID = f"{REMOTE}/slam.pgid"
+BRIDGE = "roboarm-m3bridge"   # the pick's service (robot/roboarm-m3bridge.service)
 
 
 def connect():
@@ -86,6 +89,11 @@ def start(client, args=()):
     sh(client, f"mkdir -p {REMOTE}/logs {REMOTE}/snaps {REMOTE}/maps")
     upload(client)
     stamp = time.strftime("%Y%m%d_%H%M%S")
+    if "mapper:=rtabmap" in args:   # the launch runs the DCW2 itself: the bridge must let it go
+        _c, text = sh(client, f"systemctl --user is-active -q {BRIDGE} && systemctl --user stop {BRIDGE}"
+                              f" && echo stopped")
+        if "stopped" in text:
+            print(f"the bridge ({BRIDGE}) stopped: RTAB-Map runs the camera; `stop` starts it again")
     if "mapper:=rtabmap" in args:   # the launch starts RTAB-Map with --delete_db_on_start
         _c, text = sh(client, f"test -f {REMOTE}/rtab/arena.db && mv {REMOTE}/rtab/arena.db"
                               f" {REMOTE}/rtab/arena_{stamp}.db && echo kept")
@@ -120,7 +128,7 @@ def save_map(client, stem):
     """map_saver_cli + fence_fit on the robot: `stem`.pgm/.yaml, `stem`_fit.png/.json."""
     client.open_sftp().put(str(ARENA / "fence_fit.py"), f"{REMOTE}/fence_fit.py")
     code, text = sh(client, f"{ROS} && timeout 25 {SAVER} {stem}"
-                            f" && python3 {REMOTE}/fence_fit.py {stem}.yaml --png {stem}_fit.png"
+                            f" && {PY} {REMOTE}/fence_fit.py {stem}.yaml --png {stem}_fit.png"
                             f" > {stem}_fit.json", timeout=60)
     if code:
         print(text)
@@ -255,7 +263,7 @@ def arm(client, pose, ms=3000):
 def camcheck(client):
     """camera_check.py on the robot: does the floor come out at z = 0 through the camera's pose?"""
     upload(client)
-    print(sh(client, f"{ROS} && cd {REMOTE} && timeout 30 python3 camera_check.py", timeout=60)[1])
+    print(sh(client, f"{ROS} && cd {REMOTE} && timeout 30 {PY} camera_check.py", timeout=60)[1])
     return 0
 
 
@@ -315,7 +323,7 @@ def rtab_export(client, name="arena", tries=3):
                                 f" && rtabmap-export --cloud --poses_camera {EXPORT}"
                                 f" --output_dir {run} --output {name} {run}/{name}.db"
                                 f" > {run}/export.log 2>&1"
-                                f" && python3 {REMOTE}/ortho.py {run}/{name}_cloud.ply {run}/{name}",
+                                f" && {PY} {REMOTE}/ortho.py {run}/{name}_cloud.ply {run}/{name}",
                         timeout=1200)
         score = next((line for line in text.splitlines() if line.startswith("SCORE")), None)
         print(f"try {k}: {score or text[-800:]}", flush=True)
@@ -340,7 +348,7 @@ def rtab_crop(client, k=None, name="arena"):
         print(f"no kept export in {out} (rtab-export records it): name the try, rtab-crop N")
         return 1
     run = f"{out}/try{k}"
-    code, text = sh(client, f"python3 {REMOTE}/ortho.py {run}/{name}_cloud.ply {run}/{name}",
+    code, text = sh(client, f"{PY} {REMOTE}/ortho.py {run}/{name}_cloud.ply {run}/{name}",
                     timeout=300)
     print(f"try {k}: {text.strip()}")
     return fetch_export(client, run, name) if code == 0 else 1
@@ -447,7 +455,9 @@ def tune(client, name, wanted):
     return 0
 
 
-DRIVE = f"python3 {REMOTE}/drive_server.py"
+DRIVE = f"{PY} {REMOTE}/drive_server.py"
+# what pkill/pgrep match: drive_server.py under either Python, never the shell that runs pkill
+DRIVE_RUNNING = f"^[^ ]*python[0-9.]* {REMOTE}/drive_server.py"
 
 
 def drive(client):
@@ -471,9 +481,9 @@ def drive(client):
 
 def end_drive(client):
     """SIGINT (it publishes a zero on the way out), then TERM if it lingers."""
-    sh(client, f"pkill -INT -f '^{DRIVE}'; for i in 1 2 3 4 5; do"
-               f" pgrep -f '^{DRIVE}' > /dev/null || exit 0; sleep 1; done;"
-               f" pkill -TERM -f '^{DRIVE}'", timeout=30)
+    sh(client, f"pkill -INT -f '{DRIVE_RUNNING}'; for i in 1 2 3 4 5; do"
+               f" pgrep -f '{DRIVE_RUNNING}' > /dev/null || exit 0; sleep 1; done;"
+               f" pkill -TERM -f '{DRIVE_RUNNING}'", timeout=30)
 
 
 def stop(client):
@@ -486,10 +496,19 @@ def stop(client):
         time.sleep(1)
         if not running(client):
             print("stopped")
-            return 0
+            return restart_bridge(client)
     sh(client, f"kill -TERM -- -$(cat {PGID})")
     time.sleep(2)
     print("stopped (TERM)" if not running(client) else "still running -- look at `status`")
+    return restart_bridge(client)
+
+
+def restart_bridge(client):
+    """The bridge back, if it is a boot service that `start` stopped for RTAB-Map."""
+    _c, text = sh(client, f"systemctl --user is-enabled -q {BRIDGE} && ! systemctl --user is-active -q {BRIDGE}"
+                          f" && systemctl --user start {BRIDGE} && echo started")
+    if "started" in text:
+        print(f"the bridge ({BRIDGE}) started again")
     return 0
 
 

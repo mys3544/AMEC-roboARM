@@ -1,7 +1,7 @@
 [
   {"id": "x3", "name": "X3 Plus", "kind": "x3", "color": "#e07b39",
    "url": "http://192.168.73.210:8080",
-   "note": "the X3's panel, on the robot since 2026-10-06: cd ~/roboarm && docker compose --profile web up -d web"},
+   "note": "the X3's panel, the robot's service roboarm-web (x3plus/robot/), started at boot"},
   {"id": "x3arm", "name": "X3 Plus arm", "kind": "x3arm", "color": "#c0582a",
    "url": "http://192.168.73.210:8080",
    "note": "the same panel's /pick/* (the M3's pick interface): x3plus/roboarm/web/session.py"},
@@ -10,5 +10,5 @@
    "note": "the M3's drive page: m3pro/tools/arena_map.py start"},
   {"id": "m3arm", "name": "M3 Pro arm", "kind": "m3arm", "color": "#7a4fd0",
    "url": "http://192.168.73.66:8761",
-   "note": "the M3's bridge, which runs the pick: m3pro/tools/m3bridge.sh start --camera"}
+   "note": "the M3's bridge, which runs the pick: the robot's service roboarm-m3bridge (m3pro/robot/), started at boot"}
 ]

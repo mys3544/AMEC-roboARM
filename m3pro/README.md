@@ -25,7 +25,8 @@ It began as the X3 Plus's, byte for byte as of commit 1f94700; what only the X3 
 serial arm, wrist camera, table calibration, web panel and their tools -- went on 2026-10-05
 (in git). What is here:
 
-- **The arm and the pick:** `tools/m3bridge.py`, started on the robot by `tools/m3bridge.sh`,
+- **The arm and the pick:** `tools/m3bridge.py`, run on the robot by the systemd user service
+  `roboarm-m3bridge` (robot/: a uv venv that sees ROS 2, started at boot; `robot/setup.sh`),
   serves the arm (`roboarm/m3arm.py`, `m3kinematics.py` with `m3body.npz`) and the depth camera
   over HTTP on port 8761 (`roboarm/web/bridge.py`), and runs the pick there (`roboarm/m3pick.py`,
   `m3vision.py`, timed by `metrics.py`) for the console's M3 arm card.

@@ -54,6 +54,9 @@ from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Our nodes' Python: the uv venv of ~/roboarm/robot/setup.sh (it sees ROS 2's packages), else the system's
+PYTHON = os.path.expanduser("~/roboarm/.venv/bin/python")
+PYTHON = PYTHON if os.path.exists(PYTHON) else "python3"
 DEFAULTS = {"sim": "false", "motion": "true", "ekf_hz": "7", "ekf_predict": "false",
             "scans": "merged", "bias": "true",
             "lidars": os.path.join(HERE, "lidars.yaml"),
@@ -147,13 +150,13 @@ def nodes(context):
                         parameters=[arg["slam"], slam_set, {**clock, "scan_topic": "/scan_lidars"
                                     if arg["scans"] == "lidars" else "/scan"}]))
     if arg["scans"] == "lidars" or bias:
-        out.append(ExecuteProcess(cmd=["python3", os.path.join(HERE, "scan_relay.py"),
+        out.append(ExecuteProcess(cmd=[PYTHON, os.path.join(HERE, "scan_relay.py"),
                                        arg["lidars"], "--ros-args",
                                        "-p", f"use_sim_time:={arg['sim']}"],
                                   output="screen"))
     if not sim:   # the browser page for driving it by hand or on a loop, http://<robot>:8095/
         bench = [] if arg["motion"] == "true" else ["--no-motion"]
-        out.append(ExecuteProcess(cmd=["python3", os.path.join(HERE, "drive_server.py"), *bench],
+        out.append(ExecuteProcess(cmd=[PYTHON, os.path.join(HERE, "drive_server.py"), *bench],
                                   output="screen"))
     return out
 

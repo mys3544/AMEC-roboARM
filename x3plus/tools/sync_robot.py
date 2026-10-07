@@ -39,7 +39,7 @@ PATTERNS = ["roboarm/**/*.py", "roboarm/web/static/*.html", "tools/*.py", "tests
 def pins(folder: pathlib.Path) -> pathlib.Path:
     """This robot's pins from the workspace lock, as a requirements file in `folder`."""
     out = folder / "requirements.txt"
-    subprocess.run(["uv", "export", "--frozen", "--quiet", "--package", MEMBER, "--no-emit-workspace",
+    subprocess.run(["uv", "export", "--frozen", "--quiet", "--no-header", "--package", MEMBER, "--no-emit-workspace",
                     "--no-default-groups", "--group", "dev", "--output-file", str(out)],
                    cwd=LOCAL, check=True)
     return out
@@ -65,6 +65,7 @@ def run(client, command: str, echo: bool = True):
 
 
 def main() -> int:
+    sys.stdout.reconfigure(errors="replace")   # the robot's output may not fit a Windows console
     password = os.environ.get("ROBOARM_SSH_PASSWORD") or getpass.getpass(f"{USER}@{HOST} password: ")
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
