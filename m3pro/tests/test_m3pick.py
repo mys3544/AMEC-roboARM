@@ -134,6 +134,21 @@ def test_a_turned_cube_is_picked_square_and_dropped_off():
     assert width == 30
 
 
+def test_a_look_with_no_floor_in_it_is_skipped_and_the_job_goes_on():
+    """2026-10-07: the left look saw only the robot's own deck, nearer than the depth reaches -- no floor,
+    and the whole clean-up ended there."""
+    world = World([(0.21, 0.03, 30, 0.03, 0.03)])
+    seen = world.snapshot
+
+    def blind_on_the_left():
+        image, depth, k, pose = seen()
+        return image, (np.zeros_like(depth) if pose[1] == m3pick.WIDE_SIDES[1][1] else depth), k, pose
+    world.snapshot = blind_on_the_left
+    picker = run(world, "pick_once")
+    assert picker.state["error"] is None and picker.state["picked"] == 1
+    assert any(f"wide J1 {m3pick.WIDE_SIDES[1][1]} look skipped" in e["text"] for e in picker._log)
+
+
 def test_a_lying_block_is_gripped_across_its_length():
     world = World([(0.21, -0.02, 20, 0.06, 0.03)])
     picker = run(world, "pick_once", kind="block")

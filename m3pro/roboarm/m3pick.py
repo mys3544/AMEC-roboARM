@@ -732,7 +732,13 @@ class Picker(Task):
             here = self.here()
             for leg in look_way(here, {**look, m3arm.GRIPPER: m3arm.gripper_angle(OPEN_MM)}):
                 self.through(leg, speed=self.dps("free_dps"))
-            _camera, seen = self.look("wide" if look is LOOK else f"wide J1 {look[1]}")
+            tag = "wide" if look is LOOK else f"wide J1 {look[1]}"
+            try:
+                _camera, seen = self.look(tag)
+            except ValueError as exc:   # no floor in the picture: that look skipped, the others count (2026-10-07:
+                # the left look saw only the robot's own deck, nearer than the depth reaches, and the job ended)
+                self.say(f"the {tag} look skipped: {exc}")
+                continue
             readings += [(o, look[1]) for o in seen]
         kept = []
         for o, j1 in sorted(readings, key=lambda r: not r[0]["whole"]):   # the whole ones first
