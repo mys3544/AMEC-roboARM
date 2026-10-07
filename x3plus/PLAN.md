@@ -364,8 +364,9 @@ Rules (from PLAN.md M5 and what we learnt on the X3):
 - One tool: `tools/export_engine.py` grows an ONNX path (`torch.onnx.export`, opset 17,
   `dynamo=False`, then `trtexec --fp16` with a timing cache) next to its Ultralytics path, and
   loads YOLOE with the YOLOE class (today it uses `YOLO`, so YOLOE was never exported).
-- Build on the robot inside the container that serves the engine (TensorRT 10.4 there, 10.7 on
-  the host: engines do not move between them). Static shapes. Engines are not in git; the ONNX
+- Build on the robot with the host's TensorRT 10.7, which the vision service runs on since
+  2026-10-07 (uv venvs + systemd, robot/; the containers and their 10.4 are retired; engines do
+  not move between TensorRT versions). Static shapes. Engines are not in git; the ONNX
   files are in `models/`, and setup builds the engines.
 - Every export is checked against its PyTorch model on 20 test-set frames (Depth Anything's
   engine: correlation 0.99999) and timed engine-only and end to end, p50/p99, memory, energy

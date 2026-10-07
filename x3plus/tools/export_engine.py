@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Build a TensorRT engine from a .pt model, for faster inference on the Orin.
 
-Runs INSIDE the vision container (it needs CUDA torch + TensorRT + the GPU):
+Runs on the robot in the vision service's venv (it needs JetPack's CUDA torch + TensorRT):
 
-    docker compose --profile vision run --rm vision python tools/export_engine.py
+    .venv-ml/bin/python tools/export_engine.py
 
-The engine is written next to the .pt in /app/models (a bind mount, so it
-survives the container) and is what ROBOARM_VISION_MODEL should then point at.
+The engine is written next to the .pt in models/, where the vision service picks it
+up by itself (vision_service/detector.py) after `systemctl --user restart roboarm-vision`.
 
 Why bother: FP16 on this Orin is roughly 2x the throughput of the PyTorch model
-at no accuracy cost worth measuring for detection. Why in-container: a TensorRT
-engine is tied to the exact TensorRT build, CUDA version and GPU it was created
-on -- an engine exported on the host can fail to deserialize in the container
-even when both are "JetPack 6.2". Export where you run.
+at no accuracy cost worth measuring for detection. Why there: a TensorRT engine
+is tied to the exact TensorRT build, CUDA version and GPU it was created on (the
+old vision container's TensorRT 10.4 could not load the host's 10.7 engines).
+Export where you run.
 
 The engine bakes in its input size, so it must be rebuilt to change imgsz, and a
 mismatched ROBOARM_VISION_IMGSZ at serve time is ignored in favour of the engine.
@@ -51,7 +51,7 @@ def main() -> int:
 
     if not torch.cuda.is_available():
         print("CUDA is not available in here -- are you running this inside the "
-              "vision container with the GPU passed through?", file=sys.stderr)
+              "vision service's venv (.venv-ml)?", file=sys.stderr)
         return 1
 
     print(f"exporting {source.name}  imgsz={args.imgsz}  "

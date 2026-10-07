@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import io
 import os
+import pathlib
 import time
 
-DEFAULT_MODEL = "/app/models/yoloe-26s-seg-pf.pt"
+DEFAULT_MODEL = str(pathlib.Path(__file__).resolve().parents[1] / "models" / "yoloe-26s-seg-pf.pt")
 
 
 def extract_detections(boxes, names, masks=None) -> list[dict]:

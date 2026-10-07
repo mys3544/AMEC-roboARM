@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """See what the neural detector finds, and prove it by touching one of them.
 
-    # start the service (own container, GPU):
-    docker compose --profile vision up -d vision
+    # the service (its own venv, GPU) runs on the robot:
+    systemctl --user start roboarm-vision
 
     ... vision_check.py --health                 # is the model up? which classes?
     ... vision_check.py                          # objects on the table: what do we see?
@@ -15,7 +15,7 @@ only step that settles it.
 
 The frame comes from the survey pose the homography was fitted at -- boxes come back
 in pixels and roboarm.detect maps them to the table with that same homography, so the
-vision container never needs the calibration.
+vision service never needs the calibration.
 """
 
 import argparse

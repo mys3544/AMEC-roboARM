@@ -14,13 +14,15 @@ import numpy as np
 Pose = dict[int, int]
 
 # ---------------------------------------------------------------- devices ---
-# Names inside the container. compose.yaml maps the stable host /dev/*/by-id/
-# paths onto these, so USB re-enumeration cannot shuffle them.
-SERIAL_PORT = os.environ.get("ROBOARM_SERIAL", "/dev/robot_serial")
+# On the robot robot.env sets both to the stable /dev/*/by-id/ paths, so USB
+# re-enumeration cannot shuffle them (the C930e was /dev/video2 on 2026-10-07).
+SERIAL_PORT = os.environ.get("ROBOARM_SERIAL", "/dev/myserial")
 
 # The wrist camera, on arm_link4: the only camera that can see the workspace (the
 # mast camera is fixed horizontal and the table sits 72 degrees below its axis).
-WRIST_CAM = int(os.environ.get("ROBOARM_WRIST_CAM", "0"))
+# A device path, or a V4L2 index.
+_WRIST_CAM = os.environ.get("ROBOARM_WRIST_CAM", "0")
+WRIST_CAM: int | str = int(_WRIST_CAM) if _WRIST_CAM.isdigit() else _WRIST_CAM
 
 # WHICH wrist camera is fitted. Everything that changes with the camera is keyed by
 # this: its picture size and V4L2 settings, where its lens sits (the lens section
@@ -525,12 +527,11 @@ OBJECT_TAG_DICT = "DICT_APRILTAG_36H11"
 OBJECT_TAG_M = 0.026
 
 # ------------------------------------------------------- detector service ---
-# The neural detector (YOLO26 / YOLOE-26) runs in the SEPARATE `vision` container
-# and is reached over HTTP -- core holds no torch. compose.yaml sets this to
-# http://vision:8760; the default here is for running a tool against the service
-# by hand on the robot. If nothing is listening, detect.objects() raises
+# The neural detector (YOLO26 / YOLOE-26) runs in the SEPARATE vision service
+# (vision_service/, its own venv with JetPack's torch) and is reached over HTTP --
+# this side holds no torch. If nothing is listening, detect.objects() raises
 # DetectorOffline and the caller drops down the ladder to the tags.
-DETECTOR_URL = os.environ.get("ROBOARM_DETECTOR_URL", "http://vision:8760")
+DETECTOR_URL = os.environ.get("ROBOARM_DETECTOR_URL", "http://127.0.0.1:8760")
 
 # Generous: first inference after a class-prompt change reloads the text encoder,
 # which is seconds on the Orin. A settled model answers in tens of milliseconds.

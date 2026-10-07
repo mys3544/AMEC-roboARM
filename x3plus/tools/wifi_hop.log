@@ -1,0 +1,99 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20260923144253
+Username: LAPTOP-GUU3A41U\Mys
+RunAs User: LAPTOP-GUU3A41U\Mys
+Configuration Name: 
+Machine: LAPTOP-GUU3A41U (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File tools\wifi_hop.ps1 -Command python C:\Users\Mys\AppData\Local\Temp\claude\C--Users-Mys-Desktop-RoboARM-2026\04cab602-a5f5-4e3b-b6b7-01754673a3ac\scratchpad\readpose.py
+Process ID: 23160
+PSVersion: 5.1.26100.9444
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9444
+BuildVersion: 10.0.26100.9444
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+---- running: python C:\Users\Mys\AppData\Local\Temp\claude\C--Users-Mys-Desktop-RoboARM-2026\04cab602-a5f5-4e3b-b6b7-01754673a3ac\scratchpad\readpose.py
+
+---- command exit code: 0
+---- returning to uvptechnicom
+internet back: True
+**********************
+Windows PowerShell transcript end
+End time: 20260923144310
+**********************
+**********************
+Windows PowerShell transcript start
+Start time: 20260923144342
+Username: LAPTOP-GUU3A41U\Mys
+RunAs User: LAPTOP-GUU3A41U\Mys
+Configuration Name: 
+Machine: LAPTOP-GUU3A41U (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File tools\wifi_hop.ps1 -Command python C:\Users\Mys\AppData\Local\Temp\claude\C--Users-Mys-Desktop-RoboARM-2026\04cab602-a5f5-4e3b-b6b7-01754673a3ac\scratchpad\readpose.py -TimeoutSec 120
+Process ID: 20424
+PSVersion: 5.1.26100.9444
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9444
+BuildVersion: 10.0.26100.9444
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+---- running: python C:\Users\Mys\AppData\Local\Temp\claude\C--Users-Mys-Desktop-RoboARM-2026\04cab602-a5f5-4e3b-b6b7-01754673a3ac\scratchpad\readpose.py
+
+---- command exit code: 0
+---- returning to uvptechnicom
+internet back: True
+**********************
+Windows PowerShell transcript end
+End time: 20260923144355
+**********************
+**********************
+Windows PowerShell transcript start
+Start time: 20260923144449
+Username: LAPTOP-GUU3A41U\Mys
+RunAs User: LAPTOP-GUU3A41U\Mys
+Configuration Name: 
+Machine: LAPTOP-GUU3A41U (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File tools\wifi_hop.ps1 -Command python C:\Users\Mys\AppData\Local\Temp\claude\C--Users-Mys-Desktop-RoboARM-2026\04cab602-a5f5-4e3b-b6b7-01754673a3ac\scratchpad\readpose.py -TimeoutSec 180
+Process ID: 17800
+PSVersion: 5.1.26100.9444
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9444
+BuildVersion: 10.0.26100.9444
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+**********************
+Windows PowerShell transcript start
+Start time: 20260923144530
+Username: LAPTOP-GUU3A41U\Mys
+RunAs User: LAPTOP-GUU3A41U\Mys
+Configuration Name: 
+Machine: LAPTOP-GUU3A41U (Microsoft Windows NT 10.0.26200.0)
+Host Application: C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -ExecutionPolicy Bypass -File tools\wifi_hop.ps1 -Command python C:\Users\Mys\AppData\Local\Temp\claude\C--Users-Mys-Desktop-RoboARM-2026\04cab602-a5f5-4e3b-b6b7-01754673a3ac\scratchpad\release.py -TimeoutSec 120
+Process ID: 12572
+PSVersion: 5.1.26100.9444
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9444
+BuildVersion: 10.0.26100.9444
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+---- running: python C:\Users\Mys\AppData\Local\Temp\claude\C--Users-Mys-Desktop-RoboARM-2026\04cab602-a5f5-4e3b-b6b7-01754673a3ac\scratchpad\release.py
+
+---- command exit code: 0
+---- returning to uvptechnicom
+internet back: True
+**********************
+Windows PowerShell transcript end
+End time: 20260923144551
+**********************

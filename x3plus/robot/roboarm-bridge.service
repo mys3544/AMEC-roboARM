@@ -1,0 +1,15 @@
+# The X3 Plus's arm and camera over HTTP (port 8761), for a panel on a laptop:
+# `uv run python tools/webapp.py --robot http://192.168.73.210:8761`. Not enabled; start it by hand,
+# which stops roboarm-web (both hold the serial port and the camera):
+#   systemctl --user start roboarm-bridge        # and back: systemctl --user start roboarm-web
+[Unit]
+Description=RoboARM X3 Plus hardware bridge (port 8761)
+Conflicts=roboarm-web.service
+
+[Service]
+WorkingDirectory=%h/roboarm
+EnvironmentFile=%h/roboarm/robot/robot.env
+EnvironmentFile=-%h/roboarm/robot.local.env
+ExecStart=%h/roboarm/.venv/bin/python tools/hwbridge.py --host 0.0.0.0 --port 8761
+KillSignal=SIGINT
+TimeoutStopSec=10

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Serve the browser control panel: live camera, detector views, manual and auto.
 
-On the robot (the `web` service in compose.yaml does exactly this):
+On the robot (robot/roboarm-web.service does exactly this, at boot):
 
-    docker compose --profile web up web          # then open http://<robot-ip>:8080/
+    systemctl --user start roboarm-web          # then open http://<robot-ip>:8080/
 
-or by hand inside the core container:
+or by hand, with the service stopped (it holds the serial port and the camera):
 
-    docker compose run --rm --no-deps --service-ports core python tools/webapp.py
+    set -a; . robot/robot.env; set +a; .venv/bin/python tools/webapp.py
 
 On a laptop, driving the REAL robot over WiFi -- the page and all the judgement
 run here, only servo commands and camera frames cross the network:
@@ -98,8 +98,8 @@ def main() -> int:
                              "http://192.168.73.210:8761")
     parser.add_argument("--sim-speed", type=float, default=1.0,
                         help="with --sim: 1.0 moves as slowly as the robot, 0 is instant")
-    parser.add_argument("--out", default="/out",
-                        help="where sweep pictures are written (default /out; '' for none)")
+    parser.add_argument("--out", default=str(Path(__file__).resolve().parents[1] / "out"),
+                        help="where sweep pictures are written (default ./out; '' for none)")
     args = parser.parse_args()
 
     if args.sim:

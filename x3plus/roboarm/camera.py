@@ -234,6 +234,5 @@ def write_image(path: str, frame) -> None:
     """
     if not cv2.imwrite(path, frame):
         raise CameraError(
-            f"could not write {path} -- does its directory exist inside the "
-            f"container? (see the volumes in compose.yaml)"
+            f"could not write {path} -- does its directory exist?"
         )

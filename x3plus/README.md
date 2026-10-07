@@ -75,9 +75,10 @@ makes it good for coursework -- and it is also why:
 > other, and their moves will interleave in the middle of a descent. Take your
 > slot, and close the app when your slot ends.
 
-Your instructor starts the bridge on the robot (once, for everyone):
+Your instructor starts the bridge on the robot (once, for everyone; it stops the
+robot's own page, robot/roboarm-bridge.service):
 
-    docker compose --profile bridge up -d bridge
+    systemctl --user start roboarm-bridge
 
 Then, on your machine, with the robot's address:
 
@@ -93,8 +94,8 @@ thing without starting the app at all.
 
 ## 3. The robot's own page
 
-Nothing to install: open <http://192.168.73.210:8080/> (when your instructor has
-the `web` service up). Everyone's browser shares **one** session here, so the
+Nothing to install: open <http://192.168.73.210:8080/> (the `roboarm-web` service,
+which starts with the robot). Everyone's browser shares **one** session here, so the
 interlock works properly -- one person drives, everyone else gets "busy" and can
 watch. This is the safe way to demo to a group.
 
@@ -128,13 +129,13 @@ API value is the one in backticks:
 * `colour` -- a coloured blob, read on the table plane. Wants a saturated
   object.
 * `yolo` (the menu says *neural*) -- a prompt-free YOLOE-26 segmentation model
-  (YOLOE built on YOLO26, `yoloe-26s-seg-pf`) in its own container on the
-  robot. Its *label* is nonsense ("stop sign"); the outline is what counts. An
+  (YOLOE built on YOLO26, `yoloe-26s-seg-pf`) in its own service on the
+  robot (`roboarm-vision`, its own venv with JetPack's torch). Its *label* is nonsense ("stop sign"); the outline is what counts. An
   outline that is the whole picture, or that lies inside another outline (the
   printed face of a cube), is not an object and is dropped. If the service is
   not answering it drops quietly to `markers` and says so in the log. Any
   Ultralytics segmentation model can be served instead via
-  `ROBOARM_VISION_MODEL` in `compose.yaml`; the plain COCO `yolo26n-seg` only
+  `ROBOARM_VISION_MODEL` (robot/robot.env); the plain COCO `yolo26n-seg` only
   finds what resembles one of its 80 classes.
 
 Leave **object mm** empty: every rung measures the object for itself. A size
@@ -234,7 +235,7 @@ readback, then lift and place. About 22–29 s a pick.
                       monitor on the DisplayPort when there is one and a virtual
                       1920x1080 screen for VNC when there is not
     tests/            pytest suite
-    vision_service/   the neural detector; runs in its own container on the robot
+    vision_service/   the neural detector; its own service and venv on the robot
     docs/STATUS.md    the engineering log -- what worked, what failed, and why.
                       Written for whoever picks the project up next; read it when
                       you want to know why something is the way it is.

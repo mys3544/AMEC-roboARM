@@ -26,13 +26,15 @@ from __future__ import annotations
 import base64
 import io
 import os
+import pathlib
 import time
 
 import cv2
 import numpy as np
 
-ENGINES = {"sonix": "/app/models/da2s_518x686.fp16.engine",
-           "c930e": "/app/models/da2s_518x910.fp16.engine"}
+MODELS = pathlib.Path(__file__).resolve().parents[1] / "models"   # ~/roboarm/models on the robot
+ENGINES = {"sonix": str(MODELS / "da2s_518x686.fp16.engine"),
+           "c930e": str(MODELS / "da2s_518x910.fp16.engine")}
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 STD = np.array([0.229, 0.224, 0.225], np.float32)
 

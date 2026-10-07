@@ -1,6 +1,6 @@
 """The robot's hardware over HTTP, so the control panel can run on another machine.
 
-Runs ON THE ROBOT (`tools/hwbridge.py`, the `bridge` compose service) and holds
+Runs ON THE ROBOT (`tools/hwbridge.py`, the roboarm-bridge service) and holds
 the arm and the wrist camera. It has no page and makes no decisions: every request
 is one method call on roboarm.arm.Arm, the camera's frames, or the calibration
 file. The panel on the laptop (roboarm.web.remote) is what turns those into a
@@ -9,8 +9,8 @@ session.
     GET  /health                       {ok, arm: {connected, error}, camera}
     GET  /stream.mjpg                  multipart MJPEG of the wrist camera, opened on first use
     GET  /calibration                  data/table_homography.json, verbatim
-    GET  /vision/health                forwarded to the vision container
-    POST /vision/detect                raw JPEG in, forwarded to the vision container
+    GET  /vision/health                forwarded to the vision service
+    POST /vision/detect                raw JPEG in, forwarded to the vision service
     POST /vision/raised                same, the depth rung (what stands up)
     POST /arm/connect                  open the serial port (idempotent)
     POST /arm/call                     {"method": "move_to", "args": [...], "kwargs": {...}}
@@ -159,9 +159,9 @@ class Handler(BaseHTTPRequestHandler):
             send_json(self, {"error": f"no such endpoint: GET {path}"}, 404)
 
     def _forward_vision(self, tail: str, body: bytes | None = None) -> None:
-        """Relay one request to the vision container and its reply back.
+        """Relay one request to the vision service and its reply back.
 
-        A panel on a laptop cannot reach the compose-internal `vision` host; the
+        A panel on a laptop cannot reach the service, which listens on the robot's 127.0.0.1 only; the
         bridge can."""
         headers = {"Content-Type": self.headers["Content-Type"]} if body is not None else {}
         status, reply = vision_request(cfg.DETECTOR_URL + tail, body, headers)

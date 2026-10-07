@@ -71,7 +71,8 @@ def test_a_raised_top_comes_out_at_its_height_through_a_pose_error():
         found = parallax.object_height(height, agreement, region)
         assert found is not None and abs(found - h) < 0.003, (h, found)
         table = cv2.erode(a["table"].astype(np.uint8), np.ones((15, 15), np.uint8)) > 0
-        assert abs(parallax.object_height(height, agreement, table)) < 0.002, "the table reads flat"
+        # flat is the median; the 90th percentile object_height reads by default is the noise's tail
+        assert abs(parallax.object_height(height, agreement, table, percentile=50)) < 0.002, "the table reads flat"
 
 
 def test_without_the_table_correction_the_pose_error_would_show():

@@ -4,7 +4,8 @@
 Sends no motion commands. Run this first, every session, before anything else.
 Exits non-zero if any check fails, so it can gate a launch script.
 
-    docker compose run --rm core python tools/check_hardware.py
+    systemctl --user stop roboarm-web            # it holds the serial port and the camera
+    set -a; . robot/robot.env; set +a; .venv/bin/python tools/check_hardware.py
 """
 
 import sys

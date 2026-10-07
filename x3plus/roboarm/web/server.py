@@ -1,6 +1,6 @@
 """HTTP in front of a Session. Standard library only, on purpose.
 
-The core container deliberately carries no web framework -- it has to build in a
+The arm's side deliberately carries no web framework -- it has to build in a
 minute and start in a second -- and nothing here needs one: a few JSON endpoints,
 one static page, and an MJPEG stream, which is just a response that never ends.
 ThreadingHTTPServer gives each client its own thread, so a browser holding the

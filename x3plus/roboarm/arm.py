@@ -180,7 +180,7 @@ class Arm:
 
     # ------------------------------------------------------------- lifecycle --
     # ruff wants `Self` here, which needs Python 3.11 or a typing_extensions
-    # dependency; the container is 3.10 and this is not worth either.
+    # dependency; the robot runs 3.10 and this is not worth either.
     def __enter__(self) -> Arm:
         if Rosmaster is None:
             raise ArmError(

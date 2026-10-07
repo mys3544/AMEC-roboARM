@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Release the arm so it can be moved by hand, and watch what each joint reports.
 
-    docker compose run --rm core python tools/arm_release.py          # release + watch
-    docker compose run --rm core python tools/arm_release.py --engage # re-stiffen
+    systemctl --user stop roboarm-web            # it holds the serial port
+    set -a; . robot/robot.env; set +a
+    .venv/bin/python tools/arm_release.py           # release + watch
+    .venv/bin/python tools/arm_release.py --engage  # re-stiffen
 
 SAFETY: releasing torque makes the arm limp and it WILL sag under gravity.
 Support it, or lower it to a resting position, before the countdown ends.

@@ -1,0 +1,18 @@
+# The X3 Plus's vision service: YOLOE-26 masks and Depth Anything V2, on 127.0.0.1:8760.
+# A systemd user unit, installed by robot/setup.sh; `systemctl --user status roboarm-vision`,
+# `journalctl --user -u roboarm-vision -f`.
+[Unit]
+Description=RoboARM X3 Plus vision service (127.0.0.1:8760)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/roboarm
+EnvironmentFile=%h/roboarm/robot/robot.env
+EnvironmentFile=-%h/roboarm/robot.local.env
+# .venv-ml sees JetPack's CUDA torch and TensorRT (tools/ml_env.sh): PyPI has no build of them for the Orin
+ExecStart=%h/roboarm/.venv-ml/bin/python -m vision_service.serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

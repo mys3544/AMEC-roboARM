@@ -27,10 +27,11 @@ REMOTE = "/home/jetson/roboarm"
 MEMBER = "roboarm-x3"   # this robot's project in the workspace (../../pyproject.toml)
 
 PATTERNS = ["roboarm/**/*.py", "roboarm/web/static/*.html", "tools/*.py", "tests/*.py",
-            "vision_service/*.py", "docker/*", "docs/*.md", "compose.yaml", "pyproject.toml",
-            ".dockerignore", ".gitignore",
+            "vision_service/*.py", "docs/*.md", "pyproject.toml", ".gitignore",
             # wrist camera profiles (cameras/README.md)
             "cameras/*.md", "cameras/*.env", "cameras/*/*.json",
+            # its venvs and systemd units (robot/setup.sh)
+            "robot/*",
             # the robot's desktop setup, applied on the host by tools/display_setup.sh
             "tools/*.sh", "tools/*.conf", "tools/*.xml"]
 

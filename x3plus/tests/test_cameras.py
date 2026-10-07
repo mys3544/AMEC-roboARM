@@ -72,12 +72,13 @@ def test_an_unknown_camera_is_refused_at_import():
 
 
 def test_the_way_back_to_the_sonix_is_kept():
-    """cameras/sonix.env is what compose reads to put the Sonix back, and the copy
+    """cameras/sonix.env is what the robot's services read (as robot.local.env) to put the Sonix
+    back, and the copy
     of its calibration is what the robot's data/ can be restored from."""
     env = dict(line.split("=", 1) for line in (ROOT / "cameras" / "sonix.env").read_text().splitlines()
                if line and not line.startswith("#"))
     assert env["ROBOARM_CAMERA"] == "sonix"
-    assert "Sonix" in env["ROBOARM_WRIST_CAM_DEV"]
+    assert "Sonix" in env["ROBOARM_WRIST_CAM"]
     saved = json.loads((ROOT / "cameras" / "sonix" / "table_homography.json").read_text())
     assert [e["name"] for e in saved["also"]] == ["outer", "near"]
     assert len(saved["homography"]) == 3

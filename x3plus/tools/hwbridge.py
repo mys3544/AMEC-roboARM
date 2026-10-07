@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Expose this robot's arm and wrist camera over HTTP, for a control panel elsewhere.
 
-On the robot (the `bridge` compose service does exactly this):
+On the robot (robot/roboarm-bridge.service does exactly this):
 
-    docker compose --profile bridge up -d bridge     # port 8761
+    systemctl --user start roboarm-bridge     # port 8761; stops roboarm-web
 
 Then on a laptop on the same WiFi:
 

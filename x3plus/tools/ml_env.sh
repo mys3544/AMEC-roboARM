@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The robot's model environment, ~/roboarm/.venv-ml (x3plus/PLAN.md X9): newer models next to
-# JetPack's own GPU stack, without touching it or the Docker services.
+# JetPack's own GPU stack, without touching it. The vision service runs from it (robot/).
 #
 #   bash tools/ml_env.sh            # on the robot, from ~/roboarm
 #
@@ -15,18 +15,12 @@ VENV=${VENV:-$HOME/roboarm/.venv-ml}
 PY=$VENV/bin/python
 export PATH=$HOME/.local/bin:$PATH
 
-uv venv "$VENV" --python /usr/bin/python3.10 --system-site-packages
-echo 'numpy==1.23.5' > /tmp/ml-constraints.txt
-
-# Pure-Python helpers the models need (none of them depends on torch).
-uv pip install --python "$PY" -c /tmp/ml-constraints.txt \
-    polars einops huggingface_hub hf_xet safetensors addict omegaconf plyfile imageio trimesh evo moviepy
-
-# The models' own packages, without their torch / opencv requirements.
-uv pip install --python "$PY" --no-deps \
-    ultralytics==8.4.174 polygraphy \
-    'git+https://github.com/ByteDance-Seed/Depth-Anything-3' \
-    'git+https://github.com/microsoft/MoGe.git' 'git+https://github.com/EasternJournalist/utils3d-moge.git'
+[ -d "$VENV" ] || uv venv "$VENV" --python /usr/bin/python3.10 --system-site-packages
+# Exactly the pins (robot/ml-requirements.txt, frozen from a working venv), and nothing else: sync
+# installs what is listed without resolving dependencies, so no PyPI torch can come in. The pins
+# were first got by installing the pure-Python helpers under numpy==1.23.5 and the models' own
+# packages (ultralytics, polygraphy, Depth Anything 3, MoGe) with --no-deps.
+uv pip sync --python "$PY" "$(dirname "$0")/../robot/ml-requirements.txt"
 
 # pycolmap has no aarch64 wheels; Depth Anything 3 imports it only for its COLMAP export.
 mkdir -p "$VENV/lib/python3.10/site-packages/pycolmap"

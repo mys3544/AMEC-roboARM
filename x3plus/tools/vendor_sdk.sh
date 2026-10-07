@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Yahboom's Rosmaster_Lib is not on PyPI -- it ships as a zipped egg in the
-# robot's system Python. Extract it into vendor/ so the container is
-# self-contained and the pinned copy always matches this robot's hardware.
+# robot's system Python. Extract it into vendor/ (on PYTHONPATH, robot/robot.env) so the
+# pinned copy always matches this robot's hardware, whatever the system Python holds.
 #
 # Run once, on the robot:   bash tools/vendor_sdk.sh
 set -euo pipefail

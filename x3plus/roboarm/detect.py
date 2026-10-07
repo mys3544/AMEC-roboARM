@@ -16,8 +16,8 @@ and descending order of guarantee:
     DICT_5X5_250. Different families on purpose, so the board may stay on the table.
 
   * `objects()` -- the neural detector (YOLO26, or YOLOE-26 for open-vocabulary
-    "pick up the <anything>"). Runs in the separate `vision` container and is
-    reached over HTTP; core carries no torch. If that container is not up,
+    "pick up the <anything>"). Runs in the separate vision service and is
+    reached over HTTP; this side carries no torch. If that service is not up,
     `objects()` raises `DetectorOffline` and the caller falls back to a lower rung.
     The frame is posted across and boxes come back in PIXELS -- the homography is
     applied HERE, so the vision service never needs the calibration.
@@ -635,7 +635,7 @@ def fuse(tagged: list[Target], silhouettes: list[Target],
 
 
 class DetectorOffline(RuntimeError):
-    """The vision container did not answer -- fall back to a lower rung."""
+    """The vision service did not answer -- fall back to a lower rung."""
 
 
 def _vision_post(path: str, body: bytes | None, headers: dict[str, str],
@@ -659,12 +659,12 @@ def _vision_post(path: str, body: bytes | None, headers: dict[str, str],
     except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
         raise DetectorOffline(
             f"no vision service at {url} ({exc}). Start it with "
-            f"`docker compose --profile vision up -d vision`, or use a lower rung."
+            f"`systemctl --user start roboarm-vision` on the robot, or use a lower rung."
         ) from exc
 
 
 def vision_available(url: str | None = None, timeout: float = 2.0) -> bool:
-    """Whether the vision container is up and its model loaded. Never raises."""
+    """Whether the vision service is up and its model loaded. Never raises."""
     try:
         health = _vision_post("/health", None, {}, url or cfg.DETECTOR_URL, timeout)
     except (DetectorOffline, ValueError):
@@ -1035,7 +1035,7 @@ def ladder(frame, mode: str, matrix: np.ndarray, *,
     `lens_m` is the wrist lens's height above the table (kin.camera_height),
     which lets every silhouette be read as a cube.
 
-    `mode` is one of MODES. "yolo" needs the vision container; if nothing answers
+    `mode` is one of MODES. "yolo" needs the vision service; if nothing answers
     it falls to "markers" with a note rather than failing, because a working lower
     rung beats no detection at all. "markers" is the tags alone; without `lens_m`
     a tag cannot measure its object, and the size is the tag's own.
