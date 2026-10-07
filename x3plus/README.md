@@ -40,15 +40,14 @@ macOS / Linux:
 
     curl -LsSf https://astral.sh/uv/install.sh | sh
 
-Then, from the project folder:
+Then, from the repo's top folder (this project is a member of its uv workspace,
+../README.md "Python"):
 
     uv sync --frozen
 
-That reads `uv.lock` and builds a `.venv` with exactly the versions everyone
-else is using (about 300 MB, mostly OpenCV). It does **not** need the robot.
-
-> If `uv sync --frozen` fails on your platform, run plain `uv sync` -- the lock
-> was resolved on the robot and on Windows, so a Mac may need to re-resolve.
+That reads the workspace's `uv.lock` and builds one `.venv` at the top with
+exactly the versions everyone else is using (about 300 MB, mostly OpenCV). It
+does **not** need the robot. `uv run` from this folder uses that `.venv`.
 
 ---
 

@@ -63,14 +63,13 @@ laptop (no cloud): NVIDIA's Parakeet TDT 0.6B v3, int8 ONNX, through sherpa-onnx
 knows 25 European languages, English, Slovak and Czech among them. Once:
 
 ```bash
-uv pip install sherpa-onnx                      # into .venv, from the repo root
+uv sync                                         # from the repo root: sherpa-onnx is locked
 .venv/Scripts/python console/voice.py fetch     # the model: 487 MB from sherpa-onnx's GitHub
                                                 # releases, unpacked to 670 MB in console/models/
 ```
 
-(`pip install sherpa-onnx` elsewhere. x3plus/pyproject.toml's `voice` group has the locked pair,
-sherpa-onnx 1.13.8 and sherpa-onnx-core, but `uv sync` would also take out anything installed
-by hand.) `console/models/` is gitignored (`models/` anywhere). Without sherpa-onnx or the
+(sherpa-onnx 1.13.8 and sherpa-onnx-core are the console's own dependencies,
+console/pyproject.toml, in the workspace's lock.) `console/models/` is gitignored (`models/` anywhere). Without sherpa-onnx or the
 model, the console runs as before, the Voice box says which is missing and the line that fixes
 it, and typed commands still work.
 

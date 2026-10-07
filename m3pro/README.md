@@ -34,14 +34,15 @@ serial arm, wrist camera, table calibration, web panel and their tools -- went o
 - **The vision container:** `vision_service/`, `docker/` and `compose.yaml`, the X3's neural
   detector, kept.
 
-Work from this folder; it has its own `pyproject.toml` and `uv.lock`, so its own `.venv`:
+Work from this folder. It is the member `roboarm-m3` of the repo's uv workspace
+(../README.md "Python"), so `uv run` uses the one `.venv` at the top:
 
 ```bash
+uv sync --frozen                        # once, at the top of the repo
 cd m3pro
-uv sync --frozen
 uv run --frozen python -m pytest -q     # `python -m` so that roboarm/ here is imported
 uv run --frozen ruff check roboarm tools tests vision_service
-python tools/sync_robot.py              # system Python (paramiko): push to ~/roboarm on the M3
+uv run python tools/sync_robot.py       # push to ~/roboarm on the M3, with its pins
 ```
 
 ## Mapping the arena
@@ -49,21 +50,21 @@ python tools/sync_robot.py              # system Python (paramiko): push to ~/ro
 `arena/` runs on the robot's host ROS 2 (not in a container), from `~/arena`: slam_toolbox at
 2 cm on each lidar's own scan, their range biases taken off (`scan_relay.py`, `lidars.yaml`),
 with Yahboom's EKF at 30 Hz (`arena_slam.launch.py`), and a drive page on port 8095
-(`drive_server.py`). `tools/arena_map.py` drives it from this laptop (system Python, paramiko):
+(`drive_server.py`). `tools/arena_map.py` drives it from this laptop (`uv run`, paramiko):
 
 ```bash
-python tools/arena_map.py start        # upload arena/ and start the stack; nothing moves yet
-python tools/arena_map.py snap         # the map so far, with the fence fit -> out/arena/
-python tools/arena_map.py save NAME    # -> arena/maps/NAME*, and the pose graph on the robot
-python tools/arena_map.py stop
+uv run python tools/arena_map.py start        # upload arena/ and start the stack; nothing moves yet
+uv run python tools/arena_map.py snap         # the map so far, with the fence fit -> out/arena/
+uv run python tools/arena_map.py save NAME    # -> arena/maps/NAME*, and the pose graph on the robot
+uv run python tools/arena_map.py stop
 ```
 
 Tuning, on a recording instead of the robot's battery:
 
 ```bash
-python tools/arena_map.py record NAME  # 20 s standing, the auto loop, 10 s standing -> a bag,
+uv run python tools/arena_map.py record NAME  # 20 s standing, the auto loop, 10 s standing -> a bag,
                                        # printing the live map's fence every 10 s
-python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings side by side
+uv run python tools/arena_map.py tune NAME [CONFIG ...]   # replay it through settings side by side
 ```
 
 `tune` runs `replay.sh` once per configuration, each on its own ROS domain (so neither each
@@ -78,7 +79,7 @@ and the fence over time. A configuration is a name from `CONFIGS` in the tool, o
   0.15 m/s; the loop stops 35 cm short of anything the lidars see in its path, driving by hand
   has no distance limit (whoever drives judges). The gamepad works whenever the page is not
   commanding.
-- **Bench mode:** `python tools/arena_map.py start motion:=false` -- everything is shown, every
+- **Bench mode:** `uv run python tools/arena_map.py start motion:=false` -- everything is shown, every
   command to move is refused (the page and the console grey their controls). Use it whenever
   the robot is on a table: the lidars see obstacles, not the table's edge. The gamepad still
   drives.

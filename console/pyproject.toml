@@ -1,0 +1,12 @@
+[project]
+name = "roboarm-console"
+version = "0.1.0"
+description = "One page on the laptop for both robots, with push-to-talk voice"
+requires-python = ">=3.10"
+
+# serve.py is standard library only. voice.py adds sherpa-onnx (README.md, "Voice"), whose wheels
+# need sherpa-onnx-core of the same version but say so only dynamically: named here too.
+dependencies = ["sherpa-onnx==1.13.8", "sherpa-onnx-core==1.13.8"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]

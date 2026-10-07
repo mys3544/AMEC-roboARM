@@ -24,8 +24,8 @@ Drive the robot meanwhile from http://192.168.73.66:8095/ (arena/drive_server.py
 stack: by hand, or "Auto" loops the arena slowly) or with Yahboom's gamepad. The stack runs
 detached on the robot, in its own process group, logging to ~/arena/logs/, so a dropped SSH
 session does not stop it; `stop` ends that group and nothing else.
-Runs with the SYSTEM Python 3.12 (paramiko); the password comes from ROBOARM_SSH_PASSWORD or is
-asked for.
+Runs in the repo's uv workspace (`uv run python tools/arena_map.py ...`; paramiko is in its
+`laptop` group); the password comes from ROBOARM_SSH_PASSWORD or is asked for.
 """
 
 import getpass

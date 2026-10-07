@@ -39,7 +39,7 @@ URL = f"https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/{MODE
 FILES = ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx", "tokens.txt")
 THREADS = 4   # CPU threads for one utterance; see README.md for what 1, 2, 4 and 8 measured
 FETCH = "python console/voice.py fetch"
-INSTALL = "uv pip install sherpa-onnx (from the repo root; or pip install sherpa-onnx)"
+INSTALL = "uv sync (from the repo root: sherpa-onnx is in console/pyproject.toml)"
 
 
 # --- the grammar: a sentence -> one command --------------------------------------------------

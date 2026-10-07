@@ -1,13 +1,17 @@
 [project]
-name = "roboarm"
+name = "roboarm-m3"
 version = "0.1.0"
-description = "Vision-guided manipulation demos for the Rosmaster X3 Plus"
+description = "Pick and arena mapping for the Rosmaster M3 Pro"
 requires-python = ">=3.10"
 
 # Core deps only: arm control, ArUco, table-plane geometry.
 # Deliberately NO torch/CUDA here -- the demo-safe path must stay small and fast.
 dependencies = [
     "numpy>=1.26",
+    # On the robots (Jetson, aarch64) numpy stays 1.x: ROS 2 Humble's compiled message modules and
+    # JetPack's torch / TensorRT, which their venvs see (--system-site-packages), were built against
+    # numpy 1.x and fail to import under 2.x.
+    "numpy<2; sys_platform == 'linux' and platform_machine == 'aarch64'",
     "opencv-contrib-python-headless>=4.10,<5",  # contrib = ArUco. Headless = no GUI libs.
 ]
 
