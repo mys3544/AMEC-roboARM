@@ -62,9 +62,9 @@ from dataclasses import dataclass, replace
 
 import cv2
 import numpy as np
+from roboshared import metrics
 
 from roboarm import config as cfg
-from roboarm import metrics
 from roboarm import workspace as ws
 
 # Object widths this gripper can actually deal with, both ends derived from the

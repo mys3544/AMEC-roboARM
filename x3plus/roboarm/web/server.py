@@ -57,8 +57,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import cv2
+from roboshared import metrics
 
-from roboarm import camera, metrics, sweep
+from roboarm import camera, sweep
 from roboarm import kinematics as kin
 from roboarm.arm import ArmError
 from roboarm.web.session import VIEWS, Busy, Refused, Session

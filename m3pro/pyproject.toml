@@ -7,6 +7,7 @@ requires-python = ">=3.10"
 # Core deps only: arm control, ArUco, table-plane geometry.
 # Deliberately NO torch/CUDA here -- the demo-safe path must stay small and fast.
 dependencies = [
+    "roboarm-shared",   # ../shared: what both robots do the same way
     "numpy>=1.26",
     # On the robots (Jetson, aarch64) numpy stays 1.x: ROS 2 Humble's compiled message modules and
     # JetPack's torch / TensorRT, which their venvs see (--system-site-packages), were built against
@@ -14,6 +15,9 @@ dependencies = [
     "numpy<2; sys_platform == 'linux' and platform_machine == 'aarch64'",
     "opencv-contrib-python-headless>=4.10,<5",  # contrib = ArUco. Headless = no GUI libs.
 ]
+
+[tool.uv.sources]
+roboarm-shared = { workspace = true }
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]

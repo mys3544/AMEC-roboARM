@@ -40,8 +40,9 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from roboshared import metrics
 
-from roboarm import camera, detect, grasp, metrics, sweep
+from roboarm import camera, detect, grasp, sweep
 from roboarm import config as cfg
 from roboarm import kinematics as kin
 from roboarm.arm import ArmError

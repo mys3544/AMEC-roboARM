@@ -24,8 +24,9 @@ from collections.abc import Callable
 
 import cv2
 import numpy as np
+from roboshared import metrics
 
-from roboarm import camera, metrics
+from roboarm import camera
 from roboarm import workspace as ws
 from roboarm.arm import ArmError
 from roboarm.web.bridge import ALLOWED

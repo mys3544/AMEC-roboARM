@@ -1,8 +1,8 @@
-# The lab's Python: one uv workspace for the console and both robots (README.md, "Python").
+# The lab's Python: one uv workspace for the shared package, the console and both robots (README.md, "Python").
 # One lock for all. On the laptop one .venv at the top: `uv sync` here. A robot installs only its
 # own member's pins, exported from this lock by its tools/sync_robot.py.
 [tool.uv.workspace]
-members = ["console", "x3plus", "m3pro"]
+members = ["shared", "console", "x3plus", "m3pro"]
 
 [dependency-groups]
 # Tests and lint for all three, run from each folder: `uv run python -m pytest -q`.

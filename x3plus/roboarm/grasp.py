@@ -66,8 +66,10 @@ import time
 from dataclasses import replace
 from typing import NamedTuple
 
+from roboshared import metrics
+
 from roboarm import config as cfg
-from roboarm import detect, metrics
+from roboarm import detect
 from roboarm import kinematics as kin
 from roboarm.arm import Arm, ArmError
 from roboarm.config import Pose

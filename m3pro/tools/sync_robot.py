@@ -46,6 +46,9 @@ def pins(folder: pathlib.Path) -> pathlib.Path:
 
 def local_files(extra: dict[str, pathlib.Path]) -> dict[str, pathlib.Path]:
     out = {}
+    for path in (LOCAL.parent / "shared" / "roboshared").glob("**/*.py"):   # what both robots share
+        if "__pycache__" not in path.parts:
+            out["roboshared/" + path.relative_to(LOCAL.parent / "shared" / "roboshared").as_posix()] = path
     for pattern in PATTERNS:
         for path in LOCAL.glob(pattern):
             if path.is_file() and "__pycache__" not in path.parts:

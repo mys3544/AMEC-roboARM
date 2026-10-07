@@ -1,0 +1,30 @@
+[project]
+name = "roboarm-shared"
+version = "0.1.0"
+description = "What both robots do the same way: jobs, the drop-off box, the robot side's HTTP surface, timings"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    # On the robots numpy stays 1.x (x3plus/pyproject.toml says why).
+    "numpy<2; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "opencv-contrib-python-headless>=4.10,<5",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+# Installed (editable) in the laptop's .venv, so both robots' code and tests import it; the robots
+# get the source itself, copied to ~/roboarm/roboshared by their tools/sync_robot.py.
+[build-system]
+requires = ["uv_build>=0.8,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "roboshared"
+module-root = ""
+
+[tool.ruff]
+line-length = 120
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

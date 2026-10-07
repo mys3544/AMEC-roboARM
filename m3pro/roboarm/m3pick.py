@@ -44,8 +44,9 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from roboshared import metrics
 
-from roboarm import m3arm, m3kinematics, m3vision, metrics
+from roboarm import m3arm, m3kinematics, m3vision
 
 LOOK = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90}   # the wide look: the floor from the bumper (12 cm) to 45 cm
                                              # ahead, +-17 cm aside at the near edge; a 40 mm top there is

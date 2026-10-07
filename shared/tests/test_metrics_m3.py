@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from roboarm import metrics
+from roboshared import metrics
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def test_a_span_is_counted_and_timed(reg):
     stage = reg.snapshot()["stages"]["detect"]
     assert stage["count"] == 3
     assert stage["total_s"] == pytest.approx(0.03, abs=0.02)
-    assert stage["mean_ms"] >= 9
+    assert stage["p50_ms"] >= 9
 
 
 def test_a_run_adds_up_its_top_level_stages_only(reg):
@@ -57,21 +57,6 @@ def test_only_the_runs_own_thread_is_in_it(reg):
     assert "live.detect" in reg.snapshot()["stages"], "still in the statistics"
 
 
-def test_a_scope_prefixes_everything_inside_it(reg):
-    with reg.scope("live"), reg.span("detect"), reg.span("detect.depth"):
-        reg.record("vision.raised.server", 0.03)
-    assert set(reg.snapshot()["stages"]) == {"live.detect", "live.detect.depth",
-                                             "live.vision.raised.server"}
-
-
-def test_a_recorded_duration_nests_inside_the_open_span(reg):
-    with reg.run("pick"), reg.span("vision.raised"):
-        reg.record("vision.raised.server", 0.025)
-    done = reg.snapshot()["runs"][0]
-    assert done["stages"]["vision.raised.server"]["total_s"] == pytest.approx(0.025)
-    assert "vision.raised.server" not in done["top"]
-
-
 def test_only_the_newest_run_keeps_its_timeline(reg):
     for name in ("a", "b"):
         with reg.run(name), reg.span("x"):
@@ -89,10 +74,3 @@ def test_finished_runs_are_appended_to_the_log(reg, tmp_path):
             pass
     lines = [json.loads(line) for line in reg.log_path.read_text().splitlines()]
     assert [r["name"] for r in lines] == ["sweep", "pick"]
-
-
-def test_reset_forgets_everything(reg):
-    with reg.run("x"), reg.span("y"):
-        pass
-    reg.reset()
-    assert reg.snapshot() == {"stages": {}, "runs": []}

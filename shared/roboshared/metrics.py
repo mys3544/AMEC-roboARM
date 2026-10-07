@@ -4,13 +4,15 @@
         ...                                         # timed, recorded under that name
     metrics.record("vision.raised.server", 0.031)   # a duration measured elsewhere
 
-Every duration lands in the session-wide statistics for its name -- count,
-total, mean, p90, max (the panel's Timing card, GET /api/metrics).
-While a RUN is open on a thread -- Session._run_job opens one round every job
--- each span on that thread also goes into the run's timeline, so a finished
-run says where its time went from start to finish, and how much of it no span
-accounts for. The live view's detection runs on a thread of its own: it counts
-in the statistics, never in a run.
+Every duration lands in the statistics for its name -- count, total, mean, p50,
+p90, max, last (the console's Timing card, GET /api/metrics). While a RUN is open
+on a thread -- the robots' jobs open one round every job -- each span on that
+thread also goes into the run's timeline, so a finished run says where its time
+went from start to finish, and how much of it no span accounts for. A span on
+another thread (a live view's detection) counts in the statistics, never in a run.
+
+Both robots' copies, merged (2026-10-07): the X3's record, scope, reset and
+prefixes; the M3's p50 and last.
 
 Spans nest. A span inside another is recorded with its depth, and a run's
 breakdown adds up only its TOP-level spans, so nothing is counted twice; the
@@ -33,7 +35,7 @@ import threading
 import time
 from pathlib import Path
 
-# Timed with perf_counter, not monotonic: on Windows (where the panel runs)
+# Timed with perf_counter, not monotonic: on Windows (where panels have run)
 # monotonic ticks in 15.6 ms steps, which reads a JPEG encode or a tag search
 # as 0 or 15.6 ms.
 RECENT = 500        # samples kept per stage for its percentiles
@@ -42,18 +44,20 @@ EVENTS_KEPT = 5000  # timeline entries kept per run (the ride polls the arm ~10 
 
 
 class _Stage:
-    __slots__ = ("count", "max", "recent", "total")
+    __slots__ = ("count", "last", "max", "recent", "total")
 
     def __init__(self) -> None:
         self.count = 0
         self.total = 0.0
         self.max = 0.0
+        self.last = 0.0
         self.recent: collections.deque[float] = collections.deque(maxlen=RECENT)
 
     def add(self, seconds: float) -> None:
         self.count += 1
         self.total += seconds
         self.max = max(self.max, seconds)
+        self.last = seconds
         self.recent.append(seconds)
 
     def summary(self) -> dict:
@@ -61,8 +65,10 @@ class _Stage:
             "count": self.count,
             "total_s": round(self.total, 3),
             "mean_ms": round(1000 * self.total / self.count, 1),
+            "p50_ms": round(1000 * statistics.median(self.recent), 1) if self.recent else 0.0,
             "p90_ms": round(1000 * _p90(list(self.recent)), 1),
             "max_ms": round(1000 * self.max, 1),
+            "last_ms": round(1000 * self.last, 1),
         }
 
 

@@ -53,8 +53,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
 import numpy as np
+from roboshared import metrics
 
-from roboarm import camera, m3arm, m3pick, metrics
+from roboarm import camera, m3arm, m3pick
 from roboarm.m3arm import ArmError
 from roboarm.web import bridge
 from roboarm.web.bridge import Server, send_json
