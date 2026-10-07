@@ -354,7 +354,7 @@ Exit: a piece 35 cm out is driven up to and picked; odometry checked against a t
 | Depth Anything V2 Small | relative depth: edges, then anchored metric | TensorRT FP16, 518x910, 26 ms (23.6 ms trtexec at 518x686); called over the WiFi | the same engine on the robot in the pick's loop; a second 364x644 engine for close looks; CUDA graph | 26 ms; ~12-15 ms at 364x644 (*est.*: half the patches) |
 | YOLOE-26s-seg-pf | open-set masks, names | PyTorch `.pt`, 41 ms (244 ms mean per request during a job) | TensorRT FP16; the kit's prompts baked in for track A | 9-12 ms (*est.*, PLAN.md M5) |
 | YOLO26n/s-seg on our kit | the main detector (PLAN.md M5 #1) | -- | INT8 by quantization-aware training | 3.5-4.8 ms (others' numbers) |
-| YOLO26n/s-depth | metric depth candidate | -- | TensorRT FP16 | measure (Ultralytics: n 2.7 ms on a T4) |
+| YOLO26n/s-depth | metric depth candidate -- **measured 2026-10-07, zero-shot useless here**: all five sizes on the 9 angled looks put the table at 0.39-0.47 m and read the pieces -12..+20 mm when anchored (table +-5-8 mm, worse than V2 S); only a fine-tune on our own frames could change that | PyTorch FP16 on the Orin: 40-77 ms (n..x) at 768 | TensorRT FP16 if a fine-tune wins | n 2.7 ms on a T4 (Ultralytics) |
 | MoGe-2 ViT-S | metric point map candidate | -- | ONNX -> TensorRT FP16 (a ROS 2 TensorRT node exists to learn from) | measure |
 | Depth Anything V2 Metric-Indoor-Small | metric candidate | -- | ONNX -> TensorRT FP16, as V2 Small | ~26 ms |
 | Depth Anything 3 Small | multi-view depth with known poses | -- | on the 5090 first; an engine only if it earns a place | measure |
