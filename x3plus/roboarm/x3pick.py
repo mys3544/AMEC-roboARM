@@ -2,11 +2,15 @@
 once, clean up, the drop-off box (marker 10), home -- with the X3's own eyes and hands (the user's,
 2026-10-07: "X3 has to use different object detection techniques because of missing depth camera").
 
-  * Its eyes: the wrist camera at the calibrated looks (primary, outer, near: one homography each
-    onto the table), each turned round the base (sweep: the stations), the detector ladder on every
-    frame (detect: tags, colour, YOLOE masks from the vision service, Depth Anything's raised
-    regions); a thing found again from a standstill before the grip (refine). The wide look is
-    those looks straight ahead; with `sides`, the whole ring, one ride of the base per look.
+  * Its eyes, as the X3's own panel tuned them (2026-09-18..22, restored 2026-10-08 after a first
+    run that merged all three looks and missed): the SEARCH walks the stations of the scan looks
+    (cfg.SCAN_LOOKS: the primary alone with the C930e -- the outer and near ones are less exact,
+    the outer reads ~28 mm far), nearest the arm first, the base still at each, following hints
+    (a thing cut by the picture's edge says where to look), and STOPS at the first station that
+    shows something it can pick; the SUREST of those is taken (2026-09-18: a shadow ranged as a
+    cube, 4 mm nearer than the real one, was picked by "nearest"); after the drop it looks again
+    from that station. The detector ladder on every frame (tags, colour, YOLOE masks, Depth
+    Anything's raised regions); a thing found again from a standstill before the grip (refine).
   * Its hands: grasp.pick -- open first, hover, the reach passes down, shut, the gripper's own
     read-back saying whether it holds something (so a miss is known at once, "held"), lift.
   * The box: looked for with the angled look of the 2026-10-06/07 depth tests (BOX_LOOK), the
@@ -46,6 +50,7 @@ REFINE_IF_OFF_DEG = 3   # a look already this close to head-on needs no second o
 DROP_ZONE_M = 0.080  # what lies this near the drop line was put there: not picked
 SETTLE_S = {"sonix": 1.2, "c930e": 0.4}[cfg.WRIST_CAMERA]
 SCAN_POLL_S = 0.02
+YAW_SETTLE_S = 0.15   # a look that only turned the base keeps its exposure: this much still
 VISION_CHECK_S = 30.0   # how long the vision service's answer to /health is believed
 BOX_LOOK = {2: 100, 3: 20, 4: 0, 5: 90}   # the angled look of the depth tests (2026-10-06): the table from
                                           # 15 cm out, a standing marker face on; J1 turns it round
@@ -56,7 +61,8 @@ LIFT_OVER = 0.06     # m over the release height the hand comes in above a spot 
 # step (next): kept now so the card and the shared flow have them.
 SETTINGS = {
     "speed": ("arm speed, the moves between looks", "%", 30, 100, 5, 100),
-    "free_dps": ("to a look, and back from the drop-off", "deg/s", 10, 60, 5, 30),
+    "free_dps": ("to a look", "deg/s", 10, 60, 5, 30),
+    "return_dps": ("back from the drop-off, empty-handed", "deg/s", 20, 90, 5, 60),
     "scan_dps": ("the base turning while it looks", "deg/s", 4, 24, 1, 16),
     "settle_s": ("still before a look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "settle_close_s": ("still before the box look", "s", 0.0, 2.0, 0.05, SETTLE_S),
@@ -161,6 +167,7 @@ class Picker(Task):
         self.calibration = calibration   # () -> [(matrix, survey pose, name)], the calibrated looks
         self.detector_url = detector_url
         self._vision = (0.0, False)
+        self.station_seen: sweep.Look | None = None   # where the last search found what it picked
         fit = lens_fit or {}
         self.lens = (fit.get("mount_m", lens.NOMINAL_MOUNT), fit.get("turn_rad", (0.0, 0.0, 0.0)),
                      fit.get("sag_deg_per_m", (0.0, 0.0, 0.0)))
@@ -198,13 +205,13 @@ class Picker(Task):
         return found_of(target, reach=kind_of(target) is not None and plannable(target))
 
     # --------------------------------------------------------------------------- seeing --
-    def detect_at(self, look: sweep.Look, frame) -> list[detect.Target]:
-        """What `frame`, taken from `look`, shows wholly (not cut by the picture's edge); the
-        marked picture for the watchers, the raw one kept (out/looks)."""
+    def detect_at(self, look: sweep.Look, frame, hints: bool = False) -> tuple[list[detect.Target], list[detect.Target]]:
+        """What `frame`, taken from `look`, shows: (wholly, cut by the picture's edge -- what the
+        hints read); the marked picture for the watchers, the raw one kept (out/looks)."""
         with metrics.span("detect"):
             found = detect.ladder(frame, "auto", look.matrix, nadir=look.nadir, url=self.vision_url(),
                                   lens_m=kin.camera_height(look.pose), note=lambda text: print(text, flush=True),
-                                  hints=False)
+                                  hints=hints)
         kept = [t for t in found if not t.clipped
                 and sweep.sees(look, t.x, t.y, sweep.TAG_SPAN_M if t.label.startswith("tag") else t.width_m,
                                t.height_m or sweep.OBJECT_HEIGHT_M)]
@@ -213,7 +220,7 @@ class Picker(Task):
                     (255, 255, 255), 2, cv2.LINE_AA)
         self.show(marked)
         self.save_look(look, frame, found)
-        return kept
+        return kept, [t for t in found if t.clipped]
 
     def save_look(self, look: sweep.Look, frame, found: list[detect.Target]) -> None:
         """Every look kept as the M3 keeps its own: the picture as the camera gave it (undistorted,
@@ -238,15 +245,25 @@ class Picker(Task):
             camera.write_image(str(folder / f"{stem}.jpg"), frame)
             (folder / f"{stem}.json").write_text(json.dumps(record))
 
-    def look_from(self, look: sweep.Look) -> list[detect.Target]:
-        """To `look` (repeatably: the homography holds only there), still, and what it shows."""
+    def look_from(self, look: sweep.Look, hints: bool = False, speed: str = "free_dps"):
+        """To `look` (repeatably: the homography holds only there), still, and what it shows:
+        (wholly, cut by the edge)."""
         self.check()
+        here = self.here()
+        yaw_only = all(abs(here[j] - look.pose[j]) <= 1 for j in (2, 3, 4, 5))
         with metrics.span("look.move"):
-            self.arm.move_to(look.pose, speed_dps=self.dps("free_dps"), repeatable=True)
-        with metrics.span("camera.settle"):
-            frame = self.frames().settled(self.settle())
+            self.arm.move_to(look.pose, speed_dps=self.dps(speed), repeatable=True)
+        with metrics.span("camera.settle"):   # a yaw keeps the same view: the exposure needs no new settle
+            frame = self.frames().settled(min(self.settle(), YAW_SETTLE_S) if yaw_only else self.settle())
         self.check()
-        return self.detect_at(look, frame)
+        return self.detect_at(look, frame, hints)
+
+    def scan_looks(self, calibrated: list) -> list:
+        """The calibrated looks the search walks: cfg.SCAN_LOOKS of them (all when None, or when none
+        of the named ones is calibrated)."""
+        if cfg.SCAN_LOOKS is None:
+            return calibrated
+        return [e for e in calibrated if e[2] in cfg.SCAN_LOOKS] or calibrated
 
     @staticmethod
     def station(entry: tuple, j1: float) -> sweep.Look:
@@ -310,24 +327,54 @@ class Picker(Task):
                 on_frame(self.station(entry, (before[1] + after[1]) / 2), frame)
 
     def wide_look(self, sides: bool = False) -> list[dict]:
-        """The calibrated looks straight ahead -- or, `sides`, the whole ring of stations, one ride a
-        look -- and what they show, merged (sweep.merge); what lies where this job lets go left out."""
+        """`sides`: the SEARCH (the module's docstring); else the look again from the station that
+        found what was picked -- the primary look straight ahead before any search. What lies where
+        this job lets go left out."""
         calibrated = self.calibrated()
-        seen: list[tuple[sweep.Look, detect.Target]] = []
         if sides:
-            looks = sweep.stations(calibrated, sweep.SURVEY_STEP_DEG)
-            for entry, dyaws in self.passes(calibrated, looks):
-                with metrics.span("scan"):
-                    self.ride(entry, dyaws, lambda look, frame: seen.extend((look, t) for t in self.detect_at(look, frame)))
+            seen = self.search(calibrated)
         else:
-            for entry in sorted(calibrated, key=lambda e: sweep.nearest_of(e[0])):
-                look = self.station(entry, entry[1][1])
-                seen.extend((look, t) for t in self.look_from(look))
+            look = self.station_seen or self.station(self.scan_looks(calibrated)[0], self.scan_looks(calibrated)[0][1][1])
+            seen = [(look, t) for t in self.look_from(look, speed="return_dps")[0]]
         found = [o for o in (self.as_found(t) for t in sweep.merge(seen)) if not self.dropped_here(o)]
         with self._lock:
             self.found = found
-        self.say(("looked round: " if sides else "wide look: ") + describe(found))
+        self.say(("searched: " if sides else "looked again: ") + describe(found))
         return found
+
+    def search(self, calibrated: list) -> list[tuple[sweep.Look, detect.Target]]:
+        """The scan looks' stations, the nearest the arm first -- one look's whole ring before the
+        next (a change of look moves J2-J5 and the exposure settles again) -- each from a standstill,
+        hints followed; it stops at the first station that shows something it can pick, and stays
+        there (the X3 panel's one-click search, 2026-09-21)."""
+        scan = self.scan_looks(calibrated)
+        here = self.here()
+        names = [name for _m, _p, name in scan]
+        queue = sorted(sweep.stations(scan, sweep.SURVEY_STEP_DEG), key=lambda look: (names.index(look.name), abs(look.pose[1] - here[1])))
+        visited: set[tuple[str, int]] = set()
+        seen: list[tuple[sweep.Look, detect.Target]] = []
+        while queue:
+            look = queue.pop(0)
+            if (look.name, look.pose[1]) in visited:
+                continue
+            visited.add((look.name, look.pose[1]))
+            with metrics.span("look"):
+                kept, clipped = self.look_from(look, hints=True)
+            seen.extend((look, t) for t in kept)
+            if any(kind_of(t) is not None and plannable(t) and not self.dropped_here(found_of(t)) for t in kept):
+                self.station_seen = look
+                break
+            for hint in reversed(sweep.hints(look, clipped, calibrated)):
+                if (hint.look.name, hint.look.pose[1]) not in visited:
+                    queue.insert(0, hint.look)
+        return seen
+
+    def order(self, kit: list[dict], at) -> list[dict]:
+        """The one nearest `at` when asked for; else the SUREST first (the detector's confidence: the
+        one number that told a shadow from a cube, 2026-09-18)."""
+        if at is not None:
+            return super().order(kit, at)
+        return sorted(kit, key=lambda o: -o["confidence"])
 
     def refine(self, target: detect.Target) -> detect.Target:
         """The thing seen again from the calibrated look that faces it, the base still -- the search
@@ -341,7 +388,7 @@ class Picker(Task):
         here = self.here()
         if abs(look.pose[1] - here[1]) <= REFINE_IF_OFF_DEG and all(abs(look.pose[j] - here[j]) <= 3 for j in (2, 3, 4, 5)):
             return target
-        near = [t for t in self.look_from(look) if math.hypot(t.x - target.x, t.y - target.y) <= REFIND_M]
+        near = [t for t in self.look_from(look)[0] if math.hypot(t.x - target.x, t.y - target.y) <= REFIND_M]
         if not near:
             self.say(f"looked again from J1 {look.pose[1]}: nothing within {REFIND_M * 1000:.0f} mm, the search's reading kept")
             return target

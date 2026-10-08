@@ -340,8 +340,7 @@ class Task:
             target = planned = None
             refused = []   # in reach, no plan: the arm would come too near something, or the fingers too low
             with metrics.span("plan"):
-                for o in sorted((o for o in kit if o["reach"]),
-                                key=lambda o: float(np.linalg.norm(o["centre"][:2] - (at if at is not None else [0, 0])))):
+                for o in self.order([o for o in kit if o["reach"]], at):
                     planned = self.plan(o, found)
                     if planned:
                         target = o
@@ -583,6 +582,10 @@ class Task:
         (the robot's own part of the pick's record), "held" (True / False where the robot can tell it
         holds something; left out, the look after the drop says)}; raises Refused where the arm will not."""
         raise NotImplementedError
+
+    def order(self, kit: list[dict], at) -> list[dict]:
+        """The kit things in reach in the order to try them: the nearest the robot (or `at`) first."""
+        return sorted(kit, key=lambda o: float(np.linalg.norm(o["centre"][:2] - (at if at is not None else [0, 0]))))
 
     def approach(self, refused: list[dict], found: list[dict], kit: list[dict], at) -> tuple[tuple[float, float] | None, str]:
         """(the base's move (forward, left) m that brings a kit thing in reach -- or None -- and why)."""
