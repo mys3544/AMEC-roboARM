@@ -464,7 +464,10 @@ class Task:
         except Exception as exc:  # noqa: BLE001 -- 2026-10-02: the robot's OpenCV 4.5.4 had no ArucoDetector
             self.say(f"the look for the box failed: {type(exc).__name__}: {exc}")
             seen = None
-        if seen is None:
+        if seen is None:   # kept and shown too: what was in the way (2026-10-08, not seen holding a block)
+            missed = image.copy()
+            cv2.putText(missed, f"{tag}: no marker", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)
+            self.show(missed, tag="box-missed")
             return None
         box = boxes.box_from_marker(*seen, floor_z=self.FLOOR_Z)
         box["items"] = [boxes.in_box(box, o["centre"]) for o in self.things_in_view(image, K, camera, extra)
