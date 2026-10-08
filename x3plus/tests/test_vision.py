@@ -486,10 +486,10 @@ def test_the_coarse_pass_never_merges_what_the_fine_pass_kept_apart(monkeypatch)
     assert [step for _outline, step in vdepth.raised_regions(_ramp_with_plateau(None))] == [40.0, 30.0]
 
 
-def test_without_hints_depth_alone_is_asked_once_it_answers(monkeypatch):
-    """A scan or re-look has no use for what only colour and the neural rung add
-    past the gate (the clipped, for hints): not asked at all, and the object
-    depth saw is listed the same."""
+def test_every_rung_is_asked_even_without_hints(monkeypatch):
+    """The detectors combined (the user, 2026-10-08): colour and the neural rung
+    run on every picture, a re-look's too; here the neural rung answers with
+    depth's own box, so the two are one object, combined."""
     asked = []
 
     def fake_post(path, body, headers, url, timeout):
@@ -502,8 +502,8 @@ def test_without_hints_depth_alone_is_asked_once_it_answers(monkeypatch):
     found = detect.everything(np.zeros((480, 640, 3), np.uint8), MM_PER_PIXEL,
                               nadir=(0.139, -0.05), lens_m=None, url="http://x",
                               note=lambda s: None, hints=False)
-    assert asked == ["/raised"]
-    assert [t.label for t in found] == ["raised"]
+    assert asked[0] == "/raised" and "colour" in asked and len(asked) == 3
+    assert [t.label for t in found] == ["raised+1"]
 
 
 def test_without_hints_the_other_rungs_still_stand_in_when_depth_cannot(monkeypatch):

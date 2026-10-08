@@ -936,6 +936,36 @@ def distinct(targets: list[Target], tol_m: float = SAME_OBJECT_M) -> list[Target
     return sorted(kept, key=lambda t: math.hypot(t.x, t.y))
 
 
+# A silhouette over a raised region is the same outline when its width agrees this well; a neural
+# box of a part of it ("book", 16 mm on a 26 mm cube) is not, and would drag the size off the kit.
+SIZE_AGREE_M = 0.006
+
+
+def combine(standing: list[Target], shapes: list[Target], tol_m: float = SAME_OBJECT_M) -> list[Target]:
+    """Each raised region and the whole silhouettes of the other rungs that overlap it (within
+    `tol_m`, their width within SIZE_AGREE_M of its own), as ONE object: the centre the mean of all
+    their readings, the size the median, the turn the region's own (its outline is the top face
+    alone), as sure as all of them together.
+
+    The user's "detectors combined" (2026-10-08): the old X3 ran every rung on every picture, and
+    since 2026-09-24 depth alone placed and sized each object -- its outline of a white cube on
+    white paper wandered 10 mm between two looks and two picks closed on nothing."""
+    out = []
+    for region in standing:
+        near = [s for s in shapes if not s.clipped and math.dist((s.x, s.y), (region.x, region.y)) <= tol_m
+                and abs(s.width_m - region.width_m) <= SIZE_AGREE_M]
+        if not near:
+            out.append(region)
+            continue
+        every = [region, *near]
+        sure = 1.0 - math.prod(1.0 - min(max(float(t.confidence), 0.0), 1.0) for t in every)
+        out.append(replace(region, x=float(np.mean([t.x for t in every])), y=float(np.mean([t.y for t in every])),
+                           width_m=float(np.median([t.width_m for t in every])),
+                           length_m=float(np.median([t.length_m for t in every])),
+                           confidence=sure, label=f"{region.label}+{len(near)}"))
+    return out
+
+
 def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
                lens_m: float | None, url: str | None = None,
                note=print, hints: bool = True) -> list[Target]:
@@ -950,11 +980,10 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
     Rungs that are unavailable are skipped, not fallen back through: `url`
     None means the vision service is known to be down.
 
-    `hints=False` skips colour and neural once depth has answered.
-    Past the gate below, what those rungs contribute is only what is cut off
-    at the frame's edge, and that only serves a SEARCH, as hints of where to
-    look next (sweep.hints). A scan or a re-look has no use for it, and on
-    2026-09-24 those rungs cost 440 ms a frame of the 670 (roboarm.metrics).
+    Every rung runs on every picture, and what they see of one object is
+    combined (combine()). `hints` no longer skips colour and neural once depth
+    has answered (2026-09-24 .. 2026-10-08, to save the 440 ms a frame they cost
+    then): the user wanted the detectors combined back.
     """
     with metrics.span("detect.tags"):
         tagged = markers(frame, matrix, tag_m=cfg.OBJECT_TAG_M, nadir=nadir, lens_m=lens_m)
@@ -970,19 +999,17 @@ def everything(frame, matrix: np.ndarray, *, nadir: tuple[float, float] | None,
             note(f"  vision service down ({exc}); untagged pale cubes may be missed")
         except ValueError as exc:
             note(f"  vision service refused the frame: {exc}")
-    shapes: list[Target] = []
-    if hints or not depth_answered:
-        with metrics.span("detect.colour"):
-            shapes = coloured(frame, matrix, nadir=nadir, lens_m=lens_m)
-        if url and not vision_down:
-            try:
-                with metrics.span("detect.neural"):
-                    shapes += objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
-            except DetectorOffline as exc:
-                note(f"  vision service down ({exc}); untagged pale cubes may be missed")
-            except ValueError as exc:
-                note(f"  vision service refused the frame: {exc}")
-    standing = distinct(standing)
+    with metrics.span("detect.colour"):
+        shapes = coloured(frame, matrix, nadir=nadir, lens_m=lens_m)
+    if url and not vision_down:
+        try:
+            with metrics.span("detect.neural"):
+                shapes += objects(frame, matrix, url=url, nadir=nadir, lens_m=lens_m)
+        except DetectorOffline as exc:
+            note(f"  vision service down ({exc}); untagged pale cubes may be missed")
+        except ValueError as exc:
+            note(f"  vision service refused the frame: {exc}")
+    standing = combine(distinct(standing), shapes)
     others = [s for s in distinct(shapes)
               if all(math.dist((s.x, s.y), (d.x, d.y)) > SAME_OBJECT_M for d in standing)]
     if depth_answered:

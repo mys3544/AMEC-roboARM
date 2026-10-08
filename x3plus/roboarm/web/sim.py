@@ -39,6 +39,9 @@ REAL_SURVEY = {1: 90, 2: 56, 3: 23, 4: 10, 5: 89, 6: 30}
 # frame and takes the mean, so the arm must not jump far between the two (the
 # robot yaws 12 deg/s and reads 4 times a second: 3 deg between reads).
 SIM_GLIDE_STEP_DEG = 1.0
+# How finely a move is played out here: the real servos sweep a command's line over its run time
+# (arm.py sends a whole move as one), so the simulator steps through it to be caught mid-way.
+SIM_STEP_DEG = 8.0
 SIM_GLIDE_STEP_S = 0.01
 
 
@@ -88,7 +91,7 @@ class SimArm:
     """
 
     def __init__(self, world: World | None = None, pose: Pose | None = None,
-                 time_scale: float = 1.0, step_deg: float = cfg.MAX_STEP_DEG):
+                 time_scale: float = 1.0, step_deg: float = SIM_STEP_DEG):
         self.world = world or World()
         self.pose: Pose = dict(pose or cfg.HOME_POSE)
         self.time_scale = time_scale
@@ -230,6 +233,12 @@ class SimArm:
     def home(self, **kw) -> Pose:
         return self.move_to(dict(cfg.HOME_POSE), **kw)
 
+    def follow(self, poses: list[Pose], speed_dps: float = 40.0) -> Pose:
+        """Arm.follow: here, each pose in turn."""
+        for pose in poses:
+            self.move_to(pose, speed_dps=speed_dps, settle=False)
+        return self.read()
+
     def set_gripper(self, angle: int, **kw) -> Pose:
         self._gripper_target = angle
         pose = self.move_to({cfg.GRIPPER_ID: angle}, **kw)
@@ -243,14 +252,6 @@ class SimArm:
         target = cfg.GRIPPER_CLOSED if angle is None else min(int(angle), cfg.GRIPPER_CLOSED)
         self._close_target = target
         return self.set_gripper(target, **kw)
-
-    def close_until_stopped(self, speed_dps: float, squeeze_deg: int) -> bool:
-        """Arm.close_until_stopped: in here the fingers stop on a block exactly."""
-        self.close_gripper(speed_dps=speed_dps)
-        held = self.grasped()
-        if held:
-            self.set_gripper(min(self.read()[cfg.GRIPPER_ID] + squeeze_deg, cfg.GRIPPER_CLOSED))
-        return held
 
     def _real_tip(self) -> tuple[float, float, float]:
         """Where the fingertips really are: the model's answer, pulled back along

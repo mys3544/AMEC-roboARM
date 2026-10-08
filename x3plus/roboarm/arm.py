@@ -121,12 +121,13 @@ def send_pose(bot: Rosmaster, pose: Pose, run_time: int) -> None:
 STEP_LEAD_S = 0.03
 # The longest one command runs (the SDK cuts a run time at 2 s), and how often a stop is asked for
 # while one runs: a stop halts the servos where they are (Arm._halt).
-SEGMENT_MAX_S = 1.5
+SEGMENT_MAX_S = 1.9
 INTERRUPT_POLL_S = 0.04
-# Arm.close_until_stopped: how often the gripper is read while it closes, and how far behind where
-# it should be by now it has to have fallen, not moving, to have been stopped by something.
-FEEL_POLL_S = 0.05
-STALL_LAG_DEG = 4.0
+# Every pose this far apart on a command's line is checked against the mast before it is sent, and
+# follow() sends the next pose this far through the one before -- the M3's numbers (m3arm STEP_DEG,
+# BLEND).
+PATH_CHECK_DEG = 5.0
+BLEND = 0.8
 
 
 def _sendable(joint: int, angle: float) -> int:
@@ -308,9 +309,24 @@ class Arm:
         with self._io:
             return float(self.bot.get_battery_voltage())
 
-    def _plan(self, targets: Pose) -> tuple[Pose, Pose]:
-        """(where we are, the legal goal) for `targets`, partial poses allowed."""
-        start = self.read()
+    def _check_path(self, start: Pose, goal: Pose) -> None:
+        """Every pose on the straight line from `start` to `goal`, PATH_CHECK_DEG apart, as clear of
+        the mast as a goal must be -- or, from a start already nearer (left there by hand), no
+        nearer than that. The servos sweep a command's line themselves, so it is checked before
+        anything is sent (the M3's way: m3arm.glide_problem)."""
+        biggest = max(abs(goal[j] - start[j]) for j in (2, 3, 4))
+        n = max(1, math.ceil(biggest / PATH_CHECK_DEG))
+        floor = min(cfg.MIN_MAST_CLEARANCE_M, cfg.mast_clearance(start))
+        for k in range(1, n):
+            pose = {j: start[j] + (goal[j] - start[j]) * k / n for j in cfg.JOINT_IDS}
+            if cfg.mast_clearance(pose) < floor - 0.002:
+                raise ArmError(
+                    f"the way there would come within {cfg.mast_clearance(pose) * 1000:.0f} mm of the camera "
+                    f"mast: J2-J4 {[start[j] for j in (2, 3, 4)]} -> {[goal[j] for j in (2, 3, 4)]}")
+
+    def _plan(self, targets: Pose, start: Pose | None = None) -> tuple[Pose, Pose]:
+        """(where we are -- or `start` -- , the legal goal) for `targets`, partial poses allowed."""
+        start = self.read() if start is None else start
         # Only what the caller actually asked for has to be a legal target. Joints
         # they did not mention keep their current angle, eased back inside the safe
         # envelope if they have drifted out of it -- otherwise one joint resting
@@ -392,6 +408,25 @@ class Arm:
             above[joint] = min(goal[joint] + self.APPROACH_DEG, cfg.SAFE_LIMITS[joint][1])
         return above
 
+    def follow(self, poses: list[Pose], speed_dps: float = 40.0) -> Pose:
+        """Through `poses` (partial ones allowed, each filled from the one before) without stopping
+        at each: the next is sent BLEND of the way through the one before, and the servos turn the
+        corner -- the M3's follow() (m3arm). Every line checked as move_to's. Returns the last goal,
+        reached; no settle, no read-back."""
+        self._cancel_glide()
+        here = self.read()
+        for i, targets in enumerate(poses):
+            _, goal = self._plan(targets, start=here)
+            last = i == len(poses) - 1
+            if not self._glide(here, goal, speed_dps, blend=1.0 if last else BLEND):
+                continue
+            if last:
+                return goal
+            steps, _run = self._segments(here, goal, speed_dps)
+            leg_from = {j: here[j] + (goal[j] - here[j]) * (steps - 1) / steps for j in cfg.JOINT_IDS}
+            here = {j: round(leg_from[j] + BLEND * (goal[j] - leg_from[j])) for j in cfg.JOINT_IDS}
+        return here
+
     def glide(self, targets: Pose, speed_dps: float = 12.0) -> Pose:
         """Start moving toward `targets` and return at once, with the legal goal.
 
@@ -427,16 +462,23 @@ class Arm:
             thread.join(timeout=5.0)
         self._glide_thread = None
 
+    def _segments(self, start: Pose, goal: Pose, speed_dps: float) -> tuple[int, int]:
+        """(commands, run time ms each) for the move: as few as the SDK's run time allows."""
+        biggest = max(abs(goal[j] - start[j]) for j in cfg.JOINT_IDS)
+        steps = max(1, math.ceil(biggest / self.step_deg), math.ceil(biggest / speed_dps / SEGMENT_MAX_S))
+        return steps, max(20, int(1000 * (biggest / steps) / speed_dps))
+
     def _glide(self, start: Pose, goal: Pose, speed_dps: float,
-               cancel: threading.Event | None = None) -> bool:
-        """Interpolated move, no command larger than step_deg or longer than
-        SEGMENT_MAX_S. Returns False if already there.
+               cancel: threading.Event | None = None, blend: float = 1.0) -> bool:
+        """The move as ONE command -- more only where the SDK's run time runs out --
+        its line checked against the mast first. Returns False if already there.
 
         Each command's run time sets the pace (speed_dps), and the servos interpolate
         it themselves, all arriving together: the path is the straight line between
-        two legal poses either way. With `cancel`, the move stops being sent as soon
-        as the event is set (that is a glide() being held or superseded; whoever set
-        it sends the next command).
+        the two poses. With `cancel`, the move stops being sent as soon as the event
+        is set (that is a glide() being held or superseded; whoever set it sends the
+        next command). `blend` < 1: return that far through the last command, the
+        servos still on their way (follow()).
         """
         # A joint outside our safe range glides back from WHERE IT IS whenever a
         # command can say that angle -- the SDK's range, or below it by raw pulses
@@ -450,9 +492,8 @@ class Arm:
         biggest = max(abs(goal[j] - start[j]) for j in cfg.JOINT_IDS)
         if biggest == 0:
             return False
-
-        steps = max(1, math.ceil(biggest / self.step_deg), math.ceil(biggest / speed_dps / SEGMENT_MAX_S))
-        run_time = max(20, int(1000 * (biggest / steps) / speed_dps))
+        self._check_path(start, goal)
+        steps, run_time = self._segments(start, goal, speed_dps)
         # Each step is sent STEP_LEAD_S before the last one is due to end, so the servos take the new
         # target while still moving and the move is one motion. Sent only once a step had ended, every
         # step was a stop and a start: the arm went in 8-degree jerks (the user's "retarded movement",
@@ -466,7 +507,7 @@ class Arm:
                 {j: round(start[j] + frac * (goal[j] - start[j])) for j in cfg.JOINT_IDS},
                 run_time,
             )
-            if self._wait_out(run_time / 1000 - (lead if i < steps else 0.0), cancel):
+            if self._wait_out(run_time / 1000 * (blend if i == steps else 1.0) - (lead if i < steps else 0.0), cancel):
                 return True
         return True
 
@@ -510,57 +551,6 @@ class Arm:
         target = cfg.GRIPPER_CLOSED if angle is None else min(int(angle), cfg.GRIPPER_CLOSED)
         self._close_target = target
         return self.set_gripper(target, **kw)
-
-    def _gripper_angle(self) -> float | None:
-        """The gripper now, from its raw count (one query); None if it did not answer."""
-        with self._io:
-            read_id, raw = self.bot.get_uart_servo_value(cfg.GRIPPER_ID)
-        if read_id != cfg.GRIPPER_ID or raw <= 0:
-            return None
-        return cfg.angle_from_raw_exact(cfg.GRIPPER_ID, raw)
-
-    def close_until_stopped(self, speed_dps: float, squeeze_deg: int) -> bool:
-        """Close the fingers at `speed_dps`, watching them, and the moment something
-        between them stops them, hold `squeeze_deg` past where they stopped. True:
-        stopped by something; False: shut on nothing.
-
-        A close aimed past the piece, and only then backed off, drove the servo on at
-        full torque until told otherwise -- the clicking the user heard as the fingers
-        over-closed on the cube (2026-10-08). Stopped is: not moving while well
-        behind where the close should be by now, after it has got going (or, never
-        having moved, for a third of a second -- shut on it already).
-        """
-        self._cancel_glide()
-        pose = self.read()
-        start, target = pose[cfg.GRIPPER_ID], cfg.GRIPPER_CLOSED
-        if start >= target - cfg.READBACK_TOLERANCE_DEG:
-            return False
-        run_s = min(SEGMENT_MAX_S, (target - start) / speed_dps)
-        self._send({**pose, cfg.GRIPPER_ID: target}, int(run_s * 1000))
-        self._gripper_target = self._close_target = target
-        began, last = time.monotonic(), float(start)
-        now: float | None = last
-        for _ in range(math.ceil((run_s + 1.0) / FEEL_POLL_S)):
-            time.sleep(FEEL_POLL_S)
-            now = self._gripper_angle()
-            if now is None:
-                continue
-            if now >= target - cfg.READBACK_TOLERANCE_DEG:
-                return False
-            elapsed = time.monotonic() - began
-            behind = start + (target - start) * min(1.0, elapsed / run_s) - now
-            still = now - last < 1.0
-            if still and behind > STALL_LAG_DEG and (now - start >= 3 or elapsed >= 0.35):
-                break
-            last = now
-        else:
-            now = self._gripper_angle()
-            if now is None or now >= target - cfg.READBACK_TOLERANCE_DEG:
-                return False
-        hold = min(round(now) + squeeze_deg, target)
-        self._send({**pose, cfg.GRIPPER_ID: hold}, run_time=0)
-        self._gripper_target = hold
-        return True
 
     def grasped(self) -> bool:
         """True if a close attempt was stopped short by an object between the fingers.

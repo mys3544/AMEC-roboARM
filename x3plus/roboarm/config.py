@@ -186,7 +186,12 @@ DROP_SPREAD_M = 0.100
 # dead servo. Recovery is to command a legal angle -- the SDK validates the angle
 # sent, not the angle the joint is currently at.
 
-HOME_POSE = {1: 90, 2: 90, 3: 90, 4: 90, 5: 90, 6: 150}  # upright, gripper open
+# The M3's home, as the X3 can take it (the user, 2026-10-08: "the same as M3"). The M3's
+# (90, 180, 5, 0, 90, 0) folds back over its base, the camera level and the fingers open; the X3's
+# mast stops J2 at 108, so: the upper arm leaned back, the wrist over the base, the tool and the
+# wrist camera pointing forward 2 deg under level (lens.camera_pose with the C930e's fit), 121 mm
+# clear of the mast, the fingers open. Until then upright: (90, 90, 90, 90, 90, 150).
+HOME_POSE = {1: 90, 2: 102, 3: 70, 4: 6, 5: 90, 6: 30}
 
 # MEASURED 2026-09-07 by stepping J6 and measuring the fingertip gap. A RISING
 # servo angle CLOSES the gripper -- the opposite of what this file assumed, which
@@ -296,11 +301,13 @@ REACH_OFFSET_SLOPE = 0.30
 # commanded and reported angle, so anything inside this is not a fault.
 READBACK_TOLERANCE_DEG = 4.0
 
-# Largest single command arm.py sends; bigger moves are split. The servos carry
-# a command out themselves at the pace its run time sets, so no command can slam
-# a joint across its range -- and few long commands are one smooth motion, where
-# 8-degree ones (until 2026-10-08) were a stop and a start every 8 degrees.
-MAX_STEP_DEG = 30.0
+# Largest single command arm.py sends: none smaller than a whole move, as the M3
+# moves (the user, 2026-10-08) -- a move is split only where the SDK's 2 s run time
+# runs out (arm.SEGMENT_MAX_S). The servos carry a command out themselves at the
+# pace its run time sets, so no command can slam a joint across its range; the
+# line they sweep is checked against the mast first (Arm._check_path). 8-degree
+# commands (until 2026-10-08) were a stop and a start every 8 degrees.
+MAX_STEP_DEG = 180.0
 
 # --------------------------------------------------------- kinematics (m) ---
 # MEASURED on the physical robot 2026-09-03, from a photo with dimensions marked.

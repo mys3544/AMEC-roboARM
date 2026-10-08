@@ -31,6 +31,7 @@ import json
 import math
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import cv2
@@ -54,6 +55,11 @@ YAW_SETTLE_S = 0.15   # a look that only turned the base keeps its exposure: thi
 VISION_CHECK_S = 30.0   # how long the vision service's answer to /health is believed
 BOX_LOOK = {2: 100, 3: 20, 4: 0, 5: 90}   # the angled look of the depth tests (2026-10-06): the table from
                                           # 15 cm out, a standing marker face on; J1 turns it round
+# The robot's own front, in the arm's frame: its wheels show in the looks that face down beside it
+# (2026-10-08: the front-right one at (0, -105) mm read as raised, once as a lying block, and was
+# reached for). Nothing there is picked, and nothing there is a hint.
+BODY_FRONT_M = 0.080
+BODY_HALF_WIDTH_M = 0.160
 LIFT_OVER = 0.06     # m over the release height the hand comes in above a spot in the box
 
 # What the console's arm card tunes (POST /pick/settings): key -> (what it is, unit, lowest, highest, step,
@@ -69,6 +75,7 @@ SETTINGS = {
     "scan_dps": ("the base turning while it looks", "deg/s", 4, 24, 1, 16),
     "settle_s": ("still before a look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "settle_close_s": ("still before the box look", "s", 0.0, 2.0, 0.05, SETTLE_S),
+    "reach_passes": ("corrections after the descent (0: it grips where it lands)", "", 0, 3, 1, 0),
     "reach_offset_mm": ("aim this much further out than seen", "mm", -30, 40, 1, round(cfg.REACH_OFFSET_M * 1000)),
     "release_s": ("open at the drop-off before going back", "s", 0.0, 1.0, 0.05, 0.15),
     "drive_cm_s": ("driving speed", "cm/s", 1.0, 10.0, 0.5, 5.0),
@@ -86,6 +93,21 @@ def kind_of(target: detect.Target) -> str | None:
     if not target.graspable or not kit.footprint_fits(target.width_m, target.length_m):
         return None
     return "block" if target.length_m >= BLOCK_RATIO * target.width_m else "cube"
+
+
+def on_body(target: detect.Target) -> bool:
+    return target.x < BODY_FRONT_M and abs(target.y) < BODY_HALF_WIDTH_M
+
+
+def kit_sized(target: detect.Target) -> detect.Target:
+    """A reading that is a kit piece (roboshared.kit.nearest) with the piece's own size -- the user's
+    30 and 40 mm cubes and 30 x 60 blocks, nothing else (2026-10-08): the camera reads them ~3 mm
+    narrow. Anything else as it was read."""
+    item = kit.nearest(target.width_m, target.length_m)
+    if item is None:
+        return target
+    _kind, width, length, height = item
+    return replace(target, width_m=width, length_m=length, height_m=height)
 
 
 def found_of(target: detect.Target, reach: bool | None = None) -> dict:
@@ -217,9 +239,10 @@ class Picker(Task):
             found = detect.ladder(frame, "auto", look.matrix, nadir=look.nadir, url=self.vision_url(),
                                   lens_m=kin.camera_height(look.pose), note=lambda text: print(text, flush=True),
                                   hints=hints)
-        kept = [t for t in found if not t.clipped
-                and sweep.sees(look, t.x, t.y, sweep.TAG_SPAN_M if t.label.startswith("tag") else t.width_m,
-                               t.height_m or sweep.OBJECT_HEIGHT_M)]
+        found = [t for t in found if not on_body(t)]
+        kept = [t for t in (kit_sized(t) for t in found if not t.clipped)
+                if sweep.sees(look, t.x, t.y, sweep.TAG_SPAN_M if t.label.startswith("tag") else t.width_m,
+                              t.height_m or sweep.OBJECT_HEIGHT_M)]
         marked = detect.annotate(frame, look.matrix, found)
         cv2.putText(marked, f"{look.name} J1 {look.pose[1]}", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                     (255, 255, 255), 2, cv2.LINE_AA)
@@ -442,7 +465,8 @@ class Picker(Task):
         offset = self.cfg["reach_offset_mm"] / 1000
         with self.step("grip"), self.narrated():
             try:
-                held = grasp.pick(self.arm, t, reach_offset_m=offset, speeds=self.grip_speeds())
+                held = grasp.pick(self.arm, t, reach_offset_m=offset, speeds=self.grip_speeds(),
+                                  passes=int(self.cfg["reach_passes"]))
             except grasp.GraspError as exc:
                 raise Refused(np.array([t.x, t.y]), f"refused: {exc}") from exc
         try:
@@ -496,9 +520,9 @@ class Picker(Task):
         return way
 
     def carry(self, way: list[dict]) -> None:
-        for pose in way:
-            self.check()
-            self.arm.move_to(pose, speed_dps=self.dps("carry_dps"), settle=False)
+        self.check()
+        if way:   # one motion through the way, as the M3 carries (Arm.follow)
+            self.arm.follow(way, speed_dps=self.dps("carry_dps"))
 
     def drop_on_line(self, extra: float) -> None:
         try:

@@ -11,7 +11,14 @@ WIDTH_SLACK_M = 0.007
 LENGTH_SLACK_M = 0.012
 
 
+def nearest(width: float, length: float):
+    """The kit piece (KIT's row) a top face `width` x `length` m (narrow way first) is, as seen from
+    above, the nearest in size -- a standing block shows a cube's, and is taken for the cube -- or
+    None."""
+    fits = [item for item in KIT if abs(width - item[1]) <= WIDTH_SLACK_M and length <= item[2] + LENGTH_SLACK_M]
+    return min(fits, key=lambda item: abs(width - item[1]) + abs(length - item[2])) if fits else None
+
+
 def footprint_fits(width: float, length: float) -> bool:
-    """Whether a top face `width` x `length` m (narrow way first) is a kit piece's, as seen from above
-    -- a standing block shows a cube's."""
-    return any(abs(width - w) <= WIDTH_SLACK_M and length <= ln + LENGTH_SLACK_M for _k, w, ln, _h in KIT)
+    """Whether a top face `width` x `length` m (narrow way first) is a kit piece's."""
+    return nearest(width, length) is not None

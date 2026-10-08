@@ -46,8 +46,8 @@ from roboarm.web.server import Server, send_bytes, send_json, send_mjpeg
 # Everything a caller may invoke on the arm. Anything else is a 400, so a bug on
 # the laptop cannot reach into the SDK object behind it.
 ALLOWED = frozenset({
-    "read", "read_fine", "move_to", "glide", "moving", "home", "set_gripper", "open_gripper",
-    "close_gripper", "close_until_stopped", "grasped", "hold", "release", "engage", "out_of_range", "battery",
+    "read", "read_fine", "move_to", "follow", "glide", "moving", "home", "set_gripper", "open_gripper",
+    "close_gripper", "grasped", "hold", "release", "engage", "out_of_range", "battery",
 })
 
 

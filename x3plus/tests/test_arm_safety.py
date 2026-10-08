@@ -447,7 +447,7 @@ def test_an_interrupted_move_stops_at_a_legal_intermediate_pose(monkeypatch):
     sent_before_stop = 1
     a.interrupt = lambda: len(board.sent) >= sent_before_stop
     with a, pytest.raises(ArmError, match="interrupted"):
-        a.move_to({1: 20})
+        a.move_to({1: 20}, speed_dps=20)   # 3.6 s: two commands (the SDK's 2 s run time)
     moves = [angles for angles, run_time in board.sent if run_time != 0]  # 0 = the exit hold
     assert len(moves) == sent_before_stop
     assert 20 < board.pose[1] < RESTING[1], "stopped part way, not at the goal"
@@ -485,7 +485,7 @@ def test_a_glide_moves_in_the_background_and_answers_reads_meanwhile(monkeypatch
 def test_hold_stops_a_glide_where_it_is(monkeypatch):
     a, board = build(monkeypatch)
     with a:
-        a.glide({1: 20}, speed_dps=100)  # 237 ms a command, 3 of them
+        a.glide({1: 20}, speed_dps=20)  # 3.6 s: two commands of 1.8 s (the SDK's 2 s run time)
         threading.Event().wait(0.12)
         a.hold()
         assert not a.moving()
@@ -595,19 +595,3 @@ def test_the_fine_reading_is_the_raw_count_unrounded(monkeypatch):
         assert abs(fine[joint] - cfg.angle_from_raw(joint, count)) <= 0.5
     assert fine[2] != round(fine[2])
 
-
-# ------------------------------------------------------------- feeling for it --
-def test_a_close_feels_for_the_object_and_holds_just_past_it(monkeypatch):
-    """2026-10-08: aimed past the cube, the servo drove on at full torque and clicked. Now the
-    close stops where the object stops the fingers, and holds a squeeze past that."""
-    a, board = build(monkeypatch, pose={**RESTING, 6: 100}, sticky={6: (-999, 141)})
-    with a:
-        assert a.close_until_stopped(speed_dps=45, squeeze_deg=4) is True
-        assert board.sent[-1] == ([RESTING[j] for j in (1, 2, 3, 4, 5)] + [145], 0)
-
-
-def test_a_close_on_nothing_says_so(monkeypatch):
-    a, board = build(monkeypatch, pose={**RESTING, 6: 100})
-    with a:
-        assert a.close_until_stopped(speed_dps=45, squeeze_deg=4) is False
-        assert board.pose[6] == cfg.GRIPPER_CLOSED

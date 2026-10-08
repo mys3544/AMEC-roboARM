@@ -82,3 +82,26 @@ def test_the_search_looks_past_a_spot_given_up(rig):
     found = picker.wide_look(sides=True)
     assert any(abs(o["centre"][0] - 0.050) < 0.02 and abs(o["centre"][1] - 0.160) < 0.02 for o in found), \
         [np.round(o["centre"][:2], 3).tolist() for o in found]
+
+
+def test_the_detectors_overlapping_on_one_cube_are_combined():
+    from roboarm import detect
+    region = detect.Target(x=0.200, y=-0.090, width_m=0.027, length_m=0.030, angle_deg=10.0, label="raised",
+                           confidence=0.6, height_m=0.027)
+    mask = detect.Target(x=0.190, y=-0.100, width_m=0.029, length_m=0.031, angle_deg=40.0, label="cube",
+                         confidence=0.5)
+    elsewhere = detect.Target(x=0.120, y=0.050, width_m=0.030, length_m=0.030, angle_deg=0.0, label="colour 1")
+    (one,) = detect.combine([region], [mask, elsewhere])
+    assert abs(one.x - 0.195) < 1e-9 and abs(one.y + 0.095) < 1e-9
+    assert one.angle_deg == 10.0 and one.label == "raised+1" and abs(one.confidence - 0.8) < 1e-9
+
+
+def test_kit_sizes_and_the_robots_own_wheels():
+    from roboarm import detect
+    read = detect.Target(x=0.17, y=-0.09, width_m=0.027, length_m=0.033, angle_deg=0.0, label="raised",
+                         height_m=0.027)
+    sized = x3pick.kit_sized(read)
+    assert (sized.width_m, sized.length_m, sized.height_m) == (0.030, 0.030, 0.030) and sized.x == read.x
+    wheel = detect.Target(x=0.003, y=-0.106, width_m=0.028, length_m=0.058, angle_deg=0.0, label="raised")
+    assert x3pick.on_body(wheel) and not x3pick.on_body(read)
+
