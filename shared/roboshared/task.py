@@ -134,6 +134,7 @@ class Task:
         self.box_drops: list[np.ndarray] = []   # in the box's own terms (in_box): they move with it
         self.box_dir = self.BOX_LOOKS[0] if self.BOX_LOOKS else 0   # J1 it was last seen at: looked for there first
         self.line_drops = 0                     # let go on the line out on the right this job (no box)
+        self.skip: list[np.ndarray] = []        # spots this job has given up (pick's `skip`): looked past
         self.offset = np.zeros(2)   # m the base has driven since the job began (forward, left): the drop-off
                                     # box stays where it was, so the base goes back before a drop
         self.cfg = {key: spec[5] for key, spec in self.SETTINGS.items()}
@@ -330,6 +331,7 @@ class Task:
         and the gripper open. Things at the `skip` spots are left; a move the arm refuses on the
         way to the grip raises Refused."""
         started = time.monotonic()
+        self.skip = [np.asarray(spot, float)[:2] for spot in skip]
         looked_round = found is None
         if found is None:
             with self.step("look.wide"):
@@ -337,8 +339,7 @@ class Task:
         at = None if at is None else np.asarray(at, float)
         approach = 0
         while True:
-            kit = [o for o in found if o["kind"] and (kind is None or o["kind"] == kind)
-                   and all(np.linalg.norm(o["centre"][:2] - spot) > MATCH_M for spot in skip)]
+            kit = [o for o in found if o["kind"] and (kind is None or o["kind"] == kind) and not self.given_up(o)]
             target = planned = None
             refused = []   # in reach, no plan: the arm would come too near something, or the fingers too low
             with metrics.span("plan"):
@@ -498,6 +499,10 @@ class Task:
         if self.box is None:
             self.say(f"no drop-off box: marker {boxes.BOX_MARKER[1]} not seen all round -- dropping on the line out on the right")
         return self.box
+
+    def given_up(self, o: dict) -> bool:
+        """`o` lies at a spot this job has given up (refused, or missed twice): left where it is."""
+        return any(np.linalg.norm(np.asarray(o["centre"][:2], float) - spot) <= MATCH_M for spot in self.skip)
 
     def dropped_here(self, o: dict) -> bool:
         """`o` lies where this job lets go -- in the drop-off box (its walls and 2 cm round) or on the

@@ -351,7 +351,8 @@ class Picker(Task):
         """The scan looks' stations, the nearest the arm first -- one look's whole ring before the
         next (a change of look moves J2-J5 and the exposure settles again) -- each from a standstill,
         hints followed; it stops at the first station that shows something it can pick, and stays
-        there (the X3 panel's one-click search, 2026-09-21)."""
+        there (the X3 panel's one-click search, 2026-09-21) -- not at one this job has given up
+        (2026-10-08: it stopped at a cube missed twice, and the clean-up ended with more in reach)."""
         scan = self.scan_looks(calibrated)
         here = self.here()
         names = [name for _m, _p, name in scan]
@@ -366,7 +367,8 @@ class Picker(Task):
             with metrics.span("look"):
                 kept, clipped = self.look_from(look, hints=True)
             seen.extend((look, t) for t in kept)
-            if any(kind_of(t) is not None and plannable(t) and not self.dropped_here(found_of(t)) for t in kept):
+            if any(kind_of(t) is not None and plannable(t) and not self.dropped_here(found_of(t))
+                   and not self.given_up(found_of(t)) for t in kept):
                 self.station_seen = look
                 break
             for hint in reversed(sweep.hints(look, clipped, calibrated)):

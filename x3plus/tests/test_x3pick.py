@@ -73,3 +73,12 @@ def test_the_found_dict_is_the_shared_flows():
     o = x3pick.found_of(target, reach=True)
     assert o["kind"] == "block" and o["period"] == 180 and o["yaw"] == 20.0
     assert abs(o["centre"][2] - (x3pick.TABLE_Z + 0.015)) < 1e-12 and o["whole"]
+
+
+def test_the_search_looks_past_a_spot_given_up(rig):
+    _world, _arm, picker = rig([sim.Block(0.150, 0.010, 0.040, (0, 120, 255)),
+                                sim.Block(0.050, 0.160, 0.030, (255, 100, 0))])
+    picker.skip = [np.array([0.150, 0.010])]   # missed twice (clean_up)
+    found = picker.wide_look(sides=True)
+    assert any(abs(o["centre"][0] - 0.050) < 0.02 and abs(o["centre"][1] - 0.160) < 0.02 for o in found), \
+        [np.round(o["centre"][:2], 3).tolist() for o in found]
