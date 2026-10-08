@@ -60,6 +60,9 @@ BOX_LOOK = {2: 100, 3: 20, 4: 0, 5: 90}   # the angled look of the depth tests (
 # the picture's edge, no box found anywhere, the cubes dropped on the line) -- then BOX_LOOK's own 0
 # for a box nearer than that, its marker on a wall.
 BOX_TILTS = (10, 0)
+# The calibrated looks the survey rides, nearest-seeing first: "near" too (2026-10-08: a 40 mm cube
+# 124 mm out was cut by the primary look's near edge in every picture, and left on the table).
+SURVEY_LOOKS = ("near", "primary")
 # The robot's own front, in the arm's frame: its wheels show in the looks that face down beside it
 # (2026-10-08: the front-right one at (0, -105) mm read as raised, once as a lying block, and was
 # reached for). Nothing there is picked, and nothing there is a hint.
@@ -72,16 +75,16 @@ LIFT_OVER = 0.06     # m over the release height the hand comes in above a spot 
 # step (next): kept now so the card and the shared flow have them.
 SETTINGS = {
     "speed": ("arm speed, the moves between looks", "%", 30, 100, 5, 100),
-    "free_dps": ("to a look", "deg/s", 10, 120, 5, 60),
+    "free_dps": ("to a look", "deg/s", 10, 150, 5, 90),
     "return_dps": ("back from the drop-off, empty-handed", "deg/s", 20, 120, 5, 90),
     "near_dps": ("over the thing, before the descent", "deg/s", 10, 120, 5, 60),
     "descend_dps": ("down to the grip (the reach passes)", "deg/s", 5, 60, 1, 25),
     "carry_dps": ("holding it: up, and to the drop-off", "deg/s", 20, 120, 5, 90),
-    "scan_dps": ("the base turning while it looks", "deg/s", 4, 24, 1, 16),
+    "scan_dps": ("the base turning while it surveys", "deg/s", 4, 30, 1, 20),
     "settle_s": ("still before a look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "settle_close_s": ("still before the box look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "reach_passes": ("corrections after the descent (0: it grips where it lands)", "", 0, 3, 1, 0),
-    "grip_deg": ("the fingers close this far past where the piece first touches them", "deg", 0, 10, 0.5, 4),
+    "grip_deg": ("the fingers close this far past where the piece first touches them (1.8 a mm)", "deg", 0, 12, 0.5, 6),
     "reach_offset_mm": ("aim this much further out than seen", "mm", -30, 40, 1, round(cfg.REACH_OFFSET_M * 1000)),
     "release_s": ("open at the drop-off before going back", "s", 0.0, 1.0, 0.05, 0.15),
     "drive_cm_s": ("driving speed", "cm/s", 1.0, 10.0, 0.5, 5.0),
@@ -196,6 +199,7 @@ class Picker(Task):
     DROP_OUT = float(math.hypot(*kin.forward({**cfg.DROP_POSE, cfg.GRIPPER_ID: cfg.GRIPPER_CLOSED})[:2]))
     DROP_SPREAD = cfg.DROP_SPREAD_M
     BOX_LOOKS = (180, 135, 90, 45, 10)   # J1 turns 10-180 (cfg.SAFE_LIMITS): the arm's front half circle
+    BOX_RELOOK = False   # straight from the pick to the box as the job found it (the user, 2026-10-08)
 
     def __init__(self, call, frames, calibration, out: Path | None = None, settle_s: float | None = None,
                  rng=None, drive=None, battery=None, detector_url: str | None = cfg.DETECTOR_URL,
@@ -399,22 +403,31 @@ class Picker(Task):
         return found
 
     def survey(self, calibrated: list) -> list[tuple[sweep.Look, detect.Target]]:
-        """Every station of the scan looks ONCE, from the end of the ring nearest the arm to the
-        other, each from a standstill; one object seen from two stations is the one that saw it
-        nearer the middle of its picture (sweep.merge). No hints, no stopping at the first find:
+        """Each of SURVEY_LOOKS' rings of stations in ONE smooth turn of the base (ride: a picture as
+        each station's yaw goes by), the nearest-seeing look first, from the end nearest the arm,
+        the next look back the other way; one object seen from two stations is the one that saw it
+        nearer the middle of its picture (sweep.merge). No hints, no stopping at the first find
+        (the user, 2026-10-08: the whole area once, smooth -- standstill stations went go-and-stop,
         nearest-first went left, right, left, and searches that stopped at a find covered the table
-        in parts, again after every pick (the user, 2026-10-08)."""
+        in parts, again after every pick)."""
+        entries = sorted([e for e in calibrated if e[2] in SURVEY_LOOKS] or self.scan_looks(calibrated),
+                         key=lambda e: sweep.nearest_of(e[0]))
         here = self.here()
-        ring: list[sweep.Look] = []
-        for entry in self.scan_looks(calibrated):
-            stations = sorted(sweep.stations([entry], sweep.SURVEY_STEP_DEG), key=lambda look: look.pose[1])
-            if stations and abs(stations[-1].pose[1] - here[1]) < abs(stations[0].pose[1] - here[1]):
-                stations.reverse()
-            ring += stations
         seen: list[tuple[sweep.Look, detect.Target]] = []
-        for look in ring:
-            with metrics.span("look"):
-                seen.extend((look, t) for t in self.look_from(look)[0])
+
+        def on_frame(look: sweep.Look, frame) -> None:
+            seen.extend((look, t) for t in self.detect_at(look, frame)[0])
+
+        forward = None
+        for entry in entries:
+            dyaws = sorted({look.dyaw for look in sweep.stations([entry], sweep.SURVEY_STEP_DEG)})
+            j1s = [sweep.pose_at(entry[1], d)[1] for d in dyaws]
+            if forward is None:
+                forward = abs(j1s[0] - here[1]) <= abs(j1s[-1] - here[1])
+            if dyaws:
+                with metrics.span("scan"):
+                    self.ride(entry, dyaws if forward else dyaws[::-1], on_frame)
+            forward = not forward   # the next look starts where this one ended
         return merged(seen)
 
     def order(self, kit: list[dict], at) -> list[dict]:

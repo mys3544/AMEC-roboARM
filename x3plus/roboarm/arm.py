@@ -125,7 +125,7 @@ def send_pose(bot: Rosmaster, pose: Pose, run_time: int) -> None:
 # stop on the way. A route through several poses is one stream (follow()).
 STREAM_S = 0.05
 STREAM_AHEAD = 1.3
-RAMP_S = 0.3
+RAMP_S = 0.2   # 0.3 for the first try (2026-10-08): the user found the arm slow next to the M3
 INTERRUPT_POLL_S = 0.04   # how often a stop is asked for while a setpoint runs: it halts the servos (_halt)
 # Every pose this far apart on a move's line is checked against the mast before anything is sent --
 # the M3's way (m3arm STEP_DEG).

@@ -122,6 +122,7 @@ class Task:
     FOOTPRINT = ((-0.16, 0.13), 0.12)   # the base's (x0, x1), half its width: base frame, m
     DROP_OUT = DROP_SPREAD = 0.0  # the line out on the right: from this far out, this much further (m)
     BOX_LOOKS: ClassVar[tuple] = ()   # J1s the box is looked for at, the first where it is looked first
+    BOX_RELOOK: ClassVar[bool] = True   # holding, look at the box again before the drop (False: straight there)
 
     def __init__(self, call, snapshot, out: Path | None = None, settle_s: float | None = None, rng=None,
                  drive=None, battery=None):
@@ -417,9 +418,14 @@ class Task:
         with self.step("drop"):
             # the box looked at from where it was found (a check pose on the way, and over the spot, read
             # the marker close and askew, 2026-10-05: the box cm and up to 30 deg off, a cube onto its wall)
-            self.to_box_view()
-            again = self.see_box("box view")
-            if again is None:
+            # -- unless the robot goes straight there, to the box as the job found it (BOX_RELOOK)
+            again = None
+            if self.BOX_RELOOK:
+                self.to_box_view()
+                again = self.see_box("box view")
+            if not self.BOX_RELOOK:
+                again = self.box
+            elif again is None:
                 self.say(f"the box not seen at J1 {self.box_dir}, where it was: looking for it all round, holding")
                 again = self.box_search(holding=True, tried=self.box_dir)
             into = None

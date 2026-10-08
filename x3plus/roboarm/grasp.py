@@ -105,12 +105,12 @@ TRANSIT_DPS = 90.0   # the trip to the drop pose, holding it
 PLACE_DESCEND_DPS = 25.0
 # The fingers. Closing speed does not change the grip -- the servo's torque
 # does -- so both directions run at the speed the panel's buttons use.
-GRIPPER_DPS = 60
+GRIPPER_DPS = 150   # the M3's gripper_dps (60 until 2026-10-08: opening before a pick took 1.7 s)
 # ... except in a pick. Measured 2026-09-24 (roboarm.metrics): the close from
 # fully open took 2.7 s and the drop's open 2.4 s, 38 s of a 247 s "clear the
 # table". The close runs twice as fast; the drop lets go in one quick move,
 # because once the object is falling nothing depends on how the fingers part.
-GRIPPER_CLOSE_DPS = 120
+GRIPPER_CLOSE_DPS = 150
 DROP_OPEN_DPS = 600
 
 
