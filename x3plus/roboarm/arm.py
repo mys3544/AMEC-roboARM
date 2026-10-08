@@ -65,7 +65,10 @@ def read_pose(bot: Rosmaster, attempts: int = 4) -> dict[int, int | None]:
     pose: dict[int, int | None] = {}
     for _ in range(attempts):
         pose = dict(zip(cfg.JOINT_IDS, bot.get_uart_servo_angle_array()))
-        doubtful = [j for j, v in pose.items() if v <= 0]
+        # Only J2 goes below 0; another joint's 0 is a real angle (J4 at the near and box looks),
+        # and asking it again held the line 50 ms a read -- the survey's turn stalled at each picture
+        # of the near ring (2026-10-08). -1 is the SDK's "no reply" for any joint.
+        doubtful = [j for j, v in pose.items() if v < 0 or (j == 2 and v <= 0)]
         if not doubtful:
             return pose
         for joint in doubtful:
@@ -124,7 +127,7 @@ def send_pose(bot: Rosmaster, pose: Pose, run_time: int) -> None:
 # STREAM_AHEAD intervals to run, so the next always arrives before the servos reach it and they never
 # stop on the way. A route through several poses is one stream (follow()).
 STREAM_S = 0.05
-STREAM_AHEAD = 1.3
+STREAM_AHEAD = 2.0   # 1.3 the first day: a setpoint late by 15 ms let the servos stop
 RAMP_S = 0.2   # 0.3 for the first try (2026-10-08): the user found the arm slow next to the M3
 INTERRUPT_POLL_S = 0.04   # how often a stop is asked for while a setpoint runs: it halts the servos (_halt)
 # Every pose this far apart on a move's line is checked against the mast before anything is sent --
@@ -533,15 +536,17 @@ class Arm:
         total, at, peak = ramped(distance, speed_dps)
         steps = max(1, math.ceil(total / STREAM_S), math.ceil(peak * total / self.step_deg))
         dt = total / steps
+        began = time.monotonic()
         for i in range(1, steps + 1):
             if self.interrupt is not None and self.interrupt():
                 self._halt()
                 raise ArmError("move interrupted -- the arm is holding where it stopped")
-            last = i == steps
-            self._send(_along(way, legs, distance * (1.0 if last else at(i * dt))),
-                       max(20, int(1000 * dt * (1.0 if last else STREAM_AHEAD))))
-            if self._wait_out(dt, cancel):
+            self._send(_along(way, legs, distance * (1.0 if i == steps else at(i * dt))),
+                       max(20, int(1000 * dt * STREAM_AHEAD)))
+            # on the clock, not dt after dt: a late setpoint is caught up, not passed on to all the rest
+            if self._wait_out(began + i * dt - time.monotonic(), cancel):
                 return True
+        self._wait_out((STREAM_AHEAD - 1) * dt, cancel)   # the last one's run
         return True
 
     def _wait_out(self, seconds: float, cancel: threading.Event | None) -> bool:
