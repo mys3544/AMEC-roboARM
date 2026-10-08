@@ -60,7 +60,6 @@ NOT HANDLED, and worth saying out loud rather than discovering during a demo:
 
 from __future__ import annotations
 
-import itertools
 import math
 import random
 import time
@@ -115,19 +114,19 @@ GRIPPER_CLOSE_DPS = 120
 DROP_OPEN_DPS = 600
 
 
-def gap_angle(gap_m: float) -> int:
-    """The gripper angle that leaves the fingertips `gap_m` apart -- interpolated in
-    cfg.GRIPPER_GAP_MM (cfg.gripper_for_gap rounds to its rows) -- at most closed."""
-    rows = sorted(cfg.GRIPPER_GAP_MM.items(), key=lambda r: r[1])   # by the gap, rising
-    gap_mm = gap_m * 1000
-    if gap_mm >= rows[-1][1]:
-        return rows[-1][0]
-    if gap_mm <= rows[0][1]:
-        return cfg.GRIPPER_CLOSED
-    for (a0, g0), (a1, g1) in itertools.pairwise(rows):
-        if g0 <= gap_mm <= g1:
-            return min(round(a0 + (gap_mm - g0) / (g1 - g0) * (a1 - a0)), cfg.GRIPPER_CLOSED)
-    return cfg.GRIPPER_CLOSED
+# Where the kit's pieces first touch both fingers, J6, held as a pick holds them -- measured with
+# tools/gripper_check.py on 2026-10-08 (the user holding each between the fingers): 30 mm at 126,
+# 40 mm at 108, firm 2.5 deg later. GRIPPER_GAP_MM, the gap at the very tips, puts them at 141 and
+# 124: a piece is held deeper in, where the fingers stand ~9 mm closer, so every close aimed by the
+# table went 15-20 deg past the piece -- the over-closing the user heard all day.
+TOUCH_DEG = {0.030: 126.0, 0.040: 108.0}
+
+
+def touch_angle(width_m: float) -> float:
+    """J6 where a piece `width_m` across first touches both fingers: the straight line through
+    TOUCH_DEG (1.8 deg a mm)."""
+    (w0, a0), (w1, a1) = sorted(TOUCH_DEG.items())
+    return a0 + (width_m - w0) * (a1 - a0) / (w1 - w0)
 
 
 class GraspError(ArmError):
@@ -382,17 +381,18 @@ def plan(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> P
 
 def pick(arm: Arm, target: detect.Target,
          reach_offset_m: float = cfg.REACH_OFFSET_M, speeds: dict | None = None,
-         passes: int = REACH_PASSES, grip_m: float | None = None) -> bool | None:
+         passes: int = REACH_PASSES, grip_deg: float | None = None) -> bool | None:
     """Pick the target up. Returns whether anything is actually held.
 
     False is a normal outcome, not an error: the fingers closed and found nothing
     between them. Either way the arm ends up lifted and clear, so the caller can
     retry or go back and look again. `speeds` (deg/s): "approach", "descend",
     "carry" -- the module's own by default. `passes`: corrections after the
-    descent (_reach_to); 0 grips where the descent landed. `grip_m`: close only
-    to the object's width less this, as the M3 closes, and answer None -- a few
-    degrees past the object are too few for the read-back to tell from nothing,
-    so whether it holds is the look's after; None (default): the old X3's close.
+    descent (_reach_to); 0 grips where the descent landed. `grip_deg`: close
+    only this far past where the object first touches the fingers (touch_angle),
+    as the M3 closes to a width, and answer None -- a few degrees past the object
+    are too few for the read-back to tell from nothing, so whether it holds is
+    the look's after; None (default): the old X3's close.
     """
     speeds = speeds or {}
     approach_dps = speeds.get("approach", APPROACH_DPS)
@@ -460,13 +460,14 @@ def pick(arm: Arm, target: detect.Target,
     say("closing")
     with metrics.span("pick.close"):
         time.sleep(0.2)
-        if grip_m is not None:
+        if grip_deg is not None:
             # The M3's close (the user, 2026-10-08: the X3's fingers "still over closing" with
-            # every close aimed past the piece): to its width -- the kit's own, x3pick.kit_sized
-            # -- less grip_m, and no further.
-            shut = gap_angle(target.width_m - grip_m)
-            say(f"closing to {(target.width_m - grip_m) * 1000:.0f} mm (J6 {shut}): {grip_m * 1000:.1f} mm inside "
-                f"the {target.width_m * 1000:.0f} mm piece")
+            # every close aimed past the piece): to where the piece -- the kit's own width,
+            # x3pick.kit_sized -- touches the fingers, grip_deg on, and no further.
+            touch = touch_angle(target.width_m)
+            shut = min(round(touch + grip_deg), cfg.GRIPPER_CLOSED)
+            say(f"closing to J6 {shut}: {grip_deg:.1f} deg past where a {target.width_m * 1000:.0f} mm piece "
+                f"first touches the fingers (J6 {touch:.0f})")
             arm.close_gripper(shut, speed_dps=GRIPPER_CLOSE_DPS)
             with metrics.span("pick.lift"):
                 lift(arm, target.x, target.y, step.pitch, speed_dps=carry_dps)

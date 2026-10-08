@@ -6,7 +6,7 @@
 Over the X3 bridge (:8761, /arm/call), no job running. The close reads the gripper's raw count after
 every step (read_fine) and stops the moment the piece holds it back -- it lags the command by
 LAG_DEG twice running -- then leaves the fingers where they stopped (no squeeze) and says which
-angle that was and what the table makes of it. 2026-10-08: the fingers "still over closing" at the
+angle that was against grasp.TOUCH_DEG and the tip-gap table. 2026-10-08: the fingers "still over closing" at the
 table's 28 mm for a 30 mm cube.
 """
 
@@ -50,8 +50,8 @@ def main() -> int:
         call("set_gripper", args.at, speed_dps=60)
         print(f"fingers at {args.at} (table: {cfg.gripper_gap(args.at) * 1000:.0f} mm) -- read {gripper_now():.1f}")
         return 0
-    table = grasp.gap_angle(args.mm / 1000)
-    print(f"a {args.mm:.0f} mm piece: the table says contact at J6 {table}; closing {args.start}..{args.stop} "
+    table = round(grasp.touch_angle(args.mm / 1000))
+    print(f"a {args.mm:.0f} mm piece: grasp.TOUCH_DEG says first touch at J6 {table}; closing {args.start}..{args.stop} "
           f"by {args.step}")
     lagging = 0
     for angle in range(args.start, args.stop + 1, args.step):
@@ -63,8 +63,8 @@ def main() -> int:
         if lagging >= 2:
             call("set_gripper", round(now), speed_dps=30)
             print(f"CONTACT: the {args.mm:.0f} mm piece stops the fingers at J6 {now:.1f} "
-                  f"(the table puts {args.mm:.0f} mm at {table}; at {now:.0f} it says "
-                  f"{cfg.gripper_gap(round(now)) * 1000:.1f} mm). Fingers left there, no squeeze.")
+                  f"(grasp.TOUCH_DEG: first touch at {table}; the tip-gap table says "
+                  f"{cfg.gripper_gap(round(now)) * 1000:.1f} mm there). Fingers left there, no squeeze.")
             return 0
     print("no contact before the stop: nothing between the fingers, or the piece is narrower than that")
     return 1

@@ -740,3 +740,9 @@ def test_a_drop_lets_go_in_one_quick_move(monkeypatch):
     grasp.drop(Arm(), extra_m=0.0)
     assert calls == [(cfg.GRIPPER_OPEN, grasp.DROP_OPEN_DPS, False)]
     assert grasp.DROP_OPEN_DPS >= 4 * grasp.GRIPPER_DPS
+
+
+def test_the_close_aims_where_the_kit_touches_the_fingers():
+    """Measured 2026-10-08 (tools/gripper_check.py): 30 mm first touches at J6 126, 40 mm at 108."""
+    assert grasp.touch_angle(0.030) == 126.0 and grasp.touch_angle(0.040) == 108.0
+    assert abs(grasp.touch_angle(0.035) - 117.0) < 1e-9

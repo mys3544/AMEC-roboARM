@@ -44,7 +44,7 @@ def test_one_pick_takes_the_cube_to_the_line_on_the_right_and_goes_home(rig):
     assert arm.read()[2] == cfg.HOME_POSE[2]
     last = state["last"]
     assert last["picked"] and last["kind"].endswith("mm cube") and last["yaw_from"] == "outline"
-    assert any("mm inside the 40 mm piece" in e["text"] for e in picker.log())   # grasp.py's narration
+    assert any("past where a 40 mm piece first touches" in e["text"] for e in picker.log())   # grasp.py's narration
 
 
 def test_a_miss_is_told_by_the_look_after_as_the_m3s(rig):
@@ -55,7 +55,7 @@ def test_a_miss_is_told_by_the_look_after_as_the_m3s(rig):
     state = run(picker, "pick_once")
     assert state["missed"] == 1 and state["picked"] == 0
     assert any("still there" in e["text"] for e in picker.log())
-    assert any("inside the 40 mm piece" in e["text"] for e in picker.log())
+    assert any("past where a 40 mm piece first touches" in e["text"] for e in picker.log())
 
 
 def test_clean_up_takes_both_and_says_why_it_stopped(rig):
