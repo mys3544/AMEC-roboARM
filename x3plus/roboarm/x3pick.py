@@ -449,7 +449,9 @@ class Picker(Task):
         here = self.here()
         if abs(look.pose[1] - here[1]) <= REFINE_IF_OFF_DEG and all(abs(look.pose[j] - here[j]) <= 3 for j in (2, 3, 4, 5)):
             return target
-        near = [t for t in self.look_from(look)[0] if math.hypot(t.x - target.x, t.y - target.y) <= REFIND_M]
+        # a kit piece only: a part of one read on its own (23 mm, 2026-10-08) closed the fingers 13 deg too far
+        near = [t for t in self.look_from(look)[0]
+                if math.hypot(t.x - target.x, t.y - target.y) <= REFIND_M and kind_of(t) is not None]
         if not near:
             self.say(f"looked again from J1 {look.pose[1]}: nothing within {REFIND_M * 1000:.0f} mm, the search's reading kept")
             return target
