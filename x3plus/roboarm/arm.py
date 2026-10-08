@@ -116,6 +116,11 @@ def send_pose(bot: Rosmaster, pose: Pose, run_time: int) -> None:
         bot.set_uart_servo_angle_array([pose[j] for j in cfg.JOINT_IDS], run_time=run_time)
 
 
+# How long before a step is due to end the next one is sent (Arm._glide): the servos blend them into
+# one motion. A little more than the serial round trip of a pose.
+STEP_LEAD_S = 0.03
+
+
 def _sendable(joint: int, angle: float) -> int:
     """The nearest angle send_pose() can command for `joint`: inside the SDK's range, or
     below it as far as a raw pulse reaches."""
@@ -438,6 +443,11 @@ class Arm:
 
         steps = max(1, math.ceil(biggest / self.step_deg))
         run_time = max(20, int(1000 * (biggest / steps) / speed_dps))
+        # Each step is sent STEP_LEAD_S before the last one is due to end, so the servos take the new
+        # target while still moving and the move is one motion. Sent only once a step had ended, every
+        # step was a stop and a start: the arm went in 8-degree jerks (the user's "retarded movement",
+        # 2026-10-08). The last step is waited out in full: the move ends where it says.
+        lead = STEP_LEAD_S if steps > 1 else 0.0
         for i in range(1, steps + 1):
             if self.interrupt is not None and self.interrupt():
                 raise ArmError("move interrupted -- the arm is holding where it stopped")
@@ -446,9 +456,10 @@ class Arm:
                 {j: round(start[j] + frac * (goal[j] - start[j])) for j in cfg.JOINT_IDS},
                 run_time,
             )
+            wait = run_time / 1000 - (lead if i < steps else 0.0)
             if cancel is None:
-                time.sleep(run_time / 1000)
-            elif cancel.wait(run_time / 1000):
+                time.sleep(max(0.0, wait))
+            elif cancel.wait(max(0.0, wait)):
                 return True
         return True
 
@@ -462,10 +473,14 @@ class Arm:
     def open_gripper(self, **kw) -> Pose:
         return self.set_gripper(cfg.GRIPPER_OPEN, **kw)
 
-    def close_gripper(self, **kw) -> Pose:
-        # An object stops the fingers short of the target, which is a successful
-        # grasp, not a fault. grasped() tells the two apart.
-        return self.set_gripper(cfg.GRIPPER_CLOSED, **kw)
+    def close_gripper(self, angle: int | None = None, **kw) -> Pose:
+        """Close to `angle` (fully, GRIPPER_CLOSED, by default). An object stops the fingers
+        short of it, which is a successful grasp, not a fault; grasped() tells the two apart. A
+        close aimed just past the object strains the servo far less than one aimed at fully shut
+        (grasp.closing_angle)."""
+        target = cfg.GRIPPER_CLOSED if angle is None else min(int(angle), cfg.GRIPPER_CLOSED)
+        self._close_target = target
+        return self.set_gripper(target, **kw)
 
     def grasped(self) -> bool:
         """True if a close attempt was stopped short by an object between the fingers.
@@ -479,9 +494,10 @@ class Arm:
             wide object stops the fingers exactly where open would leave them. So
             this only answers after close_gripper() actually asked them to close.
         """
-        if self._gripper_target != cfg.GRIPPER_CLOSED:
+        target = getattr(self, "_close_target", None)
+        if target is None or self._gripper_target != target:
             return False
-        return self.read()[cfg.GRIPPER_ID] < cfg.GRIPPER_CLOSED - cfg.READBACK_TOLERANCE_DEG
+        return self.read()[cfg.GRIPPER_ID] < target - cfg.READBACK_TOLERANCE_DEG
 
     # ---------------------------------------------------------------- torque --
     def hold(self) -> Pose:

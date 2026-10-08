@@ -140,7 +140,9 @@ class Task:
         saved = None if out is None else out / "settings.json"
         if saved is not None and saved.exists():
             with contextlib.suppress(ValueError, OSError):
-                self.set_settings(json.loads(saved.read_text()), save=False)
+                # a setting since dropped (an older panel's, say) is left out, not the end of the file
+                self.set_settings({k: v for k, v in json.loads(saved.read_text()).items() if k in self.SETTINGS},
+                                  save=False)
         self.rng = rng or np.random.default_rng()
         self.frame: bytes | None = None   # the last look, marked, as JPEG
         self.found: list[dict] = []

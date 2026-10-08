@@ -239,8 +239,10 @@ class SimArm:
     def open_gripper(self, **kw) -> Pose:
         return self.set_gripper(cfg.GRIPPER_OPEN, **kw)
 
-    def close_gripper(self, **kw) -> Pose:
-        return self.set_gripper(cfg.GRIPPER_CLOSED, **kw)
+    def close_gripper(self, angle: int | None = None, **kw) -> Pose:
+        target = cfg.GRIPPER_CLOSED if angle is None else min(int(angle), cfg.GRIPPER_CLOSED)
+        self._close_target = target
+        return self.set_gripper(target, **kw)
 
     def _real_tip(self) -> tuple[float, float, float]:
         """Where the fingertips really are: the model's answer, pulled back along
@@ -265,15 +267,16 @@ class SimArm:
                     continue
                 near = math.hypot(block.x - x, block.y - y) < 0.012
                 low = above_table < 0.030
-                if (near and low and self._gripper_target == cfg.GRIPPER_CLOSED
+                if (near and low and self._gripper_target == getattr(self, "_close_target", None)
                         and cfg.gripper_gap(cfg.GRIPPER_OPEN) > block.size > 0.013):
                     block.held = True
                     self.pose[cfg.GRIPPER_ID] = _angle_for_gap(block.size)
 
     def grasped(self) -> bool:
-        if self._gripper_target != cfg.GRIPPER_CLOSED:
+        target = getattr(self, "_close_target", None)
+        if target is None or self._gripper_target != target:
             return False
-        return self.read()[cfg.GRIPPER_ID] < cfg.GRIPPER_CLOSED - cfg.READBACK_TOLERANCE_DEG
+        return self.read()[cfg.GRIPPER_ID] < target - cfg.READBACK_TOLERANCE_DEG
 
     # ---------------------------------------------------------------- torque --
     def hold(self) -> Pose:

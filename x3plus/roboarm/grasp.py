@@ -60,6 +60,7 @@ NOT HANDLED, and worth saying out loud rather than discovering during a demo:
 
 from __future__ import annotations
 
+import itertools
 import math
 import random
 import time
@@ -91,20 +92,23 @@ FINGER_CLEARANCE_M = 0.012
 # torque for as long as it is held there -- that is how the battery went from 12.0 V
 # to 10.6 V against the camera mast. A few degrees of overlap grips just as well and
 # draws a fraction of the current.
-SQUEEZE_DEG = 6
+SQUEEZE_DEG = 4   # 6 until 2026-10-08: the held block clicked
 
-# Transit above the table, with nothing near the fingers. MEASURED 2026-09-11:
-# a base yaw at 40 deg/s lands the camera within 2.5 mm of where 20 deg/s
-# does, so 30 is a safe middle for every move that is not the descent.
-APPROACH_DPS = 30.0
-DESCEND_DPS = 8.0   # slow: this is the step that can touch something
-# The trip to the drop pose with the object held: a known route with nothing to
-# measure on the way, so twice the approach speed (user's wish, 2026-09-22).
-TRANSIT_DPS = 60.0
-# Putting down: the object is already held, the height is 6 mm above where it
-# was picked, and nothing has to be measured on the way -- so faster than the
-# pick's descent, slower than a transit.
-PLACE_DESCEND_DPS = 12.0
+# The M3's speeds (its m3pick SETTINGS: near 60, descend 25, free 90), the user's wish 2026-10-08
+# ("as fast as the M3 arm"), with the X3's steps sent overlapped (arm.STEP_LEAD_S) so they are one
+# motion. Until then: approach 30 (2026-09-11: a base yaw at 40 deg/s landed the camera within 2.5 mm
+# of where 20 did), descent 8, transit 60. The descent stops 27 mm above the table and the reach
+# passes measure where it landed, so 25 risks nothing the slow one did not. x3pick passes the
+# console's settings in instead (`speeds`).
+APPROACH_DPS = 60.0
+DESCEND_DPS = 25.0
+TRANSIT_DPS = 90.0   # the trip to the drop pose, holding it
+PLACE_DESCEND_DPS = 25.0
+# How far past the piece's own width the fingers are told to close (closing_angle): it stops them,
+# grasped() reads the shortfall. Aimed at fully shut the servo pushed ~10 mm past a 26 mm block at full
+# torque until the check, and clicked (2026-10-08); 5 mm is still 9-13 degrees, well over the read-back's
+# 4-degree tolerance, so "holding" still reads true with the width off by a few mm.
+CLOSE_PAST_M = 0.005
 # The fingers. Closing speed does not change the grip -- the servo's torque
 # does -- so both directions run at the speed the panel's buttons use.
 GRIPPER_DPS = 60
@@ -114,6 +118,22 @@ GRIPPER_DPS = 60
 # because once the object is falling nothing depends on how the fingers part.
 GRIPPER_CLOSE_DPS = 120
 DROP_OPEN_DPS = 600
+
+
+def closing_angle(width_m: float) -> int:
+    """The gripper angle that closes the fingers CLOSE_PAST_M inside a thing `width_m` across --
+    interpolated in cfg.GRIPPER_GAP_MM (cfg.gripper_for_gap rounds to its rows) -- at most closed."""
+    rows = sorted(cfg.GRIPPER_GAP_MM.items(), key=lambda r: r[1])   # by the gap, rising
+    gap_mm = (width_m - CLOSE_PAST_M) * 1000
+    angle = cfg.GRIPPER_CLOSED
+    for (a0, g0), (a1, g1) in itertools.pairwise(rows):
+        if g0 <= gap_mm <= g1:
+            angle = a0 + (gap_mm - g0) / (g1 - g0) * (a1 - a0)
+            break
+    else:
+        if gap_mm > rows[-1][1]:
+            angle = rows[-1][0]
+    return round(min(angle, cfg.GRIPPER_CLOSED))
 
 
 class GraspError(ArmError):
@@ -367,13 +387,18 @@ def plan(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> P
 
 
 def pick(arm: Arm, target: detect.Target,
-         reach_offset_m: float = cfg.REACH_OFFSET_M) -> bool:
+         reach_offset_m: float = cfg.REACH_OFFSET_M, speeds: dict | None = None) -> bool:
     """Pick the target up. Returns whether anything is actually held.
 
     False is a normal outcome, not an error: the fingers closed and found nothing
     between them. Either way the arm ends up lifted and clear, so the caller can
-    retry or go back and look again.
+    retry or go back and look again. `speeds` (deg/s): "approach", "descend",
+    "carry" -- the module's own by default.
     """
+    speeds = speeds or {}
+    approach_dps = speeds.get("approach", APPROACH_DPS)
+    descend_dps = speeds.get("descend", DESCEND_DPS)
+    carry_dps = speeds.get("carry", TRANSIT_DPS)
     seen = target
     target = aim_for(seen, reach_offset_m)   # everything below aims here
     step = plan(target, reach_offset_m=0.0)  # already offset; do not add it twice
@@ -408,7 +433,7 @@ def pick(arm: Arm, target: detect.Target,
         arm.set_gripper(step.opening, speed_dps=GRIPPER_DPS)
     say("moving above it")
     with metrics.span("pick.hover"):
-        arm.move_to(_arm_only(step.hover), speed_dps=APPROACH_DPS)
+        arm.move_to(_arm_only(step.hover), speed_dps=approach_dps)
     say(f"fingers turned to close along {kin.finger_heading(step.grasp):+.0f} deg "
         f"(object's narrow way is at {target.angle_deg:+.0f}; J5={step.roll})")
 
@@ -428,7 +453,7 @@ def pick(arm: Arm, target: detect.Target,
     # at 1.6 mm the tips went 20 mm past the cube and closed on nothing.
     with metrics.span("pick.descend"):
         _reach_to(arm, target.x, target.y, table + GRASP_HEIGHT_M + travel, step.pitch,
-                  step.opening, DESCEND_DPS, roll=step.roll)
+                  step.opening, descend_dps, roll=step.roll)
     tip = kin.forward({**arm.read(), cfg.GRIPPER_ID: step.opening})
     say(f"fingertip landed {math.dist(tip[:2], (target.x, target.y)) * 1000:.1f} mm "
         f"from the aim point, {(tip[2] - table) * 1000:.1f} mm up")
@@ -436,11 +461,17 @@ def pick(arm: Arm, target: detect.Target,
     say("closing")
     with metrics.span("pick.close"):
         time.sleep(0.2)
-        arm.close_gripper(speed_dps=GRIPPER_CLOSE_DPS)
+        arm.close_gripper(closing_angle(target.width_m), speed_dps=GRIPPER_CLOSE_DPS)
         # The servo has to have stopped against the object before grasped() asks
         # where it is; move_to already waited a quarter second after the glide.
         time.sleep(0.4)
         holding = arm.grasped()
+        if not holding and closing_angle(target.width_m) < cfg.GRIPPER_CLOSED:
+            # Reached the width-based target untouched: the piece is narrower than
+            # it read, or not there. The rest of the way shut tells which.
+            arm.close_gripper(speed_dps=GRIPPER_CLOSE_DPS)
+            time.sleep(0.4)
+            holding = arm.grasped()
     say("holding something" if holding else "closed on nothing")
     if holding:
         # Ask grasped() BEFORE this, never after: relaxing the squeeze changes the
@@ -450,11 +481,11 @@ def pick(arm: Arm, target: detect.Target,
             arm.set_gripper(min(settled + SQUEEZE_DEG, cfg.GRIPPER_CLOSED))
 
     with metrics.span("pick.lift"):
-        lift(arm, target.x, target.y, step.pitch)
+        lift(arm, target.x, target.y, step.pitch, speed_dps=carry_dps)
     return holding
 
 
-def lift(arm: Arm, x: float, y: float, pitch: float) -> None:
+def lift(arm: Arm, x: float, y: float, pitch: float, speed_dps: float = TRANSIT_DPS) -> None:
     """Raise as far straight up as the closed gripper can reach, fingers undisturbed.
 
     Two things have to be held constant or the object gets dragged sideways along
@@ -488,7 +519,7 @@ def lift(arm: Arm, x: float, y: float, pitch: float) -> None:
         # The wrist keeps its roll too: un-turning it here would twist what is held.
         # No settle: the trip to the drop pose follows straight on (user's wish,
         # 2026-09-22: "not go-stop-go").
-        arm.move_to(_arm_only(_rolled(up_pose, now[5])), speed_dps=TRANSIT_DPS, settle=False)
+        arm.move_to(_arm_only(_rolled(up_pose, now[5])), speed_dps=speed_dps, settle=False)
         return
     # Nothing above it is reachable while holding this. Stay put rather than raise:
     # the caller still has the object, and can place it from where it stands.
@@ -560,7 +591,7 @@ def drop(arm: Arm, extra_m: float | None = None) -> None:
 
 
 def place(arm: Arm, x: float, y: float,
-          reach_offset_m: float = cfg.REACH_OFFSET_M) -> None:
+          reach_offset_m: float = cfg.REACH_OFFSET_M, speeds: dict | None = None) -> None:
     """Put down whatever is held, at (x, y) on the table.
 
     Released slightly higher than it was picked from: the object sits somewhere
@@ -586,8 +617,9 @@ def place(arm: Arm, x: float, y: float,
     # The roll the object was picked with stays for the put-down, so it is set
     # down the way it was lifted.
     over_pose, down_pose = _rolled(over_pose, now[5]), _rolled(down_pose, now[5])
-    arm.move_to(_arm_only(over_pose), speed_dps=APPROACH_DPS)
-    arm.move_to(_arm_only(down_pose), speed_dps=PLACE_DESCEND_DPS)
+    speeds = speeds or {}
+    arm.move_to(_arm_only(over_pose), speed_dps=speeds.get("approach", APPROACH_DPS))
+    arm.move_to(_arm_only(down_pose), speed_dps=speeds.get("descend", PLACE_DESCEND_DPS))
     time.sleep(0.2)
     # Open only as far as the fingers need to clear what they hold, not all the
     # way: releasing a 40 mm cube needs 12 mm of clearance, not 30, and the

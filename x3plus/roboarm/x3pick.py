@@ -61,8 +61,11 @@ LIFT_OVER = 0.06     # m over the release height the hand comes in above a spot 
 # step (next): kept now so the card and the shared flow have them.
 SETTINGS = {
     "speed": ("arm speed, the moves between looks", "%", 30, 100, 5, 100),
-    "free_dps": ("to a look", "deg/s", 10, 60, 5, 30),
-    "return_dps": ("back from the drop-off, empty-handed", "deg/s", 20, 90, 5, 60),
+    "free_dps": ("to a look", "deg/s", 10, 120, 5, 60),
+    "return_dps": ("back from the drop-off, empty-handed", "deg/s", 20, 120, 5, 90),
+    "near_dps": ("over the thing, before the descent", "deg/s", 10, 120, 5, 60),
+    "descend_dps": ("down to the grip (the reach passes)", "deg/s", 5, 60, 1, 25),
+    "carry_dps": ("holding it: up, and to the drop-off", "deg/s", 20, 120, 5, 90),
     "scan_dps": ("the base turning while it looks", "deg/s", 4, 24, 1, 16),
     "settle_s": ("still before a look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "settle_close_s": ("still before the box look", "s", 0.0, 2.0, 0.05, SETTLE_S),
@@ -435,7 +438,7 @@ class Picker(Task):
         offset = self.cfg["reach_offset_mm"] / 1000
         with self.step("grip"), self.narrated():
             try:
-                held = grasp.pick(self.arm, t, reach_offset_m=offset)
+                held = grasp.pick(self.arm, t, reach_offset_m=offset, speeds=self.grip_speeds())
             except grasp.GraspError as exc:
                 raise Refused(np.array([t.x, t.y]), f"refused: {exc}") from exc
         try:
@@ -446,6 +449,9 @@ class Picker(Task):
         return {"reading": reading, "centre": reading["centre"], "line": (t.x, t.y), "held": bool(held),
                 "record": {"yaw_from": "outline", "pitch": None if step is None else round(float(step.pitch)),
                            "j5": None if step is None else int(step.roll), "label": t.label}}
+
+    def grip_speeds(self) -> dict:
+        return {"approach": self.dps("near_dps"), "descend": self.dps("descend_dps"), "carry": self.dps("carry_dps")}
 
     def why_not(self, kit: list[dict], found: list[dict]) -> str:
         parts = []
@@ -488,14 +494,14 @@ class Picker(Task):
     def carry(self, way: list[dict]) -> None:
         for pose in way:
             self.check()
-            self.arm.move_to(pose, speed_dps=grasp.TRANSIT_DPS, settle=False)
+            self.arm.move_to(pose, speed_dps=self.dps("carry_dps"), settle=False)
 
     def drop_on_line(self, extra: float) -> None:
         try:
             pose = grasp.drop_pose(extra)
         except kin.Unreachable:
             pose = dict(cfg.DROP_POSE)
-        self.arm.move_to(pose, speed_dps=grasp.TRANSIT_DPS, settle=False)
+        self.arm.move_to(pose, speed_dps=self.dps("carry_dps"), settle=False)
 
     def let_go(self) -> None:
         time.sleep(0.1)
@@ -507,5 +513,6 @@ class Picker(Task):
             raise Refused(np.zeros(2), "refused: holding something with nowhere to put it -- take it off by hand")
         x, y = back[1]
         with self.step("put back"), self.narrated():
-            grasp.place(self.arm, float(x), float(y), reach_offset_m=self.cfg["reach_offset_mm"] / 1000)
+            grasp.place(self.arm, float(x), float(y), reach_offset_m=self.cfg["reach_offset_mm"] / 1000,
+                        speeds=self.grip_speeds())
         self.say("put back where it was picked")
