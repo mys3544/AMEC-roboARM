@@ -232,6 +232,7 @@ class Arm:
         # J2..J4 of the last repeatable approach, while every command since has
         # kept them there; None once anything sent them elsewhere. See move_to().
         self._approached: dict[int, int] | None = None
+        self._sent: Pose | None = None   # the last setpoint sent: commanded()
 
     # ------------------------------------------------------------- lifecycle --
     # ruff wants `Self` here, which needs Python 3.11 or a typing_extensions
@@ -345,6 +346,7 @@ class Arm:
             self._approached = None
         with self._io:
             send_pose(self.bot, pose, run_time)
+        self._sent = dict(pose)
 
     def battery(self) -> float:
         with self._io:
@@ -487,6 +489,13 @@ class Arm:
     def moving(self) -> bool:
         thread = self._glide_thread
         return thread is not None and thread.is_alive()
+
+    def commanded(self) -> Pose:
+        """The last setpoint sent -- where the arm is told to be, a setpoint ahead of where it is --
+        without a word on the serial line: what a loop watching a glide asks. A read-back polled in
+        that loop held the line the stream needs every STREAM_S, the setpoints came late and the
+        servos stopped between them (2026-10-08: the survey's turn "very much stop and go")."""
+        return dict(self._sent) if self._sent is not None else self.read()
 
     def _cancel_glide(self) -> None:
         thread = self._glide_thread

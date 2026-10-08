@@ -168,6 +168,10 @@ class SimArm:
         thread = self._glide_thread
         return thread is not None and thread.is_alive()
 
+    def commanded(self) -> Pose:
+        """Arm.commanded: here, where it is."""
+        return self.read()
+
     def _cancel_glide(self) -> None:
         thread = self._glide_thread
         if thread is not None and thread.is_alive():

@@ -31,6 +31,7 @@ import json
 import math
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
@@ -80,7 +81,7 @@ SETTINGS = {
     "near_dps": ("over the thing, before the descent", "deg/s", 10, 120, 5, 60),
     "descend_dps": ("down to the grip (the reach passes)", "deg/s", 5, 60, 1, 25),
     "carry_dps": ("holding it: up, and to the drop-off", "deg/s", 20, 120, 5, 90),
-    "scan_dps": ("the base turning while it surveys", "deg/s", 4, 30, 1, 20),
+    "scan_dps": ("the base turning while it surveys", "deg/s", 4, 45, 1, 30),
     "settle_s": ("still before a look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "settle_close_s": ("still before the box look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "reach_passes": ("corrections after the descent (0: it grips where it lands)", "", 0, 3, 1, 0),
@@ -333,44 +334,40 @@ class Picker(Task):
         return out
 
     def ride(self, entry: tuple, dyaws: list[float], on_frame) -> None:
-        """One look's pass over `dyaws` in ONE base motion: to the first station, then turning
-        steadily to the last, a frame handed to `on_frame(look, frame)` as each station's yaw goes by
-        (the look carrying the yaw read round the frame). 2026-09-22, the user's "stable movement"."""
+        """One look's pass over `dyaws` in ONE smooth turn of the base: to the first station, then
+        turning steadily to the last, a picture grabbed as each station's yaw goes by and handed to
+        `on_frame(look, frame)` on a thread of its own -- the turn never waits for the detectors.
+        Where the arm is told to be says when a station is passed (Arm.commanded: nothing on the
+        serial line, which the stream of setpoints needs every 50 ms -- a read-back polled here
+        starved it and the turn went stop and go, 2026-10-08); the arm is read once a picture, for
+        the yaw it was taken at. 2026-09-22, the user's "stable movement"."""
         _matrix, survey, _name = entry
         first = sweep.pose_at(survey, dyaws[0])
         with metrics.span("scan.move"):
             self.arm.move_to(first, speed_dps=self.dps("free_dps"), repeatable=True)
         with metrics.span("camera.settle"):
             frame = self.frames().settled(self.settle())
-        on_frame(self.station(entry, first[1]), frame)
-        if len(dyaws) == 1:
-            return
-        with metrics.span("scan.glide"):
-            goal = self.arm.glide(sweep.pose_at(survey, dyaws[-1]), speed_dps=self.dps("scan_dps"))
-            ahead = 1 if goal[1] > first[1] else -1
-            pending = [sweep.pose_at(survey, d)[1] for d in dyaws[1:]]
-            last_j1, still = None, 0
-            while pending:
-                if self._stop.is_set():
-                    self.arm.hold()
-                    raise Stopped
-                before = self.arm.read()
-                reached = [s for s in pending if ahead * (before[1] - s) >= 0]
-                ended = False
-                if not reached:
-                    still = still + 1 if before[1] == last_j1 else 0
-                    last_j1 = before[1]
-                    ended = still >= 3 and not self.arm.moving()   # the glide ended short of the next station
-                    if not ended:
-                        time.sleep(SCAN_POLL_S)
-                        continue
-                    reached = [pending[0]]
-                frame = self.frames().settled(0.0)
-                after = before if ended else self.arm.read()
-                pending = [s for s in pending if s not in reached]
-                if ended:
-                    pending = []
-                on_frame(self.station(entry, (before[1] + after[1]) / 2), frame)
+        with ThreadPoolExecutor(max_workers=1) as detector:
+            seen = [detector.submit(on_frame, self.station(entry, first[1]), frame)]
+            if len(dyaws) > 1:
+                with metrics.span("scan.glide"):
+                    goal = self.arm.glide(sweep.pose_at(survey, dyaws[-1]), speed_dps=self.dps("scan_dps"))
+                    ahead = 1 if goal[1] > first[1] else -1
+                    pending = [sweep.pose_at(survey, d)[1] for d in dyaws[1:]]
+                    while pending:
+                        if self._stop.is_set():
+                            self.arm.hold()
+                            raise Stopped
+                        if ahead * (self.arm.commanded()[1] - pending[0]) < 0 and self.arm.moving():
+                            time.sleep(SCAN_POLL_S)
+                            continue
+                        frame = self.frames().settled(0.0)
+                        seen.append(detector.submit(on_frame, self.station(entry, self.here()[1]), frame))
+                        pending.pop(0)
+                        if not self.arm.moving():   # the glide ended (short of the rest, or at the last)
+                            break
+            for job in seen:
+                job.result()
 
     def wide_look(self, sides: bool = False) -> list[dict]:
         """`sides`: a SURVEY (survey()) -- this job's map of the table; else the look again from the
