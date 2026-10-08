@@ -35,7 +35,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from roboshared import metrics
+from roboshared import kit, metrics
 from roboshared.box import BOX_DROP_OVER, BOX_INSIDE
 from roboshared.task import NothingToPick, Refused, Stopped, Task, describe
 
@@ -80,8 +80,10 @@ SETTINGS = {
 
 def kind_of(target: detect.Target) -> str | None:
     """"cube" or "block", the M3's kinds (and the console's buttons); None for what the gripper
-    cannot take."""
-    if not target.graspable:
+    cannot take, or what is not the kit's size (the M3 matches the kit too: m3vision.kit_item) --
+    2026-10-08 the black tape on the paper's corner, a raised 20 x 24 mm to Depth Anything, cost two
+    tries."""
+    if not target.graspable or not kit.footprint_fits(target.width_m, target.length_m):
         return None
     return "block" if target.length_m >= BLOCK_RATIO * target.width_m else "cube"
 

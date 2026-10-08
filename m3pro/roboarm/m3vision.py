@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from roboshared import kit
 
 NEAR, FAR = 0.15, 1.2   # m: the DCW2 answers from ~0.19 (a cut at 0.2 took the near half of a cube's
                         # top face at the pick's close look, 2026-10-01); past ~1.2 the floor is too
@@ -80,10 +81,8 @@ def level(model: np.ndarray, normal: np.ndarray, height: float, floor_z: float =
     return out
 
 
-# The kit (plan v2.2): (kind, width across, length, height) in m -- the cubes, and the 30 x 30 x 60
-# block (two cubes glued) lying and standing. The fingers close across `width`.
-KIT = (("cube", 0.030, 0.030, 0.030), ("cube", 0.040, 0.040, 0.040),
-       ("block", 0.030, 0.060, 0.030), ("block", 0.030, 0.030, 0.060))
+# The kit (plan v2.2): (kind, width across, length, height) in m -- roboshared.kit, both robots'.
+KIT = kit.KIT
 
 
 def kit_item(top: float, long: float):
