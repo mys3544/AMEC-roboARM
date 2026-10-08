@@ -444,10 +444,10 @@ def test_an_interrupted_move_stops_at_a_legal_intermediate_pose(monkeypatch):
     stopped where they are (a hold, run time 0) -- never limp, never at the goal,
     and move_to() says so."""
     a, board = build(monkeypatch)
-    sent_before_stop = 1
+    sent_before_stop = 10   # 0.5 s in: past the smooth start
     a.interrupt = lambda: len(board.sent) >= sent_before_stop
     with a, pytest.raises(ArmError, match="interrupted"):
-        a.move_to({1: 20}, speed_dps=20)   # 3.6 s: two commands (the SDK's 2 s run time)
+        a.move_to({1: 20}, speed_dps=20)   # a stream of setpoints, stopped part way
     moves = [angles for angles, run_time in board.sent if run_time != 0]  # 0 = the exit hold
     assert len(moves) == sent_before_stop
     assert 20 < board.pose[1] < RESTING[1], "stopped part way, not at the goal"
@@ -478,14 +478,14 @@ def test_a_glide_moves_in_the_background_and_answers_reads_meanwhile(monkeypatch
         assert not a.moving()
         assert board.pose[1] == 20
         steps = [angles for angles, run_time in board.sent if run_time != 0]
-        assert len(steps) == math.ceil(71 / cfg.MAX_STEP_DEG) and all(
+        assert len(steps) >= math.ceil(71 / cfg.MAX_STEP_DEG) and all(
             abs(b[0] - c[0]) <= cfg.MAX_STEP_DEG for b, c in itertools.pairwise(steps))
 
 
 def test_hold_stops_a_glide_where_it_is(monkeypatch):
     a, board = build(monkeypatch)
     with a:
-        a.glide({1: 20}, speed_dps=20)  # 3.6 s: two commands of 1.8 s (the SDK's 2 s run time)
+        a.glide({1: 20}, speed_dps=20)  # 3.9 s of setpoints, 50 ms apart
         threading.Event().wait(0.12)
         a.hold()
         assert not a.moving()
@@ -595,3 +595,17 @@ def test_the_fine_reading_is_the_raw_count_unrounded(monkeypatch):
         assert abs(fine[joint] - cfg.angle_from_raw(joint, count)) <= 0.5
     assert fine[2] != round(fine[2])
 
+
+
+# ------------------------------------------------------------------ smooth --
+def test_a_move_speeds_up_and_slows_down_smoothly(monkeypatch):
+    """The user, 2026-10-08: "smooth just like on M3". A stream of setpoints whose steps grow, hold
+    and shrink -- no jump at the start or the end -- and it ends exactly on the goal."""
+    a, board = build(monkeypatch)
+    with a:
+        board.sent.clear()
+        a.move_to({1: 30}, speed_dps=60, settle=False)   # 61 degrees
+    j1 = [RESTING[1]] + [angles[0] for angles, _ in board.sent]
+    steps = [abs(b - c) for b, c in itertools.pairwise(j1)]
+    assert j1[-1] == 30 and max(steps) <= cfg.MAX_STEP_DEG
+    assert steps[0] < max(steps) / 2 and steps[-1] < max(steps) / 2, steps

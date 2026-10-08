@@ -55,6 +55,11 @@ YAW_SETTLE_S = 0.15   # a look that only turned the base keeps its exposure: thi
 VISION_CHECK_S = 30.0   # how long the vision service's answer to /health is believed
 BOX_LOOK = {2: 100, 3: 20, 4: 0, 5: 90}   # the angled look of the depth tests (2026-10-06): the table from
                                           # 15 cm out, a standing marker face on; J1 turns it round
+# J4 of the box look, a round of BOX_LOOKS each, in turn: 10 first -- the table 23-87 cm out, an open
+# lid's marker standing behind the box whole in the picture (2026-10-08: from J4 0 its top was cut by
+# the picture's edge, no box found anywhere, the cubes dropped on the line) -- then BOX_LOOK's own 0
+# for a box nearer than that, its marker on a wall.
+BOX_TILTS = (10, 0)
 # The robot's own front, in the arm's frame: its wheels show in the looks that face down beside it
 # (2026-10-08: the front-right one at (0, -105) mm read as raised, once as a lying block, and was
 # reached for). Nothing there is picked, and nothing there is a hint.
@@ -121,6 +126,12 @@ def found_of(target: detect.Target, reach: bool | None = None) -> dict:
             "footprint": (target.width_m, target.length_m), "yaw": float(target.angle_deg) % period,
             "period": period, "whole": not target.clipped, "reach": reach, "target": target,
             "label": target.label, "confidence": round(float(target.confidence), 3)}
+
+
+def merged(seen: list[tuple[sweep.Look, detect.Target]]) -> list[tuple[sweep.Look, detect.Target]]:
+    """sweep.merge, each object with the station that saw it best."""
+    station_of = {id(t): look for look, t in seen}
+    return [(station_of[id(t)], t) for t in sweep.merge(seen)]
 
 
 def at_drop_spot(target: detect.Target) -> bool:
@@ -195,7 +206,9 @@ class Picker(Task):
         self.calibration = calibration   # () -> [(matrix, survey pose, name)], the calibrated looks
         self.detector_url = detector_url
         self._vision = (0.0, False)
-        self.station_seen: sweep.Look | None = None   # where the last search found what it picked
+        self.station_seen: sweep.Look | None = None   # the station that saw what is being picked
+        self.map: list[tuple[sweep.Look, detect.Target]] | None = None   # this job's survey, kept up to date
+        self.box_tilt = BOX_TILTS[0]
         fit = lens_fit or {}
         self.lens = (fit.get("mount_m", lens.NOMINAL_MOUNT), fit.get("turn_rad", (0.0, 0.0, 0.0)),
                      fit.get("sag_deg_per_m", (0.0, 0.0, 0.0)))
@@ -356,28 +369,41 @@ class Picker(Task):
                 on_frame(self.station(entry, (before[1] + after[1]) / 2), frame)
 
     def wide_look(self, sides: bool = False) -> list[dict]:
-        """`sides`: the SEARCH (the module's docstring); else the look again from the station that
-        found what was picked -- the primary look straight ahead before any search. What lies where
+        """`sides`: a SURVEY (survey()) -- this job's map of the table; else the look again from the
+        station that saw what was just picked, and the map brought up to date there: what that look
+        sees is as it says now, the rest as the survey left it (the user, 2026-10-08: the whole area
+        once, then a final round -- the shared flow asks for a survey again only when the map holds
+        nothing left to pick). Before any survey, the primary look straight ahead. What lies where
         this job lets go left out."""
         calibrated = self.calibrated()
         if sides:
-            seen = self.search(calibrated)
+            self.map = self.survey(calibrated)
         else:
             look = self.station_seen or self.station(self.scan_looks(calibrated)[0], self.scan_looks(calibrated)[0][1][1])
-            seen = [(look, t) for t in self.look_from(look, speed="return_dps")[0]]
-        found = [o for o in (self.as_found(t) for t in sweep.merge(seen)) if not self.dropped_here(o)]
+            fresh = [(look, t) for t in self.look_from(look, speed="return_dps")[0]]
+            if self.map is None:
+                self.map = merged(fresh)
+            else:
+                old = [(seen, t) for seen, t in self.map
+                       if not sweep.sees(look, t.x, t.y, t.width_m, t.height_m or sweep.OBJECT_HEIGHT_M)]
+                self.map = merged(old + fresh)
+        found = []
+        for station, t in self.map:
+            o = self.as_found(t)
+            o["station"] = station
+            if not self.dropped_here(o):
+                found.append(o)
         with self._lock:
             self.found = found
-        self.say(("searched: " if sides else "looked again: ") + describe(found))
+        self.say(("surveyed: " if sides else "looked again: ") + describe(found))
         return found
 
-    def search(self, calibrated: list) -> list[tuple[sweep.Look, detect.Target]]:
-        """ONE round of the scan looks' stations, from the end of the ring nearest the arm to the
-        other, each from a standstill and once; it stops at the first station that shows something
-        it can pick (not at one this job has given up), and stays there. No hints: nearest-first
-        went left, right, left, and with every detector on every picture the hints of things cut by
-        the picture's edge chained look after look -- a clear table took 104 s and the user called
-        it stuck (2026-10-08: "the cube search round should go just once")."""
+    def survey(self, calibrated: list) -> list[tuple[sweep.Look, detect.Target]]:
+        """Every station of the scan looks ONCE, from the end of the ring nearest the arm to the
+        other, each from a standstill; one object seen from two stations is the one that saw it
+        nearer the middle of its picture (sweep.merge). No hints, no stopping at the first find:
+        nearest-first went left, right, left, and searches that stopped at a find covered the table
+        in parts, again after every pick (the user, 2026-10-08)."""
         here = self.here()
         ring: list[sweep.Look] = []
         for entry in self.scan_looks(calibrated):
@@ -388,13 +414,8 @@ class Picker(Task):
         seen: list[tuple[sweep.Look, detect.Target]] = []
         for look in ring:
             with metrics.span("look"):
-                kept, _clipped = self.look_from(look)
-            seen.extend((look, t) for t in kept)
-            if any(kind_of(t) is not None and plannable(t) and not self.dropped_here(found_of(t))
-                   and not self.given_up(found_of(t)) for t in kept):
-                self.station_seen = look
-                break
-        return seen
+                seen.extend((look, t) for t in self.look_from(look)[0])
+        return merged(seen)
 
     def order(self, kit: list[dict], at) -> list[dict]:
         """The one nearest `at` when asked for; else the SUREST first (the detector's confidence: the
@@ -440,6 +461,7 @@ class Picker(Task):
     # --------------------------------------------------------------------------- doing --
     def engaged(self) -> None:
         self.call("read")   # the bridge connects the arm on its first call; its torque is always on
+        self.map, self.station_seen = None, None   # a job surveys afresh
 
     def home(self) -> None:
         with self.step("home"):
@@ -457,6 +479,7 @@ class Picker(Task):
     def grip(self, target: dict, planned, found: list[dict]) -> dict:
         """Seen again from a standstill, then grasp.pick: whether it holds something, the gripper says."""
         t = target["target"]
+        self.station_seen = target.get("station") or self.station_seen   # where to look again after
         with self.step("look.close"):
             t = self.refine(t)
         offset = self.cfg["reach_offset_mm"] / 1000
@@ -496,7 +519,18 @@ class Picker(Task):
 
     # ------------------------------------------------------------------- the drop-off --
     def go_box_look(self, j1: float, holding: bool) -> None:
-        self.arm.move_to({1: round(j1), **BOX_LOOK}, speed_dps=self.dps("free_dps"))
+        # no settle here: see_box waits settle_close_s before its picture
+        self.arm.move_to({1: round(j1), **BOX_LOOK, 4: self.box_tilt}, speed_dps=self.dps("free_dps"), settle=False)
+
+    def box_search(self, holding: bool = False, tried: float | None = None) -> dict | None:
+        """Task.box_search at each of BOX_TILTS in turn: where it is found, there it is looked at again."""
+        for tilt in BOX_TILTS:
+            self.box_tilt = tilt
+            box = super().box_search(holding, tried)
+            if box is not None:
+                return box
+        self.box_tilt = BOX_TILTS[0]
+        return None
 
     def to_box_view(self) -> None:
         self.go_box_look(self.box_dir, holding=True)

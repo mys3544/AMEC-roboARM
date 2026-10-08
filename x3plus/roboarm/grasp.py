@@ -287,7 +287,7 @@ def _reach_to(arm: Arm, x: float, y: float, z: float, pitch: float, gripper: int
     for _ in range(passes + 1):
         with metrics.span("pick.pass"):
             arm.move_to(_arm_only(_rolled(pose, roll)), speed_dps=speed_dps)
-            time.sleep(0.4)
+            time.sleep(0.4 if passes else 0.0)   # a pass measures; with none the read only narrates
             landed = kin.forward({**arm.read(), cfg.GRIPPER_ID: gripper})
         short = [goal - got for goal, got in zip((x, y, z), landed)]
         # Narrated, because a miss here is the commonest way a pick fails and the
@@ -432,7 +432,7 @@ def pick(arm: Arm, target: detect.Target,
         arm.set_gripper(step.opening, speed_dps=GRIPPER_DPS)
     say("moving above it")
     with metrics.span("pick.hover"):
-        arm.move_to(_arm_only(step.hover), speed_dps=approach_dps)
+        arm.move_to(_arm_only(step.hover), speed_dps=approach_dps, settle=False)   # straight on down
     say(f"fingers turned to close along {kin.finger_heading(step.grasp):+.0f} deg "
         f"(object's narrow way is at {target.angle_deg:+.0f}; J5={step.roll})")
 
@@ -459,7 +459,7 @@ def pick(arm: Arm, target: detect.Target,
 
     say("closing")
     with metrics.span("pick.close"):
-        time.sleep(0.2)
+        time.sleep(0.1)
         if grip_deg is not None:
             # The M3's close (the user, 2026-10-08: the X3's fingers "still over closing" with
             # every close aimed past the piece): to where the piece -- the kit's own width,

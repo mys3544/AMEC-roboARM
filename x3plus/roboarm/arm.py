@@ -24,6 +24,7 @@ Three rules learned the hard way against the real hardware:
 from __future__ import annotations
 
 import contextlib
+import itertools
 import math
 import struct
 import threading
@@ -116,18 +117,58 @@ def send_pose(bot: Rosmaster, pose: Pose, run_time: int) -> None:
         bot.set_uart_servo_angle_array([pose[j] for j in cfg.JOINT_IDS], run_time=run_time)
 
 
-# How long before a step is due to end the next one is sent (Arm._glide): the servos blend them into
-# one motion. A little more than the serial round trip of a pose.
-STEP_LEAD_S = 0.03
-# The longest one command runs (the SDK cuts a run time at 2 s), and how often a stop is asked for
-# while one runs: a stop halts the servos where they are (Arm._halt).
-SEGMENT_MAX_S = 1.9
-INTERRUPT_POLL_S = 0.04
-# Every pose this far apart on a command's line is checked against the mast before it is sent, and
-# follow() sends the next pose this far through the one before -- the M3's numbers (m3arm STEP_DEG,
-# BLEND).
+# Smooth moves (the user, 2026-10-08: "smooth just like on M3"). One command a move (that morning)
+# started at full speed and stopped dead, a jolt each end; 8-degree commands each waited out were a
+# stop every 8 degrees. Now every move is a STREAM of setpoints, one each STREAM_S, along a speed that
+# rises over RAMP_S and falls over as long (half a cosine each, ramped()); each setpoint is given
+# STREAM_AHEAD intervals to run, so the next always arrives before the servos reach it and they never
+# stop on the way. A route through several poses is one stream (follow()).
+STREAM_S = 0.05
+STREAM_AHEAD = 1.3
+RAMP_S = 0.3
+INTERRUPT_POLL_S = 0.04   # how often a stop is asked for while a setpoint runs: it halts the servos (_halt)
+# Every pose this far apart on a move's line is checked against the mast before anything is sent --
+# the M3's way (m3arm STEP_DEG).
 PATH_CHECK_DEG = 5.0
-BLEND = 0.8
+
+
+def ramped(distance: float, speed: float, ramp: float = RAMP_S):
+    """(seconds, at, peak) for a move of `distance` deg (its biggest joint's) at up to `speed` deg/s:
+    speeding up over `ramp` s along half a cosine, as long slowing down; at(t) is how far along it is
+    t s in, 0..1, and peak the top speed (`speed`, or less for a move too short to reach it)."""
+    if distance <= 0:
+        return 0.0, lambda _t: 1.0, 0.0
+    if distance / speed >= ramp:
+        peak, cruise = speed, distance / speed - ramp
+    else:
+        peak, cruise = distance / ramp, 0.0
+    total = 2 * ramp + cruise
+
+    def ramp_part(t: float) -> float:   # how far t s into a ramp gets
+        return peak * (t / 2 - ramp / (2 * math.pi) * math.sin(math.pi * t / ramp))
+
+    def at(t: float) -> float:
+        t = min(max(t, 0.0), total)
+        if t < ramp:
+            done = ramp_part(t)
+        elif t <= ramp + cruise:
+            done = peak * ramp / 2 + peak * (t - ramp)
+        else:
+            done = distance - ramp_part(total - t)
+        return min(1.0, done / distance)
+    return total, at, peak
+
+
+def _along(way: list[Pose], legs: list[float], done: float) -> Pose:
+    """The pose `done` deg (the biggest joint's measure, legs[k] for way[k] -> way[k + 1]) along
+    `way`, whole degrees."""
+    for k, leg in enumerate(legs):
+        if done <= leg or k == len(legs) - 1:
+            a, b = way[k], way[k + 1]
+            f = min(1.0, done / leg) if leg else 1.0
+            return {j: round(a[j] + f * (b[j] - a[j])) for j in cfg.JOINT_IDS}
+        done -= leg
+    return dict(way[-1])
 
 
 def _sendable(joint: int, angle: float) -> int:
@@ -369,6 +410,7 @@ class Arm:
         # short even from above (56 commanded, 55 read, every time), so the scan
         # that follows each return to a station used to make a second detour of
         # 1.3 s to the same place (roboarm.metrics, 2026-09-24).
+        way = [start, goal]
         if repeatable and self._approached != loaded and any(
                 start[j] != goal[j] for j in self.APPROACH_JOINTS):
             above = self._above(goal)
@@ -376,10 +418,8 @@ class Arm:
             # of it as any goal (raises before anything moves if not).
             self._assert_clear_of_mast(above)
             if above != goal:
-                self._glide(start, above, speed_dps)
-                time.sleep(0.15)
-                start = self.read()
-        moved = self._glide(start, goal, speed_dps)
+                way = [start, above, goal]   # one stream: through `above`, down onto the goal
+        moved = self._stream(way, speed_dps)
         if repeatable:
             self._approached = loaded
         if not moved:
@@ -387,7 +427,7 @@ class Arm:
         if not settle:
             return goal
 
-        time.sleep(0.25)  # let the last segment settle before believing the readback
+        time.sleep(0.1)  # the stream slows to a stop; a moment more before believing the readback
         return self.read()
 
     # The joints gravity loads, and how far above its goal each one is sent first
@@ -409,23 +449,16 @@ class Arm:
         return above
 
     def follow(self, poses: list[Pose], speed_dps: float = 40.0) -> Pose:
-        """Through `poses` (partial ones allowed, each filled from the one before) without stopping
-        at each: the next is sent BLEND of the way through the one before, and the servos turn the
-        corner -- the M3's follow() (m3arm). Every line checked as move_to's. Returns the last goal,
-        reached; no settle, no read-back."""
+        """Through `poses` (partial ones allowed, each filled from the one before) in ONE stream: the
+        speed rises once and falls once, the arm passing each pose on the way without stopping --
+        the M3's follow() (m3arm). Every line checked as move_to's. Returns the last goal, reached;
+        no settle, no read-back."""
         self._cancel_glide()
-        here = self.read()
-        for i, targets in enumerate(poses):
-            _, goal = self._plan(targets, start=here)
-            last = i == len(poses) - 1
-            if not self._glide(here, goal, speed_dps, blend=1.0 if last else BLEND):
-                continue
-            if last:
-                return goal
-            steps, _run = self._segments(here, goal, speed_dps)
-            leg_from = {j: here[j] + (goal[j] - here[j]) * (steps - 1) / steps for j in cfg.JOINT_IDS}
-            here = {j: round(leg_from[j] + BLEND * (goal[j] - leg_from[j])) for j in cfg.JOINT_IDS}
-        return here
+        way = [self.read()]
+        for targets in poses:
+            way.append(self._plan(targets, start=way[-1])[1])
+        self._stream(way, speed_dps)
+        return way[-1]
 
     def glide(self, targets: Pose, speed_dps: float = 12.0) -> Pose:
         """Start moving toward `targets` and return at once, with the legal goal.
@@ -462,24 +495,18 @@ class Arm:
             thread.join(timeout=5.0)
         self._glide_thread = None
 
-    def _segments(self, start: Pose, goal: Pose, speed_dps: float) -> tuple[int, int]:
-        """(commands, run time ms each) for the move: as few as the SDK's run time allows."""
-        biggest = max(abs(goal[j] - start[j]) for j in cfg.JOINT_IDS)
-        steps = max(1, math.ceil(biggest / self.step_deg), math.ceil(biggest / speed_dps / SEGMENT_MAX_S))
-        return steps, max(20, int(1000 * (biggest / steps) / speed_dps))
-
     def _glide(self, start: Pose, goal: Pose, speed_dps: float,
-               cancel: threading.Event | None = None, blend: float = 1.0) -> bool:
-        """The move as ONE command -- more only where the SDK's run time runs out --
-        its line checked against the mast first. Returns False if already there.
+               cancel: threading.Event | None = None) -> bool:
+        """The move from `start` to `goal`, streamed (_stream). Returns False if already there."""
+        return self._stream([start, goal], speed_dps, cancel)
 
-        Each command's run time sets the pace (speed_dps), and the servos interpolate
-        it themselves, all arriving together: the path is the straight line between
-        the two poses. With `cancel`, the move stops being sent as soon as the event
-        is set (that is a glide() being held or superseded; whoever set it sends the
-        next command). `blend` < 1: return that far through the last command, the
-        servos still on their way (follow()).
-        """
+    def _stream(self, way: list[Pose], speed_dps: float,
+                cancel: threading.Event | None = None) -> bool:
+        """Along the straight lines through `way` as one smooth motion: a setpoint every STREAM_S
+        (none more than step_deg from the last), the speed rising and falling along ramped(), every
+        line checked against the mast first. Returns False if there was nowhere to go. With
+        `cancel`, the stream stops being sent as soon as the event is set (a glide() held or
+        superseded; whoever set it sends the next command)."""
         # A joint outside our safe range glides back from WHERE IT IS whenever a
         # command can say that angle -- the SDK's range, or below it by raw pulses
         # (send_pose) -- so it comes back in steps like any move. Clamping the start
@@ -487,27 +514,24 @@ class Arm:
         # pose the arm was found in on 2026-10-06 (J2 162, J3 -44, left there by
         # hand) that was 56 and 44 degrees in one step. Only an angle no command can
         # express is still clamped, to the nearest one that can.
-        start = {j: _sendable(j, v) for j, v in start.items()}
-
-        biggest = max(abs(goal[j] - start[j]) for j in cfg.JOINT_IDS)
-        if biggest == 0:
+        way = [{j: _sendable(j, v) for j, v in way[0].items()}, *way[1:]]
+        legs = [max(abs(b[j] - a[j]) for j in cfg.JOINT_IDS) for a, b in itertools.pairwise(way)]
+        distance = sum(legs)
+        if distance == 0:
             return False
-        self._check_path(start, goal)
-        steps, run_time = self._segments(start, goal, speed_dps)
-        # Each step is sent STEP_LEAD_S before the last one is due to end, so the servos take the new
-        # target while still moving and the move is one motion. Sent only once a step had ended, every
-        # step was a stop and a start: the arm went in 8-degree jerks (the user's "retarded movement",
-        # 2026-10-08). The last step is waited out in full: the move ends where it says.
-        lead = STEP_LEAD_S if steps > 1 else 0.0
+        for a, b in itertools.pairwise(way):
+            self._check_path(a, b)
+        total, at, peak = ramped(distance, speed_dps)
+        steps = max(1, math.ceil(total / STREAM_S), math.ceil(peak * total / self.step_deg))
+        dt = total / steps
         for i in range(1, steps + 1):
             if self.interrupt is not None and self.interrupt():
+                self._halt()
                 raise ArmError("move interrupted -- the arm is holding where it stopped")
-            frac = i / steps
-            self._send(
-                {j: round(start[j] + frac * (goal[j] - start[j])) for j in cfg.JOINT_IDS},
-                run_time,
-            )
-            if self._wait_out(run_time / 1000 * (blend if i == steps else 1.0) - (lead if i < steps else 0.0), cancel):
+            last = i == steps
+            self._send(_along(way, legs, distance * (1.0 if last else at(i * dt))),
+                       max(20, int(1000 * dt * (1.0 if last else STREAM_AHEAD))))
+            if self._wait_out(dt, cancel):
                 return True
         return True
 

@@ -301,13 +301,9 @@ REACH_OFFSET_SLOPE = 0.30
 # commanded and reported angle, so anything inside this is not a fault.
 READBACK_TOLERANCE_DEG = 4.0
 
-# Largest single command arm.py sends: none smaller than a whole move, as the M3
-# moves (the user, 2026-10-08) -- a move is split only where the SDK's 2 s run time
-# runs out (arm.SEGMENT_MAX_S). The servos carry a command out themselves at the
-# pace its run time sets, so no command can slam a joint across its range; the
-# line they sweep is checked against the mast first (Arm._check_path). 8-degree
-# commands (until 2026-10-08) were a stop and a start every 8 degrees.
-MAX_STEP_DEG = 180.0
+# Largest step between two of the setpoints arm.py streams (arm.STREAM_S apart): a
+# move's speed rises and falls smoothly over many of them, never a jump.
+MAX_STEP_DEG = 8.0
 
 # --------------------------------------------------------- kinematics (m) ---
 # MEASURED on the physical robot 2026-09-03, from a photo with dimensions marked.
