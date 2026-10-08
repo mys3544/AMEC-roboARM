@@ -44,16 +44,18 @@ def test_one_pick_takes_the_cube_to_the_line_on_the_right_and_goes_home(rig):
     assert arm.read()[2] == cfg.HOME_POSE[2]
     last = state["last"]
     assert last["picked"] and last["kind"].endswith("mm cube") and last["yaw_from"] == "outline"
-    assert any("holding something" in e["text"] for e in picker.log())   # grasp.py's narration
+    assert any("mm inside the 40 mm piece" in e["text"] for e in picker.log())   # grasp.py's narration
 
 
-def test_a_miss_the_gripper_feels_is_not_dropped_off(rig):
+def test_a_miss_is_told_by_the_look_after_as_the_m3s(rig):
+    """The M3's close (to the width, a little inside): the read-back cannot tell a miss, the look
+    after does."""
     _world, arm, picker = rig([sim.Block(0.160, 0.020, 0.040, (0, 120, 255))])
-    arm.grasped = lambda: False   # the fingers met nothing
+    arm._grab_or_drop = lambda: None   # the fingers met nothing
     state = run(picker, "pick_once")
     assert state["missed"] == 1 and state["picked"] == 0
-    assert picker.line_drops == 0
-    assert any("closed on nothing: nothing to drop off" in e["text"] for e in picker.log())
+    assert any("still there" in e["text"] for e in picker.log())
+    assert any("inside the 40 mm piece" in e["text"] for e in picker.log())
 
 
 def test_clean_up_takes_both_and_says_why_it_stopped(rig):

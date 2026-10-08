@@ -76,6 +76,7 @@ SETTINGS = {
     "settle_s": ("still before a look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "settle_close_s": ("still before the box look", "s", 0.0, 2.0, 0.05, SETTLE_S),
     "reach_passes": ("corrections after the descent (0: it grips where it lands)", "", 0, 3, 1, 0),
+    "grip_mm": ("the fingers close this far inside the piece's width (the M3's way)", "mm", 0, 10, 0.5, 2),
     "reach_offset_mm": ("aim this much further out than seen", "mm", -30, 40, 1, round(cfg.REACH_OFFSET_M * 1000)),
     "release_s": ("open at the drop-off before going back", "s", 0.0, 1.0, 0.05, 0.15),
     "drive_cm_s": ("driving speed", "cm/s", 1.0, 10.0, 0.5, 5.0),
@@ -466,7 +467,7 @@ class Picker(Task):
         with self.step("grip"), self.narrated():
             try:
                 held = grasp.pick(self.arm, t, reach_offset_m=offset, speeds=self.grip_speeds(),
-                                  passes=int(self.cfg["reach_passes"]))
+                                  passes=int(self.cfg["reach_passes"]), grip_m=self.cfg["grip_mm"] / 1000)
             except grasp.GraspError as exc:
                 raise Refused(np.array([t.x, t.y]), f"refused: {exc}") from exc
         try:
@@ -474,7 +475,8 @@ class Picker(Task):
         except grasp.GraspError:
             step = None
         reading = found_of(t, reach=True)
-        return {"reading": reading, "centre": reading["centre"], "line": (t.x, t.y), "held": bool(held),
+        return {"reading": reading, "centre": reading["centre"], "line": (t.x, t.y),
+                "held": None if held is None else bool(held),   # None: the look after says, as the M3's
                 "record": {"yaw_from": "outline", "pitch": None if step is None else round(float(step.pitch)),
                            "j5": None if step is None else int(step.roll), "label": t.label}}
 

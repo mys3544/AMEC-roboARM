@@ -64,7 +64,7 @@ def test_the_arm_cards_calls_are_answered_and_a_pick_runs_through_them(url):
         time.sleep(0.05)
     assert state["error"] is None and state["picked"] == 1
     lines = json.loads(get(url, "/pick/log?since=0")[2])["lines"]
-    assert any("holding something" in line["text"] for line in lines)
+    assert any("mm inside the" in line["text"] for line in lines)   # grasp.py's close, narrated
     status, kind, jpeg = get(url, "/pick/frame.jpg")
     assert status == 200 and kind == "image/jpeg" and jpeg[:2] == b"\xff\xd8"
     assert "runs" in json.loads(get(url, "/api/metrics?events=0")[2])

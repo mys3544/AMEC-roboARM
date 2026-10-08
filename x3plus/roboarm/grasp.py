@@ -60,6 +60,7 @@ NOT HANDLED, and worth saying out loud rather than discovering during a demo:
 
 from __future__ import annotations
 
+import itertools
 import math
 import random
 import time
@@ -112,6 +113,21 @@ GRIPPER_DPS = 60
 # because once the object is falling nothing depends on how the fingers part.
 GRIPPER_CLOSE_DPS = 120
 DROP_OPEN_DPS = 600
+
+
+def gap_angle(gap_m: float) -> int:
+    """The gripper angle that leaves the fingertips `gap_m` apart -- interpolated in
+    cfg.GRIPPER_GAP_MM (cfg.gripper_for_gap rounds to its rows) -- at most closed."""
+    rows = sorted(cfg.GRIPPER_GAP_MM.items(), key=lambda r: r[1])   # by the gap, rising
+    gap_mm = gap_m * 1000
+    if gap_mm >= rows[-1][1]:
+        return rows[-1][0]
+    if gap_mm <= rows[0][1]:
+        return cfg.GRIPPER_CLOSED
+    for (a0, g0), (a1, g1) in itertools.pairwise(rows):
+        if g0 <= gap_mm <= g1:
+            return min(round(a0 + (gap_mm - g0) / (g1 - g0) * (a1 - a0)), cfg.GRIPPER_CLOSED)
+    return cfg.GRIPPER_CLOSED
 
 
 class GraspError(ArmError):
@@ -366,14 +382,17 @@ def plan(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> P
 
 def pick(arm: Arm, target: detect.Target,
          reach_offset_m: float = cfg.REACH_OFFSET_M, speeds: dict | None = None,
-         passes: int = REACH_PASSES) -> bool:
+         passes: int = REACH_PASSES, grip_m: float | None = None) -> bool | None:
     """Pick the target up. Returns whether anything is actually held.
 
     False is a normal outcome, not an error: the fingers closed and found nothing
     between them. Either way the arm ends up lifted and clear, so the caller can
     retry or go back and look again. `speeds` (deg/s): "approach", "descend",
     "carry" -- the module's own by default. `passes`: corrections after the
-    descent (_reach_to); 0 grips where the descent landed.
+    descent (_reach_to); 0 grips where the descent landed. `grip_m`: close only
+    to the object's width less this, as the M3 closes, and answer None -- a few
+    degrees past the object are too few for the read-back to tell from nothing,
+    so whether it holds is the look's after; None (default): the old X3's close.
     """
     speeds = speeds or {}
     approach_dps = speeds.get("approach", APPROACH_DPS)
@@ -441,9 +460,19 @@ def pick(arm: Arm, target: detect.Target,
     say("closing")
     with metrics.span("pick.close"):
         time.sleep(0.2)
-        # The old X3's close, back at the user's word (2026-10-08): fully, then
-        # backed off to just past where the piece stopped the fingers. A close
-        # aimed short of shut, then one that felt for the piece, clicked no less.
+        if grip_m is not None:
+            # The M3's close (the user, 2026-10-08: the X3's fingers "still over closing" with
+            # every close aimed past the piece): to its width -- the kit's own, x3pick.kit_sized
+            # -- less grip_m, and no further.
+            shut = gap_angle(target.width_m - grip_m)
+            say(f"closing to {(target.width_m - grip_m) * 1000:.0f} mm (J6 {shut}): {grip_m * 1000:.1f} mm inside "
+                f"the {target.width_m * 1000:.0f} mm piece")
+            arm.close_gripper(shut, speed_dps=GRIPPER_CLOSE_DPS)
+            with metrics.span("pick.lift"):
+                lift(arm, target.x, target.y, step.pitch, speed_dps=carry_dps)
+            return None
+        # The old X3's close: fully, then backed off to just past where the piece
+        # stopped the fingers.
         arm.close_gripper(speed_dps=GRIPPER_CLOSE_DPS)
         # The servo has to have stopped against the object before grasped() asks
         # where it is; move_to already waited a quarter second after the glide.
