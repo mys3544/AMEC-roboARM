@@ -372,32 +372,28 @@ class Picker(Task):
         return found
 
     def search(self, calibrated: list) -> list[tuple[sweep.Look, detect.Target]]:
-        """The scan looks' stations, the nearest the arm first -- one look's whole ring before the
-        next (a change of look moves J2-J5 and the exposure settles again) -- each from a standstill,
-        hints followed; it stops at the first station that shows something it can pick, and stays
-        there (the X3 panel's one-click search, 2026-09-21) -- not at one this job has given up
-        (2026-10-08: it stopped at a cube missed twice, and the clean-up ended with more in reach)."""
-        scan = self.scan_looks(calibrated)
+        """ONE round of the scan looks' stations, from the end of the ring nearest the arm to the
+        other, each from a standstill and once; it stops at the first station that shows something
+        it can pick (not at one this job has given up), and stays there. No hints: nearest-first
+        went left, right, left, and with every detector on every picture the hints of things cut by
+        the picture's edge chained look after look -- a clear table took 104 s and the user called
+        it stuck (2026-10-08: "the cube search round should go just once")."""
         here = self.here()
-        names = [name for _m, _p, name in scan]
-        queue = sorted(sweep.stations(scan, sweep.SURVEY_STEP_DEG), key=lambda look: (names.index(look.name), abs(look.pose[1] - here[1])))
-        visited: set[tuple[str, int]] = set()
+        ring: list[sweep.Look] = []
+        for entry in self.scan_looks(calibrated):
+            stations = sorted(sweep.stations([entry], sweep.SURVEY_STEP_DEG), key=lambda look: look.pose[1])
+            if stations and abs(stations[-1].pose[1] - here[1]) < abs(stations[0].pose[1] - here[1]):
+                stations.reverse()
+            ring += stations
         seen: list[tuple[sweep.Look, detect.Target]] = []
-        while queue:
-            look = queue.pop(0)
-            if (look.name, look.pose[1]) in visited:
-                continue
-            visited.add((look.name, look.pose[1]))
+        for look in ring:
             with metrics.span("look"):
-                kept, clipped = self.look_from(look, hints=True)
+                kept, _clipped = self.look_from(look)
             seen.extend((look, t) for t in kept)
             if any(kind_of(t) is not None and plannable(t) and not self.dropped_here(found_of(t))
                    and not self.given_up(found_of(t)) for t in kept):
                 self.station_seen = look
                 break
-            for hint in reversed(sweep.hints(look, clipped, calibrated)):
-                if (hint.look.name, hint.look.pose[1]) not in visited:
-                    queue.insert(0, hint.look)
         return seen
 
     def order(self, kit: list[dict], at) -> list[dict]:
