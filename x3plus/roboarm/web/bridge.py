@@ -47,7 +47,7 @@ from roboarm.web.server import Server, send_bytes, send_json, send_mjpeg
 # the laptop cannot reach into the SDK object behind it.
 ALLOWED = frozenset({
     "read", "read_fine", "move_to", "glide", "moving", "home", "set_gripper", "open_gripper",
-    "close_gripper", "grasped", "hold", "release", "engage", "out_of_range", "battery",
+    "close_gripper", "close_until_stopped", "grasped", "hold", "release", "engage", "out_of_range", "battery",
 })
 
 

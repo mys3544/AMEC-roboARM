@@ -296,9 +296,11 @@ REACH_OFFSET_SLOPE = 0.30
 # commanded and reported angle, so anything inside this is not a fault.
 READBACK_TOLERANCE_DEG = 4.0
 
-# Largest single step arm.py will command. Bigger moves are interpolated, so no
-# command can ever slam a joint across its range.
-MAX_STEP_DEG = 8.0
+# Largest single command arm.py sends; bigger moves are split. The servos carry
+# a command out themselves at the pace its run time sets, so no command can slam
+# a joint across its range -- and few long commands are one smooth motion, where
+# 8-degree ones (until 2026-10-08) were a stop and a start every 8 degrees.
+MAX_STEP_DEG = 30.0
 
 # --------------------------------------------------------- kinematics (m) ---
 # MEASURED on the physical robot 2026-09-03, from a photo with dimensions marked.

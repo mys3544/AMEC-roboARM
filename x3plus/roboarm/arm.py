@@ -119,6 +119,14 @@ def send_pose(bot: Rosmaster, pose: Pose, run_time: int) -> None:
 # How long before a step is due to end the next one is sent (Arm._glide): the servos blend them into
 # one motion. A little more than the serial round trip of a pose.
 STEP_LEAD_S = 0.03
+# The longest one command runs (the SDK cuts a run time at 2 s), and how often a stop is asked for
+# while one runs: a stop halts the servos where they are (Arm._halt).
+SEGMENT_MAX_S = 1.5
+INTERRUPT_POLL_S = 0.04
+# Arm.close_until_stopped: how often the gripper is read while it closes, and how far behind where
+# it should be by now it has to have fallen, not moving, to have been stopped by something.
+FEEL_POLL_S = 0.05
+STALL_LAG_DEG = 4.0
 
 
 def _sendable(joint: int, angle: float) -> int:
@@ -166,9 +174,9 @@ class Arm:
         # a close, so without this an OPEN gripper reads "below closed" and reports
         # a grasp that never happened.
         self._gripper_target: int | None = None
-        # Asked between the steps of every glide. Return True to abandon the move:
-        # the arm stops at the last intermediate pose it was sent -- a legal one,
-        # since every step is -- and move_to() raises ArmError. This is how a
+        # Asked while every glide runs. Return True to abandon the move: the servos
+        # are stopped where they are -- on the way between two legal poses, so a
+        # legal one -- and move_to() raises ArmError. This is how a
         # remote stop button reaches into a move already under way, without the
         # SDK having any notion of cancelling a command.
         self.interrupt: Callable[[], bool] | None = None
@@ -421,12 +429,14 @@ class Arm:
 
     def _glide(self, start: Pose, goal: Pose, speed_dps: float,
                cancel: threading.Event | None = None) -> bool:
-        """Interpolated move, no step larger than step_deg. Returns False if already there.
+        """Interpolated move, no command larger than step_deg or longer than
+        SEGMENT_MAX_S. Returns False if already there.
 
-        Bounding the step bounds the speed and keeps every intermediate pose legal.
-        A loaded joint also simply cannot complete a large jump in one command.
-        With `cancel`, the move stops at its last sent step as soon as the event
-        is set (that is a glide() being held or superseded).
+        Each command's run time sets the pace (speed_dps), and the servos interpolate
+        it themselves, all arriving together: the path is the straight line between
+        two legal poses either way. With `cancel`, the move stops being sent as soon
+        as the event is set (that is a glide() being held or superseded; whoever set
+        it sends the next command).
         """
         # A joint outside our safe range glides back from WHERE IT IS whenever a
         # command can say that angle -- the SDK's range, or below it by raw pulses
@@ -441,7 +451,7 @@ class Arm:
         if biggest == 0:
             return False
 
-        steps = max(1, math.ceil(biggest / self.step_deg))
+        steps = max(1, math.ceil(biggest / self.step_deg), math.ceil(biggest / speed_dps / SEGMENT_MAX_S))
         run_time = max(20, int(1000 * (biggest / steps) / speed_dps))
         # Each step is sent STEP_LEAD_S before the last one is due to end, so the servos take the new
         # target while still moving and the move is one motion. Sent only once a step had ended, every
@@ -456,12 +466,32 @@ class Arm:
                 {j: round(start[j] + frac * (goal[j] - start[j])) for j in cfg.JOINT_IDS},
                 run_time,
             )
-            wait = run_time / 1000 - (lead if i < steps else 0.0)
-            if cancel is None:
-                time.sleep(max(0.0, wait))
-            elif cancel.wait(max(0.0, wait)):
+            if self._wait_out(run_time / 1000 - (lead if i < steps else 0.0), cancel):
                 return True
         return True
+
+    def _wait_out(self, seconds: float, cancel: threading.Event | None) -> bool:
+        """Wait while the servos carry a command out, asking `interrupt` every
+        INTERRUPT_POLL_S: a stop halts them where they are. True: `cancel` was set."""
+        seconds = max(0.0, seconds)
+        slices = max(1, math.ceil(seconds / INTERRUPT_POLL_S))
+        for _ in range(slices):
+            if self.interrupt is not None and self.interrupt():
+                self._halt()
+                raise ArmError("move interrupted -- the arm is holding where it stopped")
+            if cancel is None:
+                time.sleep(seconds / slices)
+            elif cancel.wait(seconds / slices):
+                return True
+        return False
+
+    def _halt(self) -> None:
+        """Stop the servos where they are, part way through a command (hold(), from
+        inside a glide)."""
+        with contextlib.suppress(ArmError):
+            pose = self.read()
+            if not self.out_of_range(pose):
+                self._send(pose, run_time=0)
 
     def home(self, **kw) -> Pose:
         return self.move_to(dict(cfg.HOME_POSE), **kw)
@@ -475,12 +505,62 @@ class Arm:
 
     def close_gripper(self, angle: int | None = None, **kw) -> Pose:
         """Close to `angle` (fully, GRIPPER_CLOSED, by default). An object stops the fingers
-        short of it, which is a successful grasp, not a fault; grasped() tells the two apart. A
-        close aimed just past the object strains the servo far less than one aimed at fully shut
-        (grasp.closing_angle)."""
+        short of it, which is a successful grasp, not a fault; grasped() tells the two apart.
+        A pick feels for the object instead (close_until_stopped)."""
         target = cfg.GRIPPER_CLOSED if angle is None else min(int(angle), cfg.GRIPPER_CLOSED)
         self._close_target = target
         return self.set_gripper(target, **kw)
+
+    def _gripper_angle(self) -> float | None:
+        """The gripper now, from its raw count (one query); None if it did not answer."""
+        with self._io:
+            read_id, raw = self.bot.get_uart_servo_value(cfg.GRIPPER_ID)
+        if read_id != cfg.GRIPPER_ID or raw <= 0:
+            return None
+        return cfg.angle_from_raw_exact(cfg.GRIPPER_ID, raw)
+
+    def close_until_stopped(self, speed_dps: float, squeeze_deg: int) -> bool:
+        """Close the fingers at `speed_dps`, watching them, and the moment something
+        between them stops them, hold `squeeze_deg` past where they stopped. True:
+        stopped by something; False: shut on nothing.
+
+        A close aimed past the piece, and only then backed off, drove the servo on at
+        full torque until told otherwise -- the clicking the user heard as the fingers
+        over-closed on the cube (2026-10-08). Stopped is: not moving while well
+        behind where the close should be by now, after it has got going (or, never
+        having moved, for a third of a second -- shut on it already).
+        """
+        self._cancel_glide()
+        pose = self.read()
+        start, target = pose[cfg.GRIPPER_ID], cfg.GRIPPER_CLOSED
+        if start >= target - cfg.READBACK_TOLERANCE_DEG:
+            return False
+        run_s = min(SEGMENT_MAX_S, (target - start) / speed_dps)
+        self._send({**pose, cfg.GRIPPER_ID: target}, int(run_s * 1000))
+        self._gripper_target = self._close_target = target
+        began, last = time.monotonic(), float(start)
+        now: float | None = last
+        for _ in range(math.ceil((run_s + 1.0) / FEEL_POLL_S)):
+            time.sleep(FEEL_POLL_S)
+            now = self._gripper_angle()
+            if now is None:
+                continue
+            if now >= target - cfg.READBACK_TOLERANCE_DEG:
+                return False
+            elapsed = time.monotonic() - began
+            behind = start + (target - start) * min(1.0, elapsed / run_s) - now
+            still = now - last < 1.0
+            if still and behind > STALL_LAG_DEG and (now - start >= 3 or elapsed >= 0.35):
+                break
+            last = now
+        else:
+            now = self._gripper_angle()
+            if now is None or now >= target - cfg.READBACK_TOLERANCE_DEG:
+                return False
+        hold = min(round(now) + squeeze_deg, target)
+        self._send({**pose, cfg.GRIPPER_ID: hold}, run_time=0)
+        self._gripper_target = hold
+        return True
 
     def grasped(self) -> bool:
         """True if a close attempt was stopped short by an object between the fingers.

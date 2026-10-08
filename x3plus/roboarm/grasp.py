@@ -104,11 +104,13 @@ APPROACH_DPS = 60.0
 DESCEND_DPS = 25.0
 TRANSIT_DPS = 90.0   # the trip to the drop pose, holding it
 PLACE_DESCEND_DPS = 25.0
-# How far past the piece's own width the fingers are told to close (closing_angle): it stops them,
-# grasped() reads the shortfall. Aimed at fully shut the servo pushed ~10 mm past a 26 mm block at full
-# torque until the check, and clicked (2026-10-08); 5 mm is still 9-13 degrees, well over the read-back's
-# 4-degree tolerance, so "holding" still reads true with the width off by a few mm.
-CLOSE_PAST_M = 0.005
+# The close (2026-10-08): fast to PRECLOSE_CLEAR_M wider than the piece reads, then slowly, the
+# fingers watched, until it stops them (Arm.close_until_stopped), and SQUEEZE_DEG past that. Aimed
+# at fully shut, then at 5 mm inside the width it read, the servo pushed on past the cube at full
+# torque and clicked. The wrist camera reads the kit ~3 mm narrow, and the kit check lets a reading
+# be 7 mm off (roboshared.kit): 8 mm clears the piece on the fast part.
+PRECLOSE_CLEAR_M = 0.008
+FEEL_DPS = 45
 # The fingers. Closing speed does not change the grip -- the servo's torque
 # does -- so both directions run at the speed the panel's buttons use.
 GRIPPER_DPS = 60
@@ -120,11 +122,11 @@ GRIPPER_CLOSE_DPS = 120
 DROP_OPEN_DPS = 600
 
 
-def closing_angle(width_m: float) -> int:
-    """The gripper angle that closes the fingers CLOSE_PAST_M inside a thing `width_m` across --
-    interpolated in cfg.GRIPPER_GAP_MM (cfg.gripper_for_gap rounds to its rows) -- at most closed."""
+def gap_angle(gap_m: float) -> int:
+    """The gripper angle that leaves the fingertips `gap_m` apart -- interpolated in
+    cfg.GRIPPER_GAP_MM (cfg.gripper_for_gap rounds to its rows) -- at most closed."""
     rows = sorted(cfg.GRIPPER_GAP_MM.items(), key=lambda r: r[1])   # by the gap, rising
-    gap_mm = (width_m - CLOSE_PAST_M) * 1000
+    gap_mm = gap_m * 1000
     angle = cfg.GRIPPER_CLOSED
     for (a0, g0), (a1, g1) in itertools.pairwise(rows):
         if g0 <= gap_mm <= g1:
@@ -461,24 +463,11 @@ def pick(arm: Arm, target: detect.Target,
     say("closing")
     with metrics.span("pick.close"):
         time.sleep(0.2)
-        arm.close_gripper(closing_angle(target.width_m), speed_dps=GRIPPER_CLOSE_DPS)
-        # The servo has to have stopped against the object before grasped() asks
-        # where it is; move_to already waited a quarter second after the glide.
-        time.sleep(0.4)
-        holding = arm.grasped()
-        if not holding and closing_angle(target.width_m) < cfg.GRIPPER_CLOSED:
-            # Reached the width-based target untouched: the piece is narrower than
-            # it read, or not there. The rest of the way shut tells which.
-            arm.close_gripper(speed_dps=GRIPPER_CLOSE_DPS)
-            time.sleep(0.4)
-            holding = arm.grasped()
+        near = gap_angle(target.width_m + PRECLOSE_CLEAR_M)
+        if near > step.opening:
+            arm.set_gripper(near, speed_dps=GRIPPER_CLOSE_DPS, settle=False)
+        holding = arm.close_until_stopped(speed_dps=FEEL_DPS, squeeze_deg=SQUEEZE_DEG)
     say("holding something" if holding else "closed on nothing")
-    if holding:
-        # Ask grasped() BEFORE this, never after: relaxing the squeeze changes the
-        # gripper target, and grasped() only answers about a close it asked for.
-        with metrics.span("pick.squeeze"):
-            settled = arm.read()[cfg.GRIPPER_ID]
-            arm.set_gripper(min(settled + SQUEEZE_DEG, cfg.GRIPPER_CLOSED))
 
     with metrics.span("pick.lift"):
         lift(arm, target.x, target.y, step.pitch, speed_dps=carry_dps)

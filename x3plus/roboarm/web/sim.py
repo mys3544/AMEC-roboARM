@@ -244,6 +244,14 @@ class SimArm:
         self._close_target = target
         return self.set_gripper(target, **kw)
 
+    def close_until_stopped(self, speed_dps: float, squeeze_deg: int) -> bool:
+        """Arm.close_until_stopped: in here the fingers stop on a block exactly."""
+        self.close_gripper(speed_dps=speed_dps)
+        held = self.grasped()
+        if held:
+            self.set_gripper(min(self.read()[cfg.GRIPPER_ID] + squeeze_deg, cfg.GRIPPER_CLOSED))
+        return held
+
     def _real_tip(self) -> tuple[float, float, float]:
         """Where the fingertips really are: the model's answer, pulled back along
         the reach by the measured shortfall."""
