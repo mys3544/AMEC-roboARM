@@ -107,3 +107,16 @@ def test_kit_sizes_and_the_robots_own_wheels():
     wheel = detect.Target(x=0.003, y=-0.106, width_m=0.028, length_m=0.058, angle_deg=0.0, label="raised")
     assert x3pick.on_body(wheel) and not x3pick.on_body(read)
 
+
+
+def test_the_survey_reads_its_pictures_in_a_process_of_its_own(rig):
+    """2026-10-08: read in a thread of the arm's process, the detectors held the interpreter and the
+    turn's setpoints came late -- the arm jumped. The same findings from the detector process."""
+    _world, _arm, picker = rig([sim.Block(0.160, 0.020, 0.040, (0, 120, 255))])
+    picker.apart = x3pick.ProcessPoolExecutor(1, mp_context=x3pick.multiprocessing.get_context("spawn"))
+    try:
+        found = picker.wide_look(sides=True)
+    finally:
+        picker.apart.shutdown()
+    assert any(abs(o["centre"][0] - 0.160) < 0.02 and abs(o["centre"][1] - 0.020) < 0.02 for o in found), \
+        [np.round(o["centre"][:2], 3).tolist() for o in found]

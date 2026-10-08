@@ -29,9 +29,10 @@ import contextlib
 import io
 import json
 import math
+import multiprocessing
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
 
@@ -61,9 +62,12 @@ BOX_LOOK = {2: 100, 3: 20, 4: 0, 5: 90}   # the angled look of the depth tests (
 # the picture's edge, no box found anywhere, the cubes dropped on the line) -- then BOX_LOOK's own 0
 # for a box nearer than that, its marker on a wall.
 BOX_TILTS = (10, 0)
-# The calibrated looks the survey rides, nearest-seeing first: "near" too (2026-10-08: a 40 mm cube
-# 124 mm out was cut by the primary look's near edge in every picture, and left on the table).
-SURVEY_LOOKS = ("near", "primary")
+# The calibrated looks the survey rides, nearest-seeing first. "near" sees 10-24 cm out whole (a 40 mm
+# cube 124 mm out was cut by the primary look's near edge in every picture, 2026-10-08), "outer" the
+# far rim: near + primary left 24-25 cm unseen and the far cubes on the table ("maybe the second scan
+# is too close", the user, the same day); near + outer see every spot a pick reaches (a 30 mm cube on
+# a 1 cm grid, sweep.sees).
+SURVEY_LOOKS = ("near", "outer")
 # The robot's own front, in the arm's frame: its wheels show in the looks that face down beside it
 # (2026-10-08: the front-right one at (0, -105) mm read as raised, once as a lying block, and was
 # reached for). Nothing there is picked, and nothing there is a hint.
@@ -130,6 +134,15 @@ def found_of(target: detect.Target, reach: bool | None = None) -> dict:
             "footprint": (target.width_m, target.length_m), "yaw": float(target.angle_deg) % period,
             "period": period, "whole": not target.clipped, "reach": reach, "target": target,
             "label": target.label, "confidence": round(float(target.confidence), 3)}
+
+
+def _ladder(frame, matrix, nadir, url, lens_m) -> list[detect.Target]:
+    """detect.ladder for a picture of the survey's turn, in the detector process (Picker.apart)."""
+    return detect.ladder(frame, "auto", matrix, nadir=nadir, url=url, lens_m=lens_m, hints=False)
+
+
+def _ready() -> bool:
+    return True
 
 
 def merged(seen: list[tuple[sweep.Look, detect.Target]]) -> list[tuple[sweep.Look, detect.Target]]:
@@ -204,8 +217,15 @@ class Picker(Task):
 
     def __init__(self, call, frames, calibration, out: Path | None = None, settle_s: float | None = None,
                  rng=None, drive=None, battery=None, detector_url: str | None = cfg.DETECTOR_URL,
-                 lens_fit: dict | None = None):
+                 lens_fit: dict | None = None, apart: bool = False):
         super().__init__(call, snapshot=None, out=out, settle_s=settle_s, rng=rng, drive=drive, battery=battery)
+        # `apart`: the survey's pictures read in a process of their own. In a thread of this one, the
+        # detectors' numpy held the interpreter for tens of ms at a time, the 50 ms setpoints of the
+        # turn came late, and caught up on the clock: the arm "jumps from one spot to another"
+        # (2026-10-08). Started here, so the first picture does not wait for the process.
+        self.apart = ProcessPoolExecutor(1, mp_context=multiprocessing.get_context("spawn")) if apart else None
+        if self.apart is not None:
+            self.apart.submit(_ready)
         self.arm = _Arm(call)
         self.frames = frames             # () -> camera.Stream
         self.calibration = calibration   # () -> [(matrix, survey pose, name)], the calibrated looks
@@ -251,13 +271,19 @@ class Picker(Task):
         return found_of(target, reach=kind_of(target) is not None and plannable(target))
 
     # --------------------------------------------------------------------------- seeing --
-    def detect_at(self, look: sweep.Look, frame, hints: bool = False) -> tuple[list[detect.Target], list[detect.Target]]:
+    def detect_at(self, look: sweep.Look, frame, hints: bool = False,
+                  apart: bool = False) -> tuple[list[detect.Target], list[detect.Target]]:
         """What `frame`, taken from `look`, shows: (wholly, cut by the picture's edge -- what the
-        hints read); the marked picture for the watchers, the raw one kept (out/looks)."""
+        hints read); the marked picture for the watchers, the raw one kept (out/looks). `apart`:
+        the detectors run in the detector process (self.apart), when there is one."""
         with metrics.span("detect"):
-            found = detect.ladder(frame, "auto", look.matrix, nadir=look.nadir, url=self.vision_url(),
-                                  lens_m=kin.camera_height(look.pose), note=lambda text: print(text, flush=True),
-                                  hints=hints)
+            if apart and self.apart is not None:
+                found = self.apart.submit(_ladder, frame, look.matrix, look.nadir, self.vision_url(),
+                                          kin.camera_height(look.pose)).result()
+            else:
+                found = detect.ladder(frame, "auto", look.matrix, nadir=look.nadir, url=self.vision_url(),
+                                      lens_m=kin.camera_height(look.pose), note=lambda text: print(text, flush=True),
+                                      hints=hints)
         found = [t for t in found if not on_body(t)]
         kept = [t for t in (kit_sized(t) for t in found if not t.clipped)
                 if sweep.sees(look, t.x, t.y, sweep.TAG_SPAN_M if t.label.startswith("tag") else t.width_m,
@@ -413,7 +439,7 @@ class Picker(Task):
         seen: list[tuple[sweep.Look, detect.Target]] = []
 
         def on_frame(look: sweep.Look, frame) -> None:
-            seen.extend((look, t) for t in self.detect_at(look, frame)[0])
+            seen.extend((look, t) for t in self.detect_at(look, frame, apart=True)[0])
 
         forward = None
         for entry in entries:

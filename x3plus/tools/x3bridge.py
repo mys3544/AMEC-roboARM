@@ -118,7 +118,7 @@ def main() -> int:
     picker_box: list = []
     picker = x3pick.Picker(serve.arm_caller(the_bridge, lambda: picker_box[0]), the_bridge.stream, calibration,
                            out=out, battery=battery_watch(the_bridge), detector_url=detector_url,
-                           lens_fit=lens_fit)
+                           lens_fit=lens_fit, apart=not args.sim)
     picker_box.append(picker)
     if out is not None:
         out.mkdir(parents=True, exist_ok=True)
