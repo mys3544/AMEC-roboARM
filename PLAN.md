@@ -672,6 +672,18 @@ Evaluation: AP and pick success for 1/3/5/10 views, with and without negatives, 
 prompts, DINOv2 matching, SAM 3 and the fine-tuned model; seconds from Teach to first pick. For the
 kit itself A is not needed (M5 trains on it directly); it is for everything new.
 
+**First live result, 2026-10-09 (A1-A2 on the M3; `m3pro/roboarm/m3teach.py`,
+`m3pro/tools/teach_service.py`, `m3pro/tools/m3_show.py`).** Four white picture cubes (apricot,
+news, cosmetics, fish -- same shape, different prints) each taught from 5-6 views (the wide look
+turned on J1, two from above; the depth boxes the thing in each). YOLOE-26's visual prompts found
+the cubes but named every one "cosmetics" (0.15-0.46); matched view to view, YOLOE's prompt
+embeddings named 1 of 4 right (640 and 1280 px), DINOv2 ViT-S/14 on the crops 4 of 4, the right
+name 0.09-0.17 ahead. So the identity is DINOv2's (the user's choice), YOLOE stays for detection
+and A3: the four cubes then named right live (0.67-0.80), two blocks and the rest unknown
+(<= 0.54), and "pick fish" picked it out of its look-alikes into the box in 20 s. For the paper:
+visual prompts on a real-time detector do not reach instance level for same-shape look-alikes;
+the prompt-as-input engine (A3) needs an instance-level stage beside it.
+
 **D -- A picker that teaches a VLA: how it works.** (After A since v2.4, the user's "maybe";
 RESEARCH.md P1 has the competing 2026 work and the design changes it forces, e.g. an overhead
 teacher camera.)
