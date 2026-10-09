@@ -107,7 +107,8 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
     "kind" ("cube", "block" or None), "size" (m the fingers close across, or None), "length",
     "height" (m), "top" (m, measured), "footprint" ((w, h) m as seen), "yaw" (deg: a line the
     fingers may close along -- any face of a square footprint, across a lying block), "period"
-    (deg: 90 square, 180 a lying block), "whole" (bool), "points"}. `floor`: (normal, height) from
+    (deg: 90 square, 180 a lying block), "whole" (bool), "points", "outline_px" (the convex hull of
+    its points in the picture, [[u, v], ...]: a training label)}. `floor`: (normal, height) from
     floor_plane() when the caller has it already."""
     K = np.asarray(K, float).reshape(3, 3)
     rows, cols = depth_mm.shape[:2]
@@ -140,6 +141,7 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
         mine = p[members]
         u, v = K[0, 0] * mine[:, 0] / mine[:, 2] + K[0, 2], K[1, 1] * mine[:, 1] / mine[:, 2] + K[1, 2]
         clipped = bool(np.any((u < 3) | (u > cols - 4) | (v < 3) | (v > rows - 4)))
+        hull = cv2.convexHull(np.stack([u, v], axis=1).round().astype(np.int32)).reshape(-1, 2)
         lying = item is not None and length > size
         long_deg = angle if w >= h else angle + 90             # the footprint's long side
         whole = False
@@ -155,7 +157,8 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
         found.append({"centre": np.array([centre[0], centre[1], tall / 2]), "kind": kind, "size": size,
                       "length": length, "height": tall, "top": top, "footprint": (float(w), float(h)),
                       "yaw": float(long_deg + 90) % 180 if lying else float(angle) % 90,
-                      "period": 180 if lying else 90, "whole": whole, "points": len(members)})
+                      "period": 180 if lying else 90, "whole": whole, "points": len(members),
+                      "outline_px": hull.tolist()})
     return sorted(found, key=lambda o: float(np.linalg.norm(o["centre"][:2] - camera[:2, 3])))
 
 

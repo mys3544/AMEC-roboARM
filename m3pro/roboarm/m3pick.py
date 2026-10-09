@@ -678,11 +678,17 @@ class Picker(Task):
         self.show(marked, found)
         if self.out is not None:
             self.out.mkdir(parents=True, exist_ok=True)
-            stamp = time.strftime("%H%M%S")
+            stamp = time.strftime("%Y%m%d_%H%M%S")
             cv2.imwrite(str(self.out / f"{stamp}_{tag}.jpg"), marked)
+            cv2.imwrite(str(self.out / f"{stamp}_{tag}_rgb.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 95])
             cv2.imwrite(str(self.out / f"{stamp}_{tag}_depth.png"), depth)
-            (self.out / f"{stamp}_{tag}.json").write_text(json.dumps(   # for looking again later
-                {"pose": {str(j): v for j, v in pose.items()}, "K": np.asarray(K).tolist()}))
+            (self.out / f"{stamp}_{tag}.json").write_text(json.dumps({   # for looking again later; the
+                # clean picture's labels for the kit detector (PLAN.md M5) and the depth duel (S1)
+                "pose": {str(j): v for j, v in pose.items()}, "K": np.asarray(K).tolist(),
+                "camera": camera.tolist(),
+                "found": [{"kind": o["kind"], "size": o["size"], "length": o["length"], "top": o["top"],
+                           "centre": [float(c) for c in o["centre"]], "yaw": o["yaw"], "whole": o["whole"],
+                           "outline_px": o["outline_px"]} for o in found]}))
         return camera, found
 
     def view(self):
