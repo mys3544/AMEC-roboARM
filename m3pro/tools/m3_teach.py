@@ -4,7 +4,9 @@ wide look found (tools/m3_hover.py look), in mm steps, until the fingers sit whe
 is -- and saves. Every pose sent is known, so each save is a pair: where the camera saw the piece,
 and the pose that really reaches it. The pairs fit the correction (out/teach/points.jsonl).
 
-    python tools/m3_teach.py [N]      # over piece N of out/hover/look.json (nearest 0), then the keys:
+    python tools/m3_teach.py [N [SPARE]]   # over piece N of out/hover/look.json (nearest 0), the fingers
+                                           # opened SPARE mm over its width (25; 15 as the careful grip
+                                           # by the robot's front: wide, a turned hand dips one), then the keys:
 
     arrows up / down     out / in (away from the robot / towards it)
     arrows left / right  left / right, as the arm sees it
@@ -48,7 +50,7 @@ def call(method: str, *args, **kwargs):
 
 
 class Teach:
-    def __init__(self, piece: dict, n: int):
+    def __init__(self, piece: dict, n: int, spare: float = 25):
         self.piece, self.n = piece, n
         self.centre = np.asarray(piece["centre"], float)
         axis = np.asarray(m3kinematics.CHAIN[0][0][:2])
@@ -56,7 +58,7 @@ class Teach:
         self.left = np.array([-self.out[1], self.out[0]])
         self.shift = np.zeros(3)          # m: out, left, up -- from the fingertips START_UP over the top
         self.turn = 0.0                   # deg on the squared wrist
-        self.opened = m3pick.opened_for(piece["size"], m3pick.OPEN_MM - 1000 * piece["size"])
+        self.opened = m3pick.opened_for(piece["size"], spare)
         self.pose = None
 
     def target(self) -> np.ndarray:
@@ -120,7 +122,8 @@ def main() -> int:
         raise SystemExit("no kit piece in out/hover/look.json: run tools/m3_hover.py look first")
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 0
     print(__doc__.split("\n\n")[2])
-    teach = Teach(pieces[n], n)
+    spare = float(sys.argv[2]) if len(sys.argv) > 2 else 25
+    teach = Teach(pieces[n], n, spare)
     print(f"piece {n}: {pieces[n]['kind']} at {np.round(pieces[n]['centre'][:2], 3).tolist()}")
     teach.move()
     step = 0.001
@@ -144,7 +147,7 @@ def main() -> int:
             n = (n + 1) % len(pieces)
             teach.shift[2] = max(teach.shift[2], 0.0)
             teach.move()   # up first, over this piece
-            teach = Teach(pieces[n], n)
+            teach = Teach(pieces[n], n, spare)
             print(f"piece {n}: {pieces[n]['kind']} at {np.round(pieces[n]['centre'][:2], 3).tolist()}")
             teach.move()
         elif k == "h":

@@ -8,7 +8,7 @@ import time
 import numpy as np
 import pytest
 
-from roboarm import m3arm, m3kinematics, m3pick
+from roboarm import m3aim, m3arm, m3kinematics, m3pick
 
 K = np.array([[480.0, 0, 320], [0, 480.0, 240], [0, 0, 1]])
 HOME = {1: 90, 2: 180, 3: 5, 4: 0, 5: 90, 6: 0}
@@ -16,9 +16,8 @@ HOME = {1: 90, 2: 180, 3: 5, 4: 0, 5: 90, 6: 0}
 
 @pytest.fixture(autouse=True)
 def arm_as_modelled(monkeypatch):
-    """The pretend arm goes exactly where the model says: no aim correction (the real one's SETTINGS)."""
-    for key in ("aim_out_mm", "aim_left_mm"):
-        monkeypatch.setitem(m3pick.SETTINGS, key, (*m3pick.SETTINGS[key][:5], 0))
+    """The pretend arm goes exactly where the model says: nothing taught (the real one's m3aim)."""
+    monkeypatch.setattr(m3aim, "TAUGHT", ())
 
 
 def test_the_aim_moves_a_thing_out_and_left_of_where_it_was_seen():
@@ -736,3 +735,12 @@ def test_the_drop_spots_keep_off_the_standing_lid():
     across = [float(m3pick.in_box(box, s)[1]) for s in m3pick.box_spots(box)]
     assert min(across) >= -m3pick.BOX_INSIDE[1] / 2 + m3pick.BOX_LID_MARGIN - 1e-9   # the lid: -into
     assert max(across) <= m3pick.BOX_INSIDE[1] / 2 - m3pick.BOX_MARGIN + 1e-9
+
+
+def test_the_taught_aim_follows_the_grips_near_a_thing_and_their_mean_far_from_them():
+    taught = ((0.20, 0.00, 0.020, 0.010), (0.20, -0.10, 0.008, -0.004))
+    mean = np.array([0.014, 0.003])
+    assert np.allclose(m3aim.offset(0.20, -0.10, taught), [0.008, -0.004], atol=0.0025)   # the corner's own
+    assert np.allclose(m3aim.offset(0.20, 0.00, taught), [0.020, 0.010], atol=0.0025)
+    assert np.allclose(m3aim.offset(0.60, 0.40, taught), mean)                           # nothing near: the mean
+    assert np.allclose(m3aim.offset(0.2, 0.0, ()), 0.0)
