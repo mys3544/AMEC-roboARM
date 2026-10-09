@@ -1,7 +1,6 @@
 """roboarm/m3teach.py: the box round a thing in a view, the views round it, a thing named by the
 detection that covers it, and the teach and the pick by name against a pretend arm and model."""
 
-import math
 
 import numpy as np
 import pytest
@@ -22,15 +21,13 @@ def test_the_box_is_round_the_thing_in_the_picture():
 
 
 def test_the_views_look_at_the_thing_from_round_it():
-    poses = m3teach.views_of((0.22, 0.0), 0.025, 0.03)
-    assert len(poses) >= 3
-    assert len({p[1] for p in poses}) >= 2   # from more than one J1
-    straight = 90 - round(math.degrees(math.atan2(0.0, 0.22 - m3kinematics.CHAIN[0][0][0])))
+    poses = m3teach.views_of((0.20, -0.03), 0.03, 0.03)
+    assert len(poses) >= 4
+    assert len({p[1] for p in poses}) >= 3                    # from round it on J1
+    assert any(p[2] == m3scan.LOOK_AT[2] for p in poses)      # find's own look among them
+    assert any(p[2] != m3scan.LOOK_AT[2] for p in poses)      # and from over it
     for pose in poses:
-        cam = m3scan.camera(pose)
-        ray = np.array([0.22, 0.0, 0.015]) - cam[:3, 3]
-        off = math.degrees(math.acos(ray @ cam[:3, 2] / np.linalg.norm(ray)))
-        assert off < (4 if pose[1] == straight else 25)   # J1 turned: off the middle, still in view
+        assert m3teach.in_view(pose, (0.20, -0.03, 0.015))
         assert m3kinematics.problem(pose) is None
 
 

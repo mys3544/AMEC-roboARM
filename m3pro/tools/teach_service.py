@@ -71,8 +71,9 @@ class Teacher:
         e = e / np.linalg.norm(e)
         with self.lock:
             keep = [i for i, n in enumerate(self.names) if n != name]
+            rest = self.embeddings[keep] if keep else np.zeros((0, len(e)), np.float32)   # (none yet: 0 x 0)
             self.names = [self.names[i] for i in keep] + [name]
-            self.embeddings = np.vstack([self.embeddings[keep].reshape(len(keep), -1), e[None]])
+            self.embeddings = np.vstack([rest, e[None]])
             self._save()
             return list(self.names)
 

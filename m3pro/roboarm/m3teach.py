@@ -2,8 +2,9 @@
 the teach model (tools/teach_service.py, YOLOE-26 visual prompts, 127.0.0.1:8762).
 
 - teach(name): one thing stands alone in front of the robot. The wide look finds it in the depth;
-  the arm then looks at it from views round it (m3scan.view: J1 either side, the heights the arm
-  can look from), and in every view the depth boxes it -- the box is the visual prompt -- and the
+  the arm then looks at it from views round it -- the wide look itself turned on J1 either side
+  (find's own view of things, at a slant), and the few steep views the arm can take over it
+  (m3scan.view: at the pick's 20 cm only ~82 deg) -- and in every view the depth boxes it: the box is the visual prompt; the
   views' embeddings, averaged, are what `name` is (A2: the user's choice of YOLOE, 2026-10-09; one
   view of one face named an apricot cube the news one in the next layout). Every view is kept
   (out/teach/NAME/) for training a detector on later (A4).
@@ -18,6 +19,7 @@ import base64
 import json
 import math
 import time
+import urllib.error
 import urllib.request
 
 import cv2
@@ -26,8 +28,10 @@ import numpy as np
 from roboarm import m3kinematics, m3scan, m3vision
 
 SERVICE = "http://127.0.0.1:8762"
-TURNS = (-15, 0, 15)          # deg of J1 off the thing's own direction
-ELEVATIONS = range(50, 90, 8) # deg the camera looks down at it from, as the arm allows
+LOOK_TURNS = (-20, -10, 0, 10, 20)   # deg of J1 off the thing's own direction: the wide look turned
+STEEP_TURNS = (-15, 0, 15)           # and the views from over it
+STEEP = 82                           # deg the camera looks down from over it (at 20 cm the only height
+                                     # the arm and the depth's 0.2 m allow, 2026-10-09)
 SURE = 0.3                    # a detection's confidence that names a thing; below it, unknown
 COVER = 0.3                   # how much a detection's box must overlap the thing's (IoU)
 
@@ -39,6 +43,8 @@ def ask(path: str, payload: dict | None = None, timeout: float = 30.0) -> dict:
     try:
         with urllib.request.urlopen(request, timeout=timeout) as reply:
             answer = json.loads(reply.read())
+    except urllib.error.HTTPError as exc:   # it answered, with what went wrong
+        raise RuntimeError(f"the teach model: {exc.read().decode(errors='replace')[:300]}") from exc
     except OSError as exc:
         raise RuntimeError(f"the teach model does not answer ({exc}): is roboarm-m3teach running?") from exc
     if "error" in answer:
@@ -69,23 +75,35 @@ def box_around(depth_mm: np.ndarray, K, cam: np.ndarray, centre, radius: float, 
             min(cols - 1, int(us.max()) + margin), min(rows - 1, int(vs.max()) + margin)]
 
 
+def in_view(pose: dict, point, K=None, inside: float = 0.85) -> bool:
+    """Whether `point` (x, y, z, base) is in the camera's picture at `pose`, within `inside` of
+    the way from its middle to its edge."""
+    K = np.array([[480.8, 0, 323.8], [0, 480.9, 240.0], [0, 0, 1]]) if K is None else np.asarray(K, float)
+    p = np.linalg.inv(m3scan.camera(pose)) @ np.r_[point[:3], 1.0]
+    if p[2] <= 0.1:
+        return False
+    u, v = K[0, 0] * p[0] / p[2] + K[0, 2], K[1, 1] * p[1] / p[2] + K[1, 2]
+    return abs(u - K[0, 2]) < inside * K[0, 2] and abs(v - K[1, 2]) < inside * K[1, 2]
+
+
 def views_of(centre, radius: float, top: float) -> list[dict]:
-    """The arm's poses that look at a thing at `centre` (x, y) from round it: TURNS x ELEVATIONS as
-    the arm can take them (m3scan.view), each from as far as the depth allows."""
+    """The arm's poses that look at a thing at `centre` (x, y): the wide look turned LOOK_TURNS off
+    it, where the thing stays in the picture, then the views over it at STEEP the arm can take."""
     base = np.asarray(m3kinematics.CHAIN[0][0][:2])
     j1 = 90 - math.degrees(math.atan2(centre[1] - base[1], centre[0] - base[0]))
     middle = np.r_[centre[:2], top / 2]
-    nearest = m3scan.NEAREST + math.hypot(radius, top / 2)
     poses = []
-    for turn in TURNS:
-        last = None
-        for elevation in ELEVATIONS:
-            for distance in (nearest + 0.04, nearest):
-                pose = m3scan.view(j1 + turn, middle, elevation, distance, radius, top, last)
-                if pose is not None:
-                    poses.append(pose)
-                    last = pose
-                    break
+    for turn in LOOK_TURNS:
+        # the fingers shut: they keep what they had, and open wide from home they came down over the
+        # chassis with the arm turned (the guard, J1 67)
+        pose = {**m3scan.LOOK_AT, 1: round(min(180, max(0, j1 + turn))), 6: m3scan.SLIM}
+        if in_view(pose, middle) and m3kinematics.problem(pose) is None and pose not in poses:
+            poses.append(pose)
+    nearest = m3scan.NEAREST + math.hypot(radius, top / 2)
+    for turn in STEEP_TURNS:
+        pose = m3scan.view(j1 + turn, middle, STEEP, nearest + 0.02, radius, top)             or m3scan.view(j1 + turn, middle, STEEP, nearest, radius, top)
+        if pose is not None:
+            poses.append(pose)
     return poses
 
 
