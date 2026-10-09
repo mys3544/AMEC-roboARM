@@ -744,6 +744,15 @@ better?" with numbers, and gives the neural localizer a proper evaluation.
   Scheduled in stage 1 since v2.4 as "the depth duel". Its X3 half is x3plus/PLAN.md's depth table,
   and the first rows are in: the networks flatten 30-40 mm pieces, while parallax from two views
   gives real heights. The demo shows the M3's stereo depth beside it.
+  **The M3 half, 2026-10-09** (`m3pro/tools/m3_duel.py`: Depth Anything V2 Small on the very
+  pictures the DCW2 took, anchored to the floor as the X3 does; 64 pick looks, 171 whole 30 mm
+  pieces the DCW2 named): on the WIDE look the DCW2 reads heights to 0.5 mm (median; p90 0.8),
+  Depth Anything to 5.2 mm (p90 12) on the arm model's floor -- 68 % of the pieces named right --
+  and 3.6 mm (p90 10, 77 %) on the DCW2's own floor; the table flat to 1.0 mm sd against 6-9.
+  On the CLOSE look (~20 cm) Depth Anything fails: 15.5 mm median, 18-27 % named, though the floor
+  fit says its scale is pinned and the look is no steeper (16 deg from straight down, the wide 20)
+  -- the cause is open. Unlike the X3's views, its median height is right (30 for 30): it
+  scatters rather than flattens. Picture panels: `m3pro/out/duel/panel_*.jpg`.
 - S2 physical checks vs VLM judges for grasp and stacking success (a five-cube tower; someone knocks
   the top cube off; the robot notices and rebuilds). VLM judges lean towards "success" (FailBench,
   Sep 2026: 0.77 balanced accuracy at best); depth height change and gripper read-back are free. The
