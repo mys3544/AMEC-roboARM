@@ -31,17 +31,14 @@ def test_the_views_look_at_the_thing_from_round_it():
         assert m3kinematics.problem(pose) is None
 
 
-def test_a_thing_takes_the_name_of_the_surest_detection_covering_it():
-    found = [{"outline_px": [[100, 100], [140, 100], [140, 140], [100, 140]], "centre": np.zeros(3)},
-             {"outline_px": [[300, 300], [340, 300], [340, 340], [300, 340]], "centre": np.zeros(3)},
-             {"outline_px": [[500, 50], [540, 50], [540, 90], [500, 90]], "centre": np.zeros(3)}]
-    detections = [{"name": "apricot", "conf": 0.8, "box": [98, 99, 141, 142]},
-                  {"name": "news", "conf": 0.5, "box": [101, 98, 139, 140]},     # the same thing, less sure
-                  {"name": "news", "conf": 0.6, "box": [298, 301, 342, 338]},
-                  {"name": "apricot", "conf": 0.2, "box": [500, 50, 540, 90]}]   # too unsure
-    named = m3teach.name_things(found, detections)
-    assert [o["taught"] for o in named] == ["apricot", "news", None]
-    assert named[0]["sure"] == 0.8
+def test_a_thing_is_named_only_when_its_views_agree_and_no_other_name_comes_close():
+    found = [{"outline_px": [[100, 100], [140, 140]], "centre": np.zeros(3)} for _ in range(3)]
+    identified = [{"name": "apricot", "sure": 0.78, "margin": 0.12},
+                  {"name": "news", "sure": 0.74, "margin": 0.02},      # cosmetics nearly as like it
+                  {"name": "fish", "sure": 0.52, "margin": 0.10}]      # like nothing taught
+    named = m3teach.name_things(found, identified)
+    assert [o["taught"] for o in named] == ["apricot", None, None]
+    assert m3teach.box_of(found[0]) == [96, 96, 144, 144]
 
 
 class Table:

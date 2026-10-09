@@ -46,6 +46,7 @@ from roboshared import box as boxes
 from roboshared import metrics
 
 MATCH_M = 0.03   # the close look's thing is the wide look's when within this
+BOX_TRIES, BOX_AGAIN_S = 3, 0.4   # looks for the box's marker from one place, and the pause between them
 PART_M = 0.06    # a thing one look saw cut by the picture's edge is another look's whole one within this
                  # (a kit thing's length): from the side looks a lying block cut short read as a cube
                  # 3-4 cm off its middle (2026-10-05, the tests)
@@ -467,13 +468,19 @@ class Task:
         """The box from where the arm is: its marker, the inside from it, and what stands in it (in its
         own terms) -- or None; the marked picture kept."""
         time.sleep(self.settle_s if self.settle_s is not None else self.cfg["settle_close_s"])
-        self.check()
-        image, K, camera, extra = self.view()
-        try:   # the box is a help, never a reason for a look to fail
-            seen = boxes.find_marker(image, K, camera, *boxes.BOX_MARKER)
-        except Exception as exc:  # noqa: BLE001 -- 2026-10-02: the robot's OpenCV 4.5.4 had no ArucoDetector
-            self.say(f"the look for the box failed: {type(exc).__name__}: {exc}")
-            seen = None
+        seen = None
+        for again in range(BOX_TRIES):   # 2026-10-09: the arm still swinging after the move, the marker
+            if again:                    # smeared in the picture -- not found, put back, the job stopped
+                time.sleep(BOX_AGAIN_S if self.settle_s is None else self.settle_s)
+            self.check()
+            image, K, camera, extra = self.view()
+            try:   # the box is a help, never a reason for a look to fail
+                seen = boxes.find_marker(image, K, camera, *boxes.BOX_MARKER)
+            except Exception as exc:  # noqa: BLE001 -- 2026-10-02: the robot's OpenCV 4.5.4 had no ArucoDetector
+                self.say(f"the look for the box failed: {type(exc).__name__}: {exc}")
+                break
+            if seen is not None:
+                break
         if seen is None:   # kept and shown too: what was in the way (2026-10-08, not seen holding a block)
             missed = image.copy()
             cv2.putText(missed, f"{tag}: no marker", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2, cv2.LINE_AA)

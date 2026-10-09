@@ -8,8 +8,10 @@ the teach model (tools/teach_service.py, YOLOE-26 visual prompts, 127.0.0.1:8762
   views' embeddings, averaged, are what `name` is (A2: the user's choice of YOLOE, 2026-10-09; one
   view of one face named an apricot cube the news one in the next layout). Every view is kept
   (out/teach/NAME/) for training a detector on later (A4).
-- find(): what each thing on the table is -- the wide look's things (the depth), each named by the
-  taught thing whose detection covers it best, or unknown.
+- find(): what each thing on the table is -- the wide look's things (the depth), each named by
+  DINOv2 against the taught views (the service's /identify), or unknown. YOLOE's own detections,
+  first used for this, named 1 of 4 picture cubes right, DINOv2 4 of 4 (2026-10-09, the user's choice
+  to switch).
 - pick_named(name): find, then the pick of the thing that is `name`.
 """
 
@@ -32,8 +34,8 @@ LOOK_TURNS = (-20, -10, 0, 10, 20)   # deg of J1 off the thing's own direction: 
 STEEP_TURNS = (-15, 0, 15)           # and the views from over it
 STEEP = 82                           # deg the camera looks down from over it (at 20 cm the only height
                                      # the arm and the depth's 0.2 m allow, 2026-10-09)
-SURE = 0.3                    # a detection's confidence that names a thing; below it, unknown
-COVER = 0.3                   # how much a detection's box must overlap the thing's (IoU)
+SAME = 0.65    # DINOv2 similarity to a name's views that names a thing (the right ones read 0.74-0.80)
+MARGIN = 0.05  # and ahead of the next name by this (the right ones led by 0.09-0.17), else unknown
 
 
 def ask(path: str, payload: dict | None = None, timeout: float = 30.0) -> dict:
@@ -165,23 +167,18 @@ def teach(p, name: str) -> None:
     p.say(f"taught '{name}' from {len(embeddings)} views (they agree {spread:.2f}); known: {', '.join(names)}")
 
 
-def overlap(a, b) -> float:
-    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix
-    return ix / union if union > 0 else 0.0
+def box_of(o: dict, margin: int = 4) -> list[int]:
+    """The pixel box round a found thing's outline."""
+    pts = np.asarray(o["outline_px"], float)
+    return [int(pts[:, 0].min()) - margin, int(pts[:, 1].min()) - margin,
+            int(pts[:, 0].max()) + margin, int(pts[:, 1].max()) + margin]
 
 
-def name_things(found: list[dict], detections: list[dict]) -> list[dict]:
-    """Each thing the depth found, with "taught" (the name whose detection covers it best, at least
-    COVER and SURE) and "sure" (that detection's confidence); None and 0 when none does."""
-    out = []
-    for o in found:
-        pts = np.asarray(o["outline_px"], float)
-        box = [pts[:, 0].min(), pts[:, 1].min(), pts[:, 0].max(), pts[:, 1].max()]
-        covering = [d for d in detections if d["conf"] >= SURE and overlap(d["box"], box) >= COVER]
-        best = max(covering, key=lambda d: d["conf"], default=None)
-        out.append({**o, "taught": best["name"] if best else None, "sure": best["conf"] if best else 0.0})
-    return out
+def name_things(found: list[dict], identified: list[dict]) -> list[dict]:
+    """Each thing the depth found, with "taught" (the name /identify ranked first, when at least SAME
+    and MARGIN ahead; else None), "sure" (its similarity) and "margin"."""
+    return [{**o, "taught": i["name"] if i["sure"] >= SAME and i["margin"] >= MARGIN else None,
+             "sure": i["sure"], "margin": i["margin"]} for o, i in zip(found, identified, strict=True)]
 
 
 def find(p) -> list[dict]:
@@ -194,10 +191,11 @@ def find(p) -> list[dict]:
         cam = m3scan.levelled(depth, K, pose)
         normal, height, _ = m3vision.floor_plane(depth, K)
         found = m3vision.objects(depth, K, cam, floor=(normal, height))
-    with p.step("teach.detect"):
-        named = name_things(found, ask("/detect", {"jpeg": jpeg(image), "conf": 0.1})["detections"])
-    p.say("found: " + ("; ".join(f"{o['taught'] or 'unknown'} ({o['sure']:.2f}) at x {o['centre'][0]:.3f} "
-                                 f"y {o['centre'][1]:+.3f}" for o in named) or "nothing"))
+    with p.step("teach.identify"):
+        identified = ask("/identify", {"jpeg": jpeg(image), "boxes": [box_of(o) for o in found]})["things"]             if found else []
+        named = name_things(found, identified)
+    p.say("found: " + ("; ".join(f"{o['taught'] or 'unknown'} ({o['sure']:.2f}, +{o['margin']:.2f}) at "
+                                 f"x {o['centre'][0]:.3f} y {o['centre'][1]:+.3f}" for o in named) or "nothing"))
     return named
 
 
