@@ -181,6 +181,19 @@ def name_things(found: list[dict], identified: list[dict]) -> list[dict]:
              "sure": i["sure"], "margin": i["margin"]} for o, i in zip(found, identified, strict=True)]
 
 
+def mark_names(image: np.ndarray, named: list[dict]) -> np.ndarray:
+    """The picture with each thing's box and what it was named: taught green, unknown orange."""
+    marked = image.copy()
+    for o in named:
+        x1, y1, x2, y2 = box_of(o)
+        colour = (0, 200, 0) if o["taught"] else (0, 165, 255)
+        cv2.rectangle(marked, (x1, y1), (x2, y2), colour, 2)
+        label = f"{o['taught']} {o['sure']:.2f}" if o["taught"] else "?"
+        cv2.putText(marked, label, (x1, max(14, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, colour, 2, cv2.LINE_AA)
+    cv2.putText(marked, "find", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+    return marked
+
+
 def find(p) -> list[dict]:
     """What each thing on the table in front is, by the taught names (said, and returned)."""
     p.engaged()
@@ -194,6 +207,7 @@ def find(p) -> list[dict]:
     with p.step("teach.identify"):
         identified = ask("/identify", {"jpeg": jpeg(image), "boxes": [box_of(o) for o in found]})["things"]             if found else []
         named = name_things(found, identified)
+    p.show(mark_names(image, named), named, tag="find")
     p.say("found: " + ("; ".join(f"{o['taught'] or 'unknown'} ({o['sure']:.2f}, +{o['margin']:.2f}) at "
                                  f"x {o['centre'][0]:.3f} y {o['centre'][1]:+.3f}" for o in named) or "nothing"))
     return named

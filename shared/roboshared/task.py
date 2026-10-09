@@ -183,7 +183,8 @@ class Task:
             "turn": round(self.box["turn"], 1), "drops": len(self.box_drops), "in_it": len(self.box.get("items", ()))}
         state["found"] = [{"kind": o["kind"], "name": name(o) if o["kind"] else None,
                            "x": round(float(o["centre"][0]), 3), "y": round(float(o["centre"][1]), 3),
-                           "yaw": round(o["yaw"], 1), "reach": o.get("reach")} for o in self.found]
+                           "yaw": round(o["yaw"], 1), "reach": o.get("reach"),
+                           "taught": o.get("taught"), "sure": o.get("sure")} for o in self.found]   # (the M3's find)
         return state
 
     def settings(self) -> list[dict]:

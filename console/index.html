@@ -97,6 +97,12 @@
       <button class="home">Home</button>
       <label class="stepwise" title="forward and sideways only, a few cm at a time; back to the start before each drop"><input type="checkbox" class="drive"> may drive closer to what is out of reach</label>
     </div>
+    <div class="teach" title="teach a thing by showing it, then find it or pick it by its name">
+      <input class="thing" placeholder="its name, e.g. apricot" aria-label="the thing's name" autocomplete="off">
+      <button class="teach-it" title="the thing standing ALONE in front of the robot: the arm looks at it from round it and learns it by this name (about a minute)">Teach</button>
+      <button class="find" title="names every thing on the table in front by what it was taught (the last look shows it)">Find</button>
+      <button class="pick-named" title="finds the thing with this name and picks it into the box">Pick it</button>
+    </div>
     <label class="speed armspeed" title="every arm move, as a share of the speeds below">arm speed <input type="range" min="30" max="150" step="5" value="100"> <output>100 %</output></label>
     <details class="tuning">
       <summary>Speeds, pauses, fingertip room</summary>

@@ -300,6 +300,7 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     });
     $('.cleanup', controls).onclick = () => this.act('clean up: started', call(robot, 'pick/cleanup', { drive: drive() }));
     $('.home', controls).onclick = () => this.act('home: started', call(robot, 'pick/home', {}));
+    this.teachRow(robot, $('.teach', controls));
     this.speed = $('.armspeed input', controls);
     this.speed.oninput = () => { $('.armspeed output', controls).textContent = `${this.speed.value} %`; };
     this.speed.onchange = () => this.setting('speed', this.speed.value);
@@ -322,6 +323,41 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     this.since = 0;
     this.stream();
     this.follow();
+  }
+
+  teachRow(robot, row) {   // teach a thing by showing it, find it, pick it by name (the M3: m3pro/roboarm/m3teach.py)
+    if (robot.kind !== 'm3arm') {
+      row.style.display = 'none';
+      return;
+    }
+    const thing = $('.thing', row);
+    const names = document.createElement('datalist');   // what it knows already, offered as you type
+    names.id = `${robot.id}-taught`;
+    thing.setAttribute('list', names.id);
+    row.append(names);
+    thing.onfocus = async () => {
+      try {
+        const { names: known } = await call(robot, 'pick/taught');
+        names.replaceChildren(...known.map(n => Object.assign(document.createElement('option'), { value: n })));
+      } catch { /* offline: no suggestions */ }
+    };
+    const named = verb => {
+      const name = thing.value.trim();
+      if (!name) {
+        log(`${robot.name}: ${verb} -- give the thing a name first`, true);
+        thing.focus();
+      }
+      return name;
+    };
+    $('.teach-it', row).onclick = () => {
+      const name = named('teach');
+      if (name) this.act(`teach '${name}': started`, call(robot, 'pick/teach', { name }));
+    };
+    $('.find', row).onclick = () => this.act('find: started', call(robot, 'pick/find', {}));
+    $('.pick-named', row).onclick = () => {
+      const name = named('pick by name');
+      if (name) this.act(`pick '${name}': started`, call(robot, 'pick/named', { name }));
+    };
   }
 
   showSettings(list) {   // the speed slider, and a field for each other speed and pause
@@ -418,8 +454,9 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
       if (s.looks) this.look.src = `${this.robot.url}/pick/frame.jpg?n=${s.looks}`;
     }
     const last = s.last;
-    const seen = s.found.filter(o => o.kind)
-      .map(o => `${o.name} ${(100 * o.x).toFixed(0)},${(100 * o.y).toFixed(0)} cm${o.reach ? '' : ' (out of reach)'}`);
+    const seen = s.found.filter(o => o.kind || o.taught)   // a find's names (m3teach) before the kit's
+      .map(o => `${o.taught ? `${o.taught} (${o.sure.toFixed(2)})` : o.name} ${(100 * o.x).toFixed(0)},` +
+        `${(100 * o.y).toFixed(0)} cm${o.reach === false ? ' (out of reach)' : ''}`);
     $('.facts', this.el).textContent = [
       `job      ${s.busy ? `${s.job.replace('_', ' ')} -- ${s.step}` : 'none'}     picked ${s.picked}, missed ${s.missed}`,
       `battery  ${s.battery_v == null ? '-' : `${s.battery_v.toFixed(2)} V`}` +

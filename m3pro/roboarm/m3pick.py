@@ -648,6 +648,13 @@ class Picker(Task):
         """Pick the thing taught as `name` (m3teach.pick_named)."""
         m3teach.pick_named(self, name)
 
+    def taught(self) -> list[str]:
+        """The names taught so far (the teach model's), or none when it does not answer."""
+        try:
+            return m3teach.ask("/health", timeout=2.0)["names"]
+        except RuntimeError:
+            return []
+
     def scan(self, radius: float = m3scan.STOP_R, stops: float = m3scan.STOPS) -> None:
         """Drive round the thing about `radius` m ahead, the camera on it, keeping every view (m3scan.run)."""
         m3scan.run(self, radius, int(stops))

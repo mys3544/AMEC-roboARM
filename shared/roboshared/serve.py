@@ -13,6 +13,7 @@ x3plus/tools/x3bridge.py) -- what the console's arm card drives and watches:
     GET  /pick/log?since=N    the narrated steps after N
     GET  /pick/frame.jpg      the last look, marked
     GET  /pick/settings       [{key, label, unit, min, max, step, default, value}]; POST {key: value} changes them
+    GET  /pick/taught         {"names": [...]}: the things taught by showing them (the M3 only)
     GET  /api/metrics         where the time went (roboshared.metrics: one run a job)
 
 A bridge's handler asks reply() first and sends what it gives (respond()); None means the path is
@@ -61,6 +62,8 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
             return _json({"lines": picker.log(int(since) if since.isdigit() else 0)})
         if url.path == "/pick/settings":
             return _json({"settings": picker.settings()})
+        if url.path == "/pick/taught" and hasattr(picker, "taught"):
+            return _json({"names": picker.taught()})
         if url.path == "/pick/frame.jpg":
             if picker.frame is None and _BLANK is None:
                 _BLANK = blank_frame()
