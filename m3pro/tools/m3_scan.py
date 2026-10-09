@@ -8,7 +8,7 @@ coloured model that the console's 3D view shows.
                                                 # and the cloud as object_STAMP.ply among the console's scans
 
 Put the thing on the floor ~38 cm straight ahead of the robot with ~1.2 m clear round it: the
-robot goes round it. fuse needs Open3D (the m3pro project's scan group: uv sync --all-groups).
+robot goes round it. fuse needs Open3D (the workspace's laptop group: `uv sync` at the top).
 The SSH password comes from ROBOARM_SSH_PASSWORD, or is asked for.
 """
 

@@ -254,7 +254,7 @@ def fuse(views: list[dict], centre, radius: float, top: float, voxel: float = 0.
     holds the views together), each view's camera corrected by coloured ICP onto the views before
     it (Park 2017, coarse to fine; a correction past 3 cm or 8 deg is not believed), then a TSDF at
     `voxel` m. Returns (points n x 3, colours n x 3 in 0..1, the mesh, the cameras as corrected)."""
-    import open3d as o3d  # the laptop's scan group (pyproject): not on the robot yet
+    import open3d as o3d  # the workspace's laptop group: not on the robot yet
 
     lo = np.r_[np.asarray(centre[:2]) - radius - 0.04, m3kinematics.FLOOR - 0.004]
     hi = np.r_[np.asarray(centre[:2]) + radius + 0.04, m3kinematics.FLOOR + top + 0.02]

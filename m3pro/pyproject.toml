@@ -21,11 +21,6 @@ roboarm-shared = { workspace = true }
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
-# The object scan's fusion (tools/m3_scan.py), on the laptop for now -- not in the robot's venv
-# (sync_robot exports the dev group only). `uv sync --all-groups` keeps it.
-scan = [
-    "open3d>=0.19 ; sys_platform == 'win32'",
-]
 
 [tool.ruff]
 line-length = 100
