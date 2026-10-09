@@ -14,6 +14,21 @@ K = np.array([[480.0, 0, 320], [0, 480.0, 240], [0, 0, 1]])
 HOME = {1: 90, 2: 180, 3: 5, 4: 0, 5: 90, 6: 0}
 
 
+@pytest.fixture(autouse=True)
+def arm_as_modelled(monkeypatch):
+    """The pretend arm goes exactly where the model says: no aim correction (the real one's SETTINGS)."""
+    for key in ("aim_out_mm", "aim_left_mm"):
+        monkeypatch.setitem(m3pick.SETTINGS, key, (*m3pick.SETTINGS[key][:5], 0))
+
+
+def test_the_aim_moves_a_thing_out_and_left_of_where_it_was_seen():
+    things = [{"centre": np.array([0.20, 0.0, 0.015])}, {"centre": np.array([0.0, 0.20, 0.015])}]
+    m3pick.aimed(things, (0.0, 0.0), 14, 7)
+    assert np.allclose(things[0]["centre"], [0.214, 0.007, 0.015])   # ahead: out = +x, left = +y
+    assert np.allclose(things[1]["centre"], [-0.007, 0.214, 0.015])  # on the left: out = +y, left = -x
+    assert np.allclose(things[0]["seen"], [0.20, 0.0, 0.015])
+
+
 def render(camera, boxes):
     """Depth (mm) of the floor z = 0 and boxes (x, y, turn deg, length, height; 30 mm wide, top
     faces only) as `camera` (base <- optical) sees them."""

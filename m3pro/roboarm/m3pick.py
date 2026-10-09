@@ -136,6 +136,11 @@ SETTINGS = {
     "nudge_cm": ("driving per move, at most", "cm", 1, 15, 1, 10),
     "right_cm": ("driving right, at most (and 3 cm short of the drop-off box)", "cm", 0, 15, 1, 10),
     "carry_cm": ("carried round this high: the bottom of what is held over the floor", "cm", 6, 25, 1, 15),
+    # 2026-10-09: grips came down short, closed on a cube's near corners and turned it (6 misses in 8);
+    # six grips the user steered to by hand (tools/m3_teach.py, out/teach/points.jsonl) sat 15.1 +- 3.9 mm
+    # further out and 7.3 +- 2.6 mm further left than the wide look put the cube -- alike at 14-21 cm, 60-85 deg
+    "aim_out_mm": ("the arm aims past where the camera saw a thing: further out", "mm", -30, 30, 1, 15),
+    "aim_left_mm": ("the arm aims past where the camera saw a thing: further left", "mm", -30, 30, 1, 7),
 }
                  # (a kit thing's length): from the side looks a lying block cut short read as a cube
                  # 3-4 cm off its middle (2026-10-05, the tests)
@@ -580,12 +585,25 @@ def slide_for(thing: dict, found: list[dict], most: float, floor_clear: float, p
 
 
 
+def aimed(found: list[dict], axis, out_mm: float, left_mm: float) -> None:
+    """Each thing's centre moved to where the arm must aim to have it between its fingers: `out_mm`
+    further from J1's `axis`, `left_mm` to the left as the arm sees it (the aim_* SETTINGS); where the
+    camera put it is kept as "seen"."""
+    axis = np.asarray(axis, float)
+    for o in found:
+        o["seen"] = o["centre"].copy()
+        away = o["centre"][:2] - axis
+        out = away / max(float(np.linalg.norm(away)), 1e-6)
+        shift = out * out_mm / 1000 + np.array([-out[1], out[0]]) * left_mm / 1000
+        o["centre"] = np.r_[o["centre"][:2] + shift, o["centre"][2]]
+
+
 def mark(image: np.ndarray, K, camera: np.ndarray, found: list[dict], target: dict | None = None) -> np.ndarray:
     """The picture with what was found: kit green (the target thicker), the rest orange."""
     marked = image.copy()
     inv = np.linalg.inv(camera)
     for o in found:
-        top = inv @ np.r_[o["centre"][:2], o["top"], 1.0]
+        top = inv @ np.r_[o.get("seen", o["centre"])[:2], o["top"], 1.0]   # where the camera saw it
         if top[2] <= 0:
             continue
         u, v = (np.asarray(K) @ (top[:3] / top[2]))[:2]
@@ -666,6 +684,7 @@ class Picker(Task):
             camera = m3vision.level(model, normal, height, m3kinematics.FLOOR)
             found = m3vision.objects(depth, K, camera, floor=(normal, height))
             m3vision.refine_turns(image, K, camera, found)   # the turn from the colour edges, where sure
+        aimed(found, self.AXIS, self.cfg["aim_out_mm"], self.cfg["aim_left_mm"])
         base = np.asarray(self.AXIS)
         for o in found:   # cheap, and hopeful: the pick plans the one it takes in full
             radius = float(np.hypot(*(o["centre"][:2] - base)))
@@ -687,7 +706,8 @@ class Picker(Task):
                 "pose": {str(j): v for j, v in pose.items()}, "K": np.asarray(K).tolist(),
                 "camera": camera.tolist(),
                 "found": [{"kind": o["kind"], "size": o["size"], "length": o["length"], "top": o["top"],
-                           "centre": [float(c) for c in o["centre"]], "yaw": o["yaw"], "whole": o["whole"],
+                           "centre": [float(c) for c in o["seen"]], "aimed": [float(c) for c in o["centre"]],
+                           "yaw": o["yaw"], "whole": o["whole"],
                            "outline_px": o["outline_px"]} for o in found]}))
         return camera, found
 
