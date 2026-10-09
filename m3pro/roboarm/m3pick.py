@@ -68,7 +68,7 @@ from roboshared.task import (  # noqa: F401
     refusable,
 )
 
-from roboarm import m3aim, m3arm, m3kinematics, m3scan, m3vision
+from roboarm import m3aim, m3arm, m3kinematics, m3scan, m3teach, m3vision
 
 LOOK = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90}   # the wide look: the floor from the bumper (12 cm) to 45 cm
                                              # ahead, +-17 cm aside at the near edge; a 40 mm top there is
@@ -634,7 +634,19 @@ class Picker(Task):
         self.odom, self.goto = odom, goto
 
     def jobs(self) -> dict:
-        return {**super().jobs(), "scan": self.scan}
+        return {**super().jobs(), "scan": self.scan, "teach": self.teach, "find": self.find, "pick_named": self.pick_named}
+
+    def teach(self, name: str) -> None:
+        """Learn the thing alone in front as `name`, from views round it (m3teach.teach)."""
+        m3teach.teach(self, name)
+
+    def find(self) -> None:
+        """Name what is on the table in front by the taught things (m3teach.find)."""
+        m3teach.find(self)
+
+    def pick_named(self, name: str) -> None:
+        """Pick the thing taught as `name` (m3teach.pick_named)."""
+        m3teach.pick_named(self, name)
 
     def scan(self, radius: float = m3scan.STOP_R, stops: float = m3scan.STOPS) -> None:
         """Drive round the thing about `radius` m ahead, the camera on it, keeping every view (m3scan.run)."""

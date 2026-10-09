@@ -21,6 +21,7 @@ mkdir -p "$HOME/.config/systemd/user" out
 cp robot/roboarm-*.service "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable roboarm-m3bridge.service
+systemctl --user enable roboarm-m3teach.service   # the teach's YOLOE, from .venv-ml (tools/ml_env.sh first)
 if ! cmp -s robot/jetson-clocks.service /etc/systemd/system/jetson-clocks.service; then
     echo "the clocks at maximum at every boot, once: sudo cp robot/jetson-clocks.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now jetson-clocks"
 fi

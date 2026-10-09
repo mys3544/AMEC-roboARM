@@ -1,0 +1,17 @@
+# The M3 Pro's teach model: YOLOE-26 visual prompts on 127.0.0.1:8762 (tools/teach_service.py),
+# asked by the bridge's teach / find / pick-by-name jobs. A systemd user unit, installed by
+# robot/setup.sh; `systemctl --user status roboarm-m3teach`, `journalctl --user -u roboarm-m3teach -f`.
+[Unit]
+Description=RoboARM M3 Pro teach model (127.0.0.1:8762)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/roboarm
+Environment=PYTHONUNBUFFERED=1
+# .venv-ml sees JetPack's CUDA torch (tools/ml_env.sh): PyPI has no build of it for the Orin
+ExecStart=%h/roboarm/.venv-ml/bin/python tools/teach_service.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

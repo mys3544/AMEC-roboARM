@@ -6,6 +6,9 @@ x3plus/tools/x3bridge.py) -- what the console's arm card drives and watches:
     POST /pick/home     POST /pick/stop (the arm holds where it is, at once)
     POST /pick/scan     {"radius": m, "stops": n}   the M3 only: drive round the thing ahead, the
                         camera on it, and keep the views (m3pro/roboarm/m3scan.py)
+    POST /pick/teach    {"name": str}   the M3 only: learn the thing alone in front as `name`
+    POST /pick/find     name what is on the table in front    POST /pick/named {"name"}: pick it
+                        (m3pro/roboarm/m3teach.py)
     GET  /pick/state    the job, its step, the counts, the last attempt, what the last look found
     GET  /pick/log?since=N    the narrated steps after N
     GET  /pick/frame.jpg      the last look, marked
@@ -80,6 +83,12 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
         answer = picker.start("home")
     elif url.path == "/pick/scan" and "scan" in picker.jobs():
         answer = picker.start("scan", **{k: float(params[k]) for k in ("radius", "stops") if k in params})
+    elif url.path == "/pick/teach" and "teach" in picker.jobs():
+        answer = picker.start("teach", name=str(params.get("name") or ""))
+    elif url.path == "/pick/find" and "find" in picker.jobs():
+        answer = picker.start("find")
+    elif url.path == "/pick/named" and "pick_named" in picker.jobs():
+        answer = picker.start("pick_named", name=str(params.get("name") or ""))
     elif url.path == "/pick/settings":
         try:
             answer = {"settings": picker.set_settings(params)}
