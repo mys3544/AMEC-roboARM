@@ -223,9 +223,13 @@ class Task:
             cv2.imwrite(str(self.out / f"{time.strftime('%H%M%S')}_{tag}.jpg"), marked)
 
     # --------------------------------------------------------------------------- jobs --
+    def jobs(self) -> dict:
+        """What start() runs, by name; a robot's body may add its own (the M3's "scan")."""
+        return {"pick_once": self.pick_once, "clean_up": self.clean_up, "home": self.home, "drop": self.drop}
+
     def start(self, job: str, **kwargs) -> dict:
-        """Start `job` ("pick_once", "clean_up", "home", "drop") on its own thread; an error if one runs."""
-        work = {"pick_once": self.pick_once, "clean_up": self.clean_up, "home": self.home, "drop": self.drop}[job]
+        """Start `job` (one of jobs()) on its own thread; an error if one runs."""
+        work = self.jobs()[job]
         with self._lock:
             if self.state["busy"]:
                 return {"error": f"busy: {self.state['job']} ({self.state['step']})"}

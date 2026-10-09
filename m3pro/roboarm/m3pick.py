@@ -68,7 +68,7 @@ from roboshared.task import (  # noqa: F401
     refusable,
 )
 
-from roboarm import m3aim, m3arm, m3kinematics, m3vision
+from roboarm import m3aim, m3arm, m3kinematics, m3scan, m3vision
 
 LOOK = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90}   # the wide look: the floor from the bumper (12 cm) to 45 cm
                                              # ahead, +-17 cm aside at the near edge; a 40 mm top there is
@@ -626,6 +626,19 @@ class Picker(Task):
     FOOTPRINT = (ROBOT_X, ROBOT_Y)
     DROP_OUT, DROP_SPREAD = DROP_OUT, DROP_SPREAD
     BOX_LOOKS = BOX_LOOKS
+
+    def __init__(self, *args, odom=None, goto=None, **kwargs):
+        """Task's, and for the scan: `odom()` -> the wheel odometry's (x, y, yaw) of the base, and
+        `goto(x, y, yaw)` driving it there (moving and turning at once); None: it cannot."""
+        super().__init__(*args, **kwargs)
+        self.odom, self.goto = odom, goto
+
+    def jobs(self) -> dict:
+        return {**super().jobs(), "scan": self.scan}
+
+    def scan(self, radius: float = m3scan.STOP_R, stops: float = m3scan.STOPS) -> None:
+        """Drive round the thing about `radius` m ahead, the camera on it, keeping every view (m3scan.run)."""
+        m3scan.run(self, radius, int(stops))
 
     def wrist(self, thing: dict, around: list[dict], whole: bool | None = None, opened: int | None = None):
         """grip pose -> (J5s square, J5s off square) for `thing` (wrist_choices): the fingers, opened to

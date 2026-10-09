@@ -151,9 +151,9 @@ def make_node(frames: Frames, stream: camera.Stream):
             yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
             self.odom = (msg.pose.pose.position.x, msg.pose.pose.position.y, yaw)
 
-        def wheel(self, vx, vy):
+        def wheel(self, vx, vy, wz=0.0):
             msg = Twist()
-            msg.linear.x, msg.linear.y = float(vx), float(vy)
+            msg.linear.x, msg.linear.y, msg.angular.z = float(vx), float(vy), float(wz)
             self.wheels.publish(msg)
 
         @staticmethod
@@ -234,6 +234,43 @@ def drive(node, dx: float, dy: float, speed: float = 0.05, stopping=lambda: Fals
     return float(done[0]), float(done[1])
 
 
+GOTO_MOST = 0.30   # m one goto() may go: a scan's stops are ~0.2 m apart
+TURN_V = 0.30      # rad/s at most
+
+
+def goto(node, x: float, y: float, yaw: float, speed: float = 0.05, stopping=lambda: False) -> tuple:
+    """Drive the base to (x, y, yaw) of the board's wheel odometry (/odom_raw: m, rad), moving and
+    turning at once -- the mecanum wheels do both -- 20 commands a second, at most `speed` m/s and
+    TURN_V rad/s, slowing over the last 2 cm and 6 deg; stops at once when `stopping()`. Where the
+    wheels say it ended."""
+    speed = min(max(float(speed), 0.01), MAX_V)
+    if node.odom is None:
+        raise ArmError("no wheel odometry (/odom_raw) from the board: not driving blind")
+    x0, y0, yaw0 = node.odom
+    far = math.hypot(x - x0, y - y0)
+    if far > GOTO_MOST:
+        raise ArmError(f"goto {far:.2f} m away: at most {GOTO_MOST} m in one go")
+    turn = math.remainder(yaw - yaw0, math.tau)
+    deadline = time.monotonic() + 2.0 * far / speed + 2.0 * abs(turn) / TURN_V + 2.0
+    try:
+        while time.monotonic() < deadline and not stopping():
+            cx, cy, cyaw = node.odom
+            c, s = math.cos(cyaw), math.sin(cyaw)
+            ahead, left = c * (x - cx) + s * (y - cy), -s * (x - cx) + c * (y - cy)
+            far, turn = math.hypot(ahead, left), math.remainder(yaw - cyaw, math.tau)
+            if far < 0.004 and abs(turn) < math.radians(1):
+                break
+            v = min(speed, 0.01 + 2.0 * far) / far if far >= 0.004 else 0.0
+            w = math.copysign(min(TURN_V, 0.05 + 1.5 * abs(turn)), turn) if abs(turn) >= math.radians(1) else 0.0
+            node.wheel(v * ahead, v * left, w)
+            time.sleep(0.05)
+    finally:
+        for _ in range(3):
+            node.wheel(0.0, 0.0, 0.0)
+            time.sleep(0.02)
+    return node.odom
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--camera", action="store_true", help="start the DCW2's driver too")
@@ -260,7 +297,8 @@ def main() -> int:
     the_bridge = bridge.Bridge(make_arm, lambda: stream)
     picker = m3pick.Picker(serve.arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT,
                            drive=lambda dx, dy, v: drive(node, dx, dy, v, lambda: picker.stopping()),
-                           battery=lambda: node.volts)
+                           battery=lambda: node.volts, odom=lambda: node.odom,
+                           goto=lambda x, y, yaw: goto(node, x, y, yaw, stopping=lambda: picker.stopping()))
     metrics.REGISTRY.log_path = OUT / "metrics.jsonl"
     OUT.mkdir(parents=True, exist_ok=True)
     server = Server((HOST, PORT), make_handler(the_bridge, frames, picker))

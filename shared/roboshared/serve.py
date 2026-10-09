@@ -4,6 +4,8 @@ x3plus/tools/x3bridge.py) -- what the console's arm card drives and watches:
     POST /pick/start    {"kind": "cube"|"block"|null, "at": [x, y]|null, "drive": bool}   one pick, then home
     POST /pick/cleanup  {"kind": ..., "drive": bool}   every kit thing in reach, one by one
     POST /pick/home     POST /pick/stop (the arm holds where it is, at once)
+    POST /pick/scan     {"radius": m, "stops": n}   the M3 only: drive round the thing ahead, the
+                        camera on it, and keep the views (m3pro/roboarm/m3scan.py)
     GET  /pick/state    the job, its step, the counts, the last attempt, what the last look found
     GET  /pick/log?since=N    the narrated steps after N
     GET  /pick/frame.jpg      the last look, marked
@@ -76,6 +78,8 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
         answer = picker.start("clean_up", kind=kind, drive=bool(params.get("drive")))
     elif url.path == "/pick/home":
         answer = picker.start("home")
+    elif url.path == "/pick/scan" and "scan" in picker.jobs():
+        answer = picker.start("scan", **{k: float(params[k]) for k in ("radius", "stops") if k in params})
     elif url.path == "/pick/settings":
         try:
             answer = {"settings": picker.set_settings(params)}
