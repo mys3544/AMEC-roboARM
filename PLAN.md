@@ -1,4 +1,4 @@
-# Plan v2.2 -- two robots, one arena: search, pick, voice, 3D, and research worth showing
+# Plan v2.4 -- two robots, one arena: search, pick, voice, 3D, and research worth showing
 
 Written 2026-09-29; v2.1 the same day with the user's answers about the arena, the voice module, the
 servers, the object kit and JetPack, and with the three things they asked to have explained: why
@@ -14,6 +14,34 @@ real robots instead, in the levels of M2.1a (slam_toolbox 2D -> RTAB-Map coloure
 splats and a neural SLAM comparison on the 5090). First thing to show: the arena's slam_toolbox
 map from the M3, checked against the fence's known 3.2 x 2.8 m.
 
+**v2.4, 2026-10-07 -- re-ordered by the showcase the user picked.** After the research sweep of
+2026-10-05 ([RESEARCH.md](RESEARCH.md): six papers ranked, thirty showcase builds on a shared
+menu), the user marked what they want to show:
+- **Want:** voice in English, Slovak and Czech; the M3 tidying into its box; teach a new object in
+  30 seconds; real against predicted depth (the depth duel); an object scan with the arm; a "stop"
+  that never waits for a model; one Slovak sentence for both robots.
+- **Maybe:** track D's learned policy (the night shift, chasing a moved cube, instructions like "the
+  one nearest the box"); A4's retrain-and-swap; splats; the scout and the cube riding along in the
+  twin (B, E); a live AI-agent demo.
+- **Nothing from track B's search** (the fog of war, the kidnap test, pulling the WiFi).
+
+Agreed the same day:
+- **The research order is A -> D** (was B -> A -> D). B shrinks to what the Slovak mission needs:
+  localization, Nav2, a simple split of the work. Its belief-search planner and study L become
+  optional, later.
+- **One orbit, two demos:** A2 moves into stage 1 beside the object scan (M4 A). The same arm
+  orbit, with depth masks, gives both the 3D scan and the 30-second teach.
+- **The depth duel (S1) gets a stage.** It falls out of the X3 plan's depth table
+  ([x3plus/PLAN.md](x3plus/PLAN.md), its stage 2), with the M3's stereo depth shown beside it.
+- **Voice comes before the arena:** the stop lane and the voice pipeline on the robot first.
+- **The Slovak mission starts box-sharing (M3.1).** Both robots clear their own areas into the
+  M3's box, taking turns, and neither drives across the arena. The arena-wide and free-form
+  versions follow.
+- **The live AI-agent demo** (P5 in RESEARCH.md) is added as optional.
+
+The X3's own plan, [x3plus/PLAN.md](x3plus/PLAN.md) (2026-10-06: the M3's abilities from the wrist
+camera and a depth network), sits under this one.
+
 Inputs:
 - the user's priorities (next section) and their answers: no fixed demo date; big models on the
   lab's servers, and on the robot only a small local model that turns a spoken command into
@@ -26,7 +54,7 @@ Inputs:
   them are other people's measurements unless marked "est."; each is re-measured here before
   anything relies on it. Sources are at the end.
 
-Nothing here has run yet.
+What has run since: *Where things stand*, below.
 
 ## What we are building
 
@@ -40,6 +68,21 @@ Must-haves, in the user's order:
 5. **The newest YOLO and similar models**, benchmarked here and exported for the fastest inference.
 
 Across all of it: current research, innovative and good to watch -- not Yahboom's demos redone.
+
+## Where things stand (2026-10-07)
+
+| part | built | not yet |
+|---|---|---|
+| M1 console | one page for both robots; STOP per robot and STOP ALL; pop-outs; pretend robots (`--fake`); the 3D scan view with the floor print; voice push-to-talk; arm cards for the M3 and, since 10-06, the X3 | dockview panels, the arena panel, SSE; STOP ALL timed on the real robots |
+| M2 arena | slam_toolbox map within ~1 cm of the fence (3.200 x 2.785 m, `arena_v4`; on the way: lidar range biases of ~1 cm and a 55-75 ms clock skew between the base board and the Jetson); RTAB-Map coloured 3D scan; the floor orthophoto; a camera-down survey planner | AMCL, Nav2, the catalogue as data, search; walls still 4-6 cm thick |
+| M2.6 M3 pick | hand-eye; IK with sag; objects from the depth floor; a second close look with the camera turned onto a target the first look cut; the careful grip by the bumper; the mesh-shell guard, 1.0 cm off the lidars; a slide or a drive-up when out of reach; the drop into the box its marker finds. 11-13 s a pick | the 40 mm cube right in front of the right lidar (needs the slide) |
+| X3 ([x3plus/PLAN.md](x3plus/PLAN.md)) | the pick runs on the robot behind the M3's `/pick/*` (first run 20.0 s, landed 2.3 mm); lens and lens-on-arm models with a sag fit; Depth Anything anchored to the floor; heights from two views by parallax | the base under ROS (X6), the box (X5), the arena (X7) |
+| M3 voice | console push-to-talk: Parakeet v3 on the laptop and a grammar for EN/SK/CS (pick by colour or size, clean up, home; stop words -> STOP ALL); 277-450 ms from letting go to the command; synthetic voices only | anything on the robot: the module, a wake word, the stop lane, the LLM parser, the validator, spoken answers |
+| M4 3D | the arena scan (B) | the object scan (A), splats (C) |
+| M5 models | YOLOE-26 served on the X3 (PyTorch); Depth Anything V2 S as a TensorRT engine; DA3 and MoGe-2/3 measured on the X3's views | the kit detector, INT8, the benchmark table |
+| research | the sweep and the ranked papers (RESEARCH.md) | no track started |
+
+Waiting on: access to the 5090 and dionysus.
 
 ## In one page
 
@@ -62,7 +105,8 @@ Across all of it: current research, innovative and good to watch -- not Yahboom'
 - **Voice (M3).** Yahboom's module is fitted. A stop lane that never waits for a model, and a
   command lane: wake word -> Parakeet v3 speech recognition (English, Slovak, Czech) -> a small
   local model that only fills in the command's settings -> a validator -> the skill -> a spoken
-  answer. Places are the track's printed features ("bring the red cube to the parking bay").
+  answer. Places are the track's printed features ("bring the red cube to the parking bay"). One
+  Slovak sentence can give both robots a job at once, sharing the M3's box (M3.1, v2.4).
 - **3D scan (M4).** The M3's arm orbits an object, stopping at each view; coloured mesh and point
   cloud in the console in about two minutes (est.). The arena is scanned while driving -- which
   also gives an orthophoto of the floor print for localization. Upgrade: Gaussian splats trained
@@ -70,12 +114,14 @@ Across all of it: current research, innovative and good to watch -- not Yahboom'
 - **Models (M5).** The kit is three shapes, so the main detector is a small YOLO26 fine-tuned on our
   own frames -- labelled for free by the M3's depth -- and exported as an INT8 engine. YOLOE-26 as
   a TensorRT engine stays as the open-set baseline (the same step took YOLO26s from 20.4 to 6.4 ms).
-- **Research (order agreed).** B first (two robots sharing one search belief -- it grows out of the
-  arena work), then A (teach an object by showing it: a demo in days, research after), then D (our
-  classical picker generates the training data for a vision-language-action model -- the
-  showpiece), then E and C. Study L (which localization wins) runs alongside B.
-- **Order.** Foundations -> a first show (both robots in the console, the 3D scan, the model table)
-  -> the arena -> voice -> research tracks. Waiting for "let's start".
+- **Research (order v2.4).** A first: teach an object by showing it. A1-A2 are part of the first
+  show; A3-A4 make the paper. Then D: the classical picker trains a vision-language-action model,
+  the user's "maybe". E and C later. B is cut to what the Slovak mission needs; its belief-search
+  planner and study L are optional.
+- **Order (v2.4).** Foundations -> a first show (the object scan and the teach from one orbit, the
+  depth duel, the model table) -> voice (the stop lane, the robot's own pipeline, the box-sharing
+  Slovak mission) -> the arena (localization, Nav2, search and pick; the mission arena-wide) ->
+  research tracks.
 
 ## Architecture
 
@@ -425,6 +471,56 @@ only. We keep the idea of actions as a fixed list and drop the rest.
 Exit: 50 English commands from 5 speakers with the motors running: at least 90 % parsed exactly,
 the stop lane under 0.5 s, simple commands under 1 s; then Slovak and Czech with the same test.
 
+### M3.1 -- One Slovak sentence, two robots (v2.4)
+
+The user's pick from the showcase menu. It comes in three versions, each needing more than the one
+before; v1 needs nothing the robots cannot already do.
+
+**v1 -- box-sharing.** "Zober vsetky male kocky a daj ich do boxu" ("pick up all the small cubes
+and put them in the box"). Both robots clear the small cubes from their own areas into the M3's box
+(ArUco id 10, inside 15 x 11 cm), one at a time, and leave the big ones.
+
+- **The station.** The box stands where both arms reach it. For the X3 that is in front of or to the
+  right of its arm (J1 10-180, x3plus/PLAN.md X5). The M3 drives back to its job's start before
+  every drop, as it does today. Neither robot crosses the arena: the M3 works the area round its
+  start, with the moves it already has (slide, drive up); the X3 its own work area.
+- **The command.** The console's grammar learns mission words. With both robots named, or "spolu" /
+  "together", a command becomes one mission for both instead of being refused (today `voice.py`
+  answers "both robots named"):
+  `{"robots":["m3","x3"],"action":"pick","filter":{"class":"cube","size":"small","count":"all"},"to":"box"}`.
+  The validator then checks that:
+  - both robots are free;
+  - each one sees the box;
+  - the filter names known pieces.
+
+  The plan is read back, with a 2 s window to cancel. No server model is needed: this is the
+  grammar or the small parser.
+- **Turns at the box.** The console's mission runner holds a lease on the box. A robot asks before
+  a drop, drops, then hands the lease back. If the console or the WiFi goes away, a robot holding a
+  piece waits at its carry height and never drops blind; STOP ALL works as always. The X3 already
+  runs the M3's `/pick/*` interface, so both robots are driven the same way.
+- **The answer.** Each robot's progress shows on its arm card. A spoken summary in Slovak through
+  Piper (`sk_SK-lili`) comes from the console for now and from the M3's speaker once its voice
+  pipeline runs: "Hotovo: M3 styri kocky, X3 tri" ("Done: M3 four cubes, X3 three").
+- **Measured.** Small cubes boxed and big cubes left; seconds from the end of the sentence to the
+  first motion and to the last drop; clashes at the box (target 0); words heard against words said.
+- **Needs:**
+  - X3 plan X5, the box; the X3 does not need to drive for v1;
+  - the grammar's mission words;
+  - the lease in `console/serve.py`;
+  - Piper on the laptop.
+- **Exit:** said by three speakers, the robots clear both areas into the one box with no clash at
+  it, and the summary is spoken in Slovak.
+
+**v2 -- arena-wide.** The same sentence, with the M3 searching the whole arena. Needs M2:
+localization, Nav2, the catalogue, search and pick. The X3 joins the search only with x3plus/PLAN.md
+X7.
+
+**v3 -- free-form.** Any mission in Slovak, Czech or English. A large model on the 5090 splits it
+into steps for each robot, the console draws the plan as a graph and fills it in as the robots work,
+and the validator stays between the model and the motors. Needs the servers; B's simple work split
+(its auction) is the fallback when the model does not answer.
+
 ## M4 -- 3D scan with coloured point clouds (the M3's camera)
 
 The camera, per Orbbec's own sheet: depth 640x400 at **15 fps** in every mode (Yahboom says 30;
@@ -525,10 +621,16 @@ Exit: the table for models 1-3 and 8 on both robots; the kit detector served as 
 ## The research program -- gaps worth a paper, demos worth watching
 
 Each track: a gap checked against 2024-26 work (sources at the end), doable on these robots with the
-lab servers, measurable, and built on the must-haves so no work is wasted. Proposed order: **B**
-first -- it grows straight out of must-have 2 and needs no new hardware or models; then **A** -- a
-demo within days, research after; then **D** -- the showpiece; **E** and **C** later. Study **L**
-runs alongside B: same arena, same ground truth, and it evaluates the neural localizer you plan.
+lab servers, measurable, and built on the must-haves so no work is wasted.
+
+**Order since v2.4 (2026-10-07), from the user's showcase picks:**
+- **A first.** A1-A2 come in stage 1 on the object scan's orbit; A3-A4 make the paper.
+- **Then D**, the user's "maybe".
+- **B** is cut to what the Slovak mission needs: localization, Nav2, and its auction as the
+  fallback work split. Its belief-search planner, the fog of war, and study **L** are optional.
+- **E** and **C** later.
+
+Before v2.4 the order was B -> A -> D. B came first then because it grows out of must-have 2.
 
 | track | the gap | the demo | builds on | effort, risk |
 |---|---|---|---|---|
@@ -539,7 +641,8 @@ runs alongside B: same arena, same ground truth, and it evaluates the neural loc
 | C "Bring me that" | pointing + words grounded in a live object memory on edge robots, one robot watching the person while the other fetches, asking back only when unsure | "take this and put it there" among identical cubes, in English or Slovak | M3, M2 | M-L, med-high |
 | L Which localization wins | lidar geometry vs a learned lidar model vs the printed floor seen in RGB-D, alone and fused, in a small symmetric arena | a robot lifted and turned 180 degrees re-localizes in seconds; live error against ground truth | M2 | S-M, low |
 
-**B -- Two robots, one belief (first).** The M2.5 belief with a measured detection model; the next
+**B -- Two robots, one belief (optional since v2.4; only its localization, Nav2 and auction are
+needed, by M3.1 v2-v3).** The M2.5 belief with a measured detection model; the next
 view chosen over base pose AND arm tilt, within what the 5-DOF arm can reach; different sensors
 (M3: a tiltable RGB-D; X3: mast RGB-D far, wrist camera near); sequential auctions for views and
 picks, against an LLM allocator on the servers. Simulation first: hundreds of seeded trials in the
@@ -550,7 +653,9 @@ seeded layouts x {lawnmower, frontier of the seen area, belief next-best-view} x
 the kit's pieces: time to find, success within 180 s, path length, pieces knocked; allocation: picks
 a minute, idle time, reassignments, with WiFi degraded.
 
-**A -- Show-and-pick: how complex it is.** In four levels; A1-A2 give the demo, A3-A4 the paper:
+**A -- Show-and-pick: how complex it is.** In four levels; A1-A2 give the demo, A3-A4 the paper.
+Since v2.4, A2 shares the object scan's orbit (M4 A): one capture gives both the 3D scan and the
+taught object.
 - *A1, a few days -- "show it once".* 1-3 snapshots of a new object; YOLOE turns the boxed object into
   a visual prompt (a vector that describes it) and detects it from then on. Built into Ultralytics;
   the engine is rebuilt with the new class (about a minute with a timing cache).
@@ -567,7 +672,9 @@ Evaluation: AP and pick success for 1/3/5/10 views, with and without negatives, 
 prompts, DINOv2 matching, SAM 3 and the fine-tuned model; seconds from Teach to first pick. For the
 kit itself A is not needed (M5 trains on it directly); it is for everything new.
 
-**D -- A picker that teaches a VLA: how it works.**
+**D -- A picker that teaches a VLA: how it works.** (After A since v2.4, the user's "maybe";
+RESEARCH.md P1 has the competing 2026 work and the design changes it forces, e.g. an overhead
+teacher camera.)
 - *What a VLA is.* A vision-language-action model is one neural network that looks at the camera
   image, the joint angles and an instruction ("pick up the red cube") and outputs the next arm
   motions directly -- about a second of joint targets at a time, many times a second. No separate
@@ -634,6 +741,9 @@ better?" with numbers, and gives the neural localizer a proper evaluation.
 **Smaller studies** (each a short paper or a thesis chapter):
 - S1 real vs predicted depth for finding small objects: the M3's stereo depth against the X3's
   YOLO26n-depth / Depth Anything V2 -- recall on the kit, false positives, latency, energy.
+  Scheduled in stage 1 since v2.4 as "the depth duel". Its X3 half is x3plus/PLAN.md's depth table,
+  and the first rows are in: the networks flatten 30-40 mm pieces, while parallax from two views
+  gives real heights. The demo shows the M3's stereo depth beside it.
 - S2 physical checks vs VLM judges for grasp and stacking success (a five-cube tower; someone knocks
   the top cube off; the robot notices and rebuilds). VLM judges lean towards "success" (FailBench,
   Sep 2026: 0.77 balanced accuracy at best); depth height change and gripper read-back are free. The
@@ -654,16 +764,22 @@ semantics; our arena has a printed map instead).
 
 ## Order -- by value, with a demo at the end of each stage
 
-| stage | work | the demo |
-|---|---|---|
-| 0 Foundations | the M3's bring-up (v1 plan W0: survey, m3bridge, arm, kinematics, hand-eye); console v1 with both robots; the X3's base into ROS | both robots driven from one page |
-| 1 First show | the object scan (M4 A); the kit detector and the first model table (M5); A1 | a coloured 3D scan in the console; the speed table; "show it once" |
-| 2 The arena | the map by slam_toolbox (fence, landmarks) and RTAB-Map (the print, the 3D arena), AMCL, Nav2, catalogue, search and pick (M2) for each robot; B in a 2D simulator, then real; L on the real robots (the twin later) | "find and pick these three", per robot; the fog of war over the track |
-| 3 Voice | M3 in English, then Slovak and Czech; console push-to-talk for both | "pick only the small cubes" by voice |
-| 4 Research | B with both robots and L's numbers; A2-A4; D on the X3; then E, C | each track's demo and its numbers |
+v2.4 order:
 
-Stages 0-1 are about two to three weeks of work (est.), 2 and 3 a few weeks each; the research tracks
-run alongside once their stage is in place.
+| stage | work | the demo | state 2026-10-07 |
+|---|---|---|---|
+| 0 Foundations | the M3's bring-up (v1 plan W0: survey, m3bridge, arm, kinematics, hand-eye); console v1 with both robots; the X3's base into ROS (now x3plus/PLAN.md X6) | both robots driven from one page | done, except the X3's base |
+| 1 First show | the object scan from the M3's arm orbit (M4 A), and from the same orbit the teach (A1-A2); the depth duel (S1: x3plus/PLAN.md's depth table + the M3's stereo depth beside it); the model table (M5, x3plus/PLAN.md X9) | a coloured 3D scan in the console; "teach in 30 s", picked out from look-alikes; real vs predicted depth; the speed table | the X3's depth side running |
+| 2 Voice | the stop lane on the robot; the robot's own pipeline (the module, wake word, VAD, Parakeet, parser, validator, Piper); the real-voice test; the box-sharing Slovak mission (M3.1 v1) | "Stop!" with its latency on screen; "Zober vsetky male kocky a daj ich do boxu" -- both robots, one box | console push-to-talk built |
+| 3 The arena | AMCL, Nav2, catalogue, search and pick (M2) for the M3, then the X3 (x3plus/PLAN.md X7); the mission arena-wide (M3.1 v2) | "find and pick these three"; the Slovak mission over the whole arena | map and 3D scan done |
+| 4 Research | A3-A4 (the paper); D on the X3 if chosen; free-form missions on the servers (M3.1 v3); optional: B's belief search and L, E, C, the live AI-agent demo | each track's demo and its numbers | not started |
+
+Stage 1 is about two weeks (est.), stage 2 two to three, stage 3 a few weeks; the research runs
+alongside once its stage is in place. The showcase menu's own total for the picked Wants is 8-15
+weeks of one person's work.
+
+Until v2.4 the order was: 0 foundations -> 1 the object scan, model table and A1 -> 2 the arena
+with B and L -> 3 voice -> 4 B, A2-A4, D, then E and C.
 
 ## Questions
 
@@ -676,7 +792,8 @@ run alongside once their stage is in place.
   static IP or VPN, both shared; a colleague runs them (the user will arrange access);
 - `console/` and the backend changes approved; the X3's bridge may drive the base and Nav2 may run on
   it (reasons in M2.3);
-- the research order B -> A -> D is agreed (D and A explained above);
+- the research order B -> A -> D is agreed (D and A explained above) -- replaced on 2026-10-07 by
+  A -> D;
 - the catalogue is the robot's kit (small cubes, big cubes, the two-cube block);
 - stay on JetPack 6.2;
 - **nothing is built until the user says "let's start".**
@@ -684,6 +801,24 @@ run alongside once their stage is in place.
 **Answered 2026-09-30:** "let's start" -- given; the Isaac Sim twin is left out of the first version
 of localization (used later); mapping as recommended (M2.1a); the arena map is the first thing to
 show.
+
+**Answered 2026-10-06** (x3plus/PLAN.md): the X3 uses only its arm camera; its pick runs on the
+robot; table first, then the arena mat; it shares the M3's box.
+
+**Answered 2026-10-07:**
+- the showcase picks, as listed under v2.4;
+- the research order A -> D, with B cut to what the Slovak mission needs;
+- the Slovak mission starts box-sharing (M3.1 v1);
+- the live AI-agent demo is optional.
+
+**Open, before stage 2:**
+- **Where the shared station stands.** The box must be within both arms' reach. Proposed: the X3
+  parked on the mat by the fence, with its work area and the box in front of or right of its arm,
+  and the M3 working the area next to it.
+- **RESEARCH.md's remaining decisions:**
+  - which quick-win venues, if any;
+  - whether to contact the two Slovak groups;
+  - the overhead webcam (it was for D, which is now a "maybe", so it can wait).
 
 **Waiting on:** server access from the colleague (Docker on the 5090, dionysus over VPN, a directory
 for datasets, agreed GPU time).
