@@ -766,8 +766,10 @@ class Picker(Task):
         # The close look with the wrist straight: the open fingers left and right of the thing in the picture.
         # Turned for the grip already, one came up across it (2026-10-05: a 30 mm cube seen in part, aimed by
         # the wide look and missed; the next time not seen at all) -- it turns on the way down.
+        # Never turned over (J5 270): the finger motor's housing hid the picture's bottom third and the thing
+        # in it (2026-10-09, a 30 mm cube "seen in part") -- the wrist turns at the line's top instead.
         pre = planned[1][0]
-        look_from = {**pre, 5: 90 if pre[5] <= 180 else 270}
+        look_from = {**pre, 5: 90}
         if m3kinematics.problem(look_from) is not None or m3arm.glide_problem(look_from, [pre]) is not None:
             look_from = pre   # (the wrist turned back where it is, or the way down goes over a carry pose)
         with self.step("pregrasp"), refusable(target["centre"]):   # the fingers opened on the way
@@ -889,9 +891,11 @@ class Picker(Task):
         self.go({**SIDE_LOOK, 1: j1}, speed=self.dps("free_dps"), holding=holding)
 
     def to_box_view(self) -> None:
-        """SIDE_LOOK at box_dir, risen and turned, no up and down (view_way); turned over stays so."""
+        """SIDE_LOOK at box_dir, risen and turned, no up and down (view_way), the wrist straight: turned
+        over (J5 270) the finger motor's housing filled the picture's bottom and the camera's exposure
+        smeared the marker (2026-10-09, a cube gripped at J5 232: box not found, put back)."""
         here = self.here()
-        view = {**here, **SIDE_LOOK, 1: self.box_dir, 5: 90 if here[5] <= 180 else 270}
+        view = {**here, **SIDE_LOOK, 1: self.box_dir}
         for leg in view_way(here, view, getattr(self, "held_below", 0.04)):
             self.through(leg, speed=self.dps("free_dps"))
 
