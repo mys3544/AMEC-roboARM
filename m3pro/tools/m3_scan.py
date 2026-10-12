@@ -34,7 +34,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT))
 import m3_handeye as he
 
-from roboarm import m3scan
+from roboarm import m3kinematics, m3scan
 
 OUT = ROOT / "out" / "scan"
 CLOUDS = ROOT / "out" / "arena" / "rtab"   # the console's 3D view lists the PLYs here (console/serve.py)
@@ -79,7 +79,7 @@ def fetch(stamp: str | None) -> Path:
     return here
 
 
-def fuse(folder: Path) -> None:
+def fuse(folder: Path, export: bool = False) -> None:
     import open3d as o3d
 
     plan = json.loads((folder / "scan.json").read_text())
@@ -101,7 +101,7 @@ def fuse(folder: Path) -> None:
     print(f"the thing: {100 * top:.1f} cm tall, {200 * radius:.1f} cm across; "
           f"{sum(v['seen'] is not None for v in views)} of {len(views)} views read it whole")
     began = time.time()
-    xyz, rgb, mesh, _cameras = m3scan.fuse(views, centre, radius, top)
+    xyz, rgb, mesh, cameras = m3scan.fuse(views, centre, radius, top)
     print(f"{len(views)} views -> {len(xyz)} points, {len(mesh.triangles)} triangles in {time.time() - began:.0f} s")
     colours = (np.clip(rgb, 0, 1) * 255).round().astype(np.uint8)
     write_ply(folder / "cloud.ply", xyz, colours)
@@ -109,6 +109,44 @@ def fuse(folder: Path) -> None:
     CLOUDS.mkdir(parents=True, exist_ok=True)
     write_ply(CLOUDS / f"object_{folder.name}.ply", xyz, colours)
     print(f"-> {folder / 'cloud.ply'}, {folder / 'mesh.ply'}, and the console's 3D view (object_{folder.name}.ply)")
+    if export:
+        export_splat(folder / "splat", views, cameras, centre, radius, top)
+
+
+SPLAT_REACH = 0.30   # m round the thing whose floor the splat's first points keep
+
+
+def export_splat(out: Path, views: list[dict], cameras: list[np.ndarray], centre, radius: float, top: float) -> None:
+    """The scan as a Gaussian splat's input (train/splat/train_splat.py, on hekate): every view's picture,
+    its intrinsics and its camera as the fuse corrected it (world <- camera, OpenCV axes: x right, y
+    down, z ahead) in transforms.json, and points.ply -- every view's depth within SPLAT_REACH of the
+    thing and under its top, in those cameras, 3 mm apart: where the Gaussians start."""
+    (out / "images").mkdir(parents=True, exist_ok=True)
+    frames, points, colours = [], [], []
+    for i, (v, cam) in enumerate(zip(views, cameras, strict=True)):
+        name = f"images/{i:03d}.jpg"
+        cv2.imwrite(str(out / name), cv2.cvtColor(v["rgb"], cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 95])
+        frames.append({"file": name, "K": np.asarray(v["K"]).tolist(), "c2w": np.asarray(cam).tolist()})
+        K, z = np.asarray(v["K"], float), v["depth"].astype(np.float64) / 1000
+        rows, cols = z.shape
+        vv, uu = np.mgrid[0:rows:2, 0:cols:2]
+        zz = z[vv, uu]
+        ok = zz > 0.15
+        p = np.stack([(uu[ok] - K[0, 2]) * zz[ok] / K[0, 0], (vv[ok] - K[1, 2]) * zz[ok] / K[1, 1], zz[ok]], axis=1)
+        world = p @ cam[:3, :3].T + cam[:3, 3]
+        keep = (np.hypot(world[:, 0] - centre[0], world[:, 1] - centre[1]) < SPLAT_REACH) \
+            & (world[:, 2] > m3kinematics.FLOOR - 0.01) & (world[:, 2] < top + 0.03)
+        points.append(world[keep])
+        colours.append(v["rgb"][vv[ok][keep], uu[ok][keep]])
+    xyz, rgb = np.vstack(points), np.vstack(colours)
+    cell = np.floor(xyz / 0.003).astype(np.int64)
+    _, first = np.unique(cell, axis=0, return_index=True)
+    write_ply(out / "points.ply", xyz[first], rgb[first])
+    (out / "transforms.json").write_text(json.dumps({
+        "width": int(views[0]["rgb"].shape[1]), "height": int(views[0]["rgb"].shape[0]), "frames": frames,
+        "centre": [float(c) for c in centre], "radius": float(radius), "top": float(top)}, indent=1))
+    print(f"-> {out}: {len(frames)} views, {len(first)} starting points")
+
 
 
 def write_ply(path: Path, xyz: np.ndarray, rgb: np.ndarray) -> None:
@@ -132,7 +170,9 @@ def main() -> int:
     s.add_argument("--height", type=float, help="m, the thing's height: needed when it runs off the first look")
     s.add_argument("--width", type=float, help="m, the widest way across it (with --height)")
     sub.add_parser("fetch").add_argument("stamp", nargs="?")
-    sub.add_parser("fuse").add_argument("dir", nargs="?")
+    f = sub.add_parser("fuse")
+    f.add_argument("dir", nargs="?")
+    f.add_argument("--export", action="store_true", help="and its views as a Gaussian splat's input (DIR/splat)")
     args = parser.parse_args()
     if args.cmd == "start":
         if (args.height is None) != (args.width is None):
@@ -141,7 +181,7 @@ def main() -> int:
     elif args.cmd == "fetch":
         fetch(args.stamp)
     else:
-        fuse(OUT / args.dir if args.dir else max(OUT.iterdir()))
+        fuse(OUT / args.dir if args.dir else max(OUT.iterdir()), export=args.export)
     return 0
 
 

@@ -19,6 +19,9 @@ dependencies = [
     "huggingface_hub",
     # the model table's transformer row (PLAN.md M5, model 3): RF-DETR-Seg on the same kit set
     "rfdetr[train]",
+    # Gaussian splats of the object scans (PLAN.md M4 C; splat/train_splat.py): its CUDA kernels
+    # compile on first use, with hekate's CUDA 12.8 toolkit and the VS 2022 C++ Build Tools
+    "gsplat==1.5.3",
 ]
 
 [tool.uv.sources]
