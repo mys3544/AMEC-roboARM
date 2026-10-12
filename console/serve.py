@@ -14,12 +14,17 @@ the page simple; camera frames and maps come straight from the robots, which ima
 m3pro/out/arena/rtab (where `arena_map.py rtab-export` puts them), each with its floor print if
 there is one, and /clouds/<name> is one of those files (.ply or .png). Voice commands go to
 /api/voice: a WAV in, what was said and the command in it out (voice.py; the speech model loads
-the first time the page asks, GET /api/voice). The
+the first time the page asks, GET /api/voice). An object scan's views are fused here, on this
+laptop: POST /api/scan {"robot": id} fetches the robot's newest scan (GET /pick/scan.zip) into
+m3pro/out/scan/ and runs m3pro/tools/m3_scan.py fuse on it, which puts object_STAMP.ply among
+the 3D scans; GET /api/scan says how far it is. The
 console listens on localhost only: it is this laptop's (and a microphone needs localhost).
-Standard library only (and sherpa-onnx for voice, when it is there).
+Standard library only (and sherpa-onnx for voice, when it is there; Open3D for the fuse, in
+the fuse's own process).
 """
 
 import argparse
+import io
 import json
 import pathlib
 import socket
@@ -30,6 +35,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import voice
@@ -38,6 +44,7 @@ HERE =pathlib.Path(__file__).resolve().parent
 ROOT = HERE.parent
 PORT = 8099
 CLOUDS = ROOT / "m3pro" / "out" / "arena" / "rtab"   # the 3D scans, from arena_map.py rtab-export
+SCANS = ROOT / "m3pro" / "out" / "scan"              # object scans' views, as m3_scan.py fetch puts them
 FAKES = [   # --fake starts these; robots.fake.json points at them
     [sys.executable, str(ROOT / "x3plus" / "tools" / "x3bridge.py"), "--sim", "--port", "8180", "--out", ""],
     [sys.executable, str(ROOT / "m3pro" / "arena" / "fake_m3.py"), "--port", "8195"],
@@ -46,11 +53,70 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
          ".css": "text/css; charset=utf-8", ".json": "application/json"}
 CLOUD_TYPES = {".ply": "application/octet-stream", ".png": "image/png"}   # scans, floor prints
 GET_TIMEOUT, POST_TIMEOUT = 3, 30   # s; a POST may move an arm before it answers
+FETCH_TIMEOUT, FUSE_TIMEOUT = 120, 900   # s: a scan's ~110 files (~15 MB); its fuse (~20 s for 36 views)
 
 
-def make_handler(robots, clouds=CLOUDS, recognizer=None):
+def fuse_scan(stamp: str) -> str:
+    """m3pro/tools/m3_scan.py fuse on out/scan/STAMP, in its own process (Open3D): what it said."""
+    done = subprocess.run([sys.executable, str(ROOT / "m3pro" / "tools" / "m3_scan.py"), "fuse", stamp],
+                          cwd=ROOT / "m3pro", capture_output=True, text=True, timeout=FUSE_TIMEOUT, check=False)
+    said = [line for line in done.stdout.splitlines() if line.strip()]
+    if done.returncode != 0:
+        raise RuntimeError((done.stderr.strip().splitlines() or ["the fuse failed"])[-1])
+    return "; ".join(said[:2])
+
+
+class Scans:
+    """One object scan at a time from a robot to the 3D view: its views fetched, then fused."""
+
+    def __init__(self, folder=SCANS, fuse=fuse_scan):
+        self.folder, self.fuse = folder, fuse
+        self.lock = threading.Lock()
+        self.state = {"state": "idle", "stamp": None, "cloud": None, "message": ""}
+
+    def status(self) -> dict:
+        with self.lock:
+            return dict(self.state)
+
+    def start(self, url: str) -> dict:
+        with self.lock:
+            if self.state["state"] in ("fetching", "fusing"):
+                return {"error": f"a scan is {self.state['state']} already"}
+            self.state = {"state": "fetching", "stamp": None, "cloud": None, "message": "fetching the views"}
+        threading.Thread(target=self.run, args=(url,), daemon=True).start()
+        return self.status()
+
+    def set(self, **changes):
+        with self.lock:
+            self.state.update(changes)
+
+    def run(self, url: str):
+        try:
+            with urllib.request.urlopen(f"{url}/pick/scan.zip", timeout=FETCH_TIMEOUT) as reply:
+                data = reply.read()
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                names = z.namelist()
+                stamp = names[0].split("/")[0] if names else ""
+                if not stamp or any(pathlib.PurePosixPath(n).parts[:1] != (stamp,) or ".." in n for n in names):
+                    raise RuntimeError("the robot's zip is not one scan folder")
+                z.extractall(self.folder)
+            self.set(state="fusing", stamp=stamp, message=f"fusing {len(names)} files")
+            said = self.fuse(stamp)
+            self.set(state="done", cloud=f"object_{stamp}.ply", message=said)
+        except urllib.error.HTTPError as e:   # the robot's own reason: no scan yet, say
+            try:
+                reason = json.loads(e.read()).get("error")
+            except ValueError:
+                reason = None
+            self.set(state="failed", message=reason or f"HTTP {e.code}")
+        except Exception as e:   # noqa: BLE001 -- whatever it was, the page says it
+            self.set(state="failed", message=str(e) or type(e).__name__)
+
+
+def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None):
     urls = {r["id"]: r["url"].rstrip("/") for r in robots}
     recognizer = recognizer or voice.Recognizer()   # loads nothing until the page asks
+    scans = scans or Scans()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"   # keep-alive: the page polls several times a second
@@ -77,6 +143,8 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None):
                 return self.send(200, json.dumps(robots).encode(), TYPES[".json"])
             if path == "/clouds.json":
                 return self.send(200, json.dumps(list_clouds(clouds)).encode(), TYPES[".json"])
+            if path == "/api/scan":   # the object scan's fetch and fuse: how far
+                return self.send(200, json.dumps(scans.status()).encode(), TYPES[".json"])
             if path == "/api/voice":   # ready, loading, or why not; starts the model's load
                 return self.send(200, json.dumps(recognizer.status()).encode(), TYPES[".json"])
             if path.startswith("/clouds/"):
@@ -96,6 +164,15 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None):
             if self.path == "/api/voice":   # a WAV (or typed text) -> what was said, the command
                 code, reply = voice.answer(recognizer, body, self.headers.get("Content-Type", ""))
                 return self.send(code, json.dumps(reply).encode(), TYPES[".json"])
+            if self.path == "/api/scan":   # {"robot": id}: fetch its newest scan and fuse it
+                try:
+                    robot = json.loads(body or b"{}").get("robot")
+                except (ValueError, AttributeError):
+                    robot = None
+                if robot not in urls:
+                    return self.error(404, f"no robot {robot!r}")
+                reply = scans.start(urls[robot])
+                return self.send(409 if "error" in reply else 200, json.dumps(reply).encode(), TYPES[".json"])
             self.error(404, "not found")
 
         def proxy(self, method):

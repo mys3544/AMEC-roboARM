@@ -95,7 +95,11 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .pill.volts:empty { display: none; }
 .pill.volts.low { background: var(--stop); color: #fff; }
 .arm .jobs .stepwise { display: inline-flex; align-items: center; gap: 6px; }
-.arm .teach { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.arm .teach, .arm .scan { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.arm .scan input { width: 7em; font: inherit; color: var(--ink); background: var(--key);
+                   border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.arm .scan .scan-note { color: var(--muted); font-size: 13px; }
+.arm .scan .scan-note.err { color: var(--stop); }
 .arm .teach .thing { width: 14em; max-width: 100%; font: inherit; color: var(--ink); background: var(--key);
                      border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
 .tuning summary { cursor: pointer; color: var(--muted); font-size: 13px; }

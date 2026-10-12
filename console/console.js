@@ -301,6 +301,7 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     $('.cleanup', controls).onclick = () => this.act('clean up: started', call(robot, 'pick/cleanup', { drive: drive() }));
     $('.home', controls).onclick = () => this.act('home: started', call(robot, 'pick/home', {}));
     this.teachRow(robot, $('.teach', controls));
+    this.scanRow(robot, $('.scan', controls));
     this.speed = $('.armspeed input', controls);
     this.speed.oninput = () => { $('.armspeed output', controls).textContent = `${this.speed.value} %`; };
     this.speed.onchange = () => this.setting('speed', this.speed.value);
@@ -358,6 +359,56 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
       const name = named('pick by name');
       if (name) this.act(`pick '${name}': started`, call(robot, 'pick/named', { name }));
     };
+  }
+
+  scanRow(robot, row) {   // a 3D model of the thing in front: the M3 drives round it (m3pro/roboarm/m3scan.py),
+                          // then this laptop fuses the views (serve.py /api/scan)
+    if (robot.kind !== 'm3arm') {
+      row.style.display = 'none';
+      return;
+    }
+    this.scanNote = $('.scan-note', row);
+    this.in3d = $('.in-3d', row);
+    $('.scan-it', row).onclick = () => {
+      const tall = Number($('.tall', row).value), wide = Number($('.wide', row).value);
+      const body = { radius: 0.42 };   // m round it: a thing up to 20 cm tall (0.38 holds ~15)
+      if (tall && wide) Object.assign(body, { height: tall / 100, width: wide / 100 });
+      this.act(`scan: started${tall && wide ? ` (${tall} cm tall, ${wide} cm across, as given)` : ''}`,
+        call(robot, 'pick/scan', body));
+    };
+    $('.fuse-last', row).onclick = () => this.fuseScan();
+    this.in3d.onclick = () => $('#layouts [data-layout="cloud"]').click();
+  }
+
+  scanNoted(text, error = false) {
+    this.scanNote.textContent = text;
+    this.scanNote.classList.toggle('err', error);
+  }
+
+  async fuseScan() {   // the robot's newest scan -> a model among the 3D scans, which then opens on it
+    this.in3d.hidden = true;
+    try {
+      const reply = await fetch('/api/scan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ robot: this.robot.id }),
+      });
+      if (!reply.ok) throw new Error((await reply.json().catch(() => ({}))).error || `HTTP ${reply.status}`);
+      for (;;) {
+        const s = await (await fetch('/api/scan')).json();
+        if (s.state === 'failed') throw new Error(s.message);
+        if (s.state === 'done') {
+          store.set('console.cloud', s.cloud);
+          this.scanNoted(`${s.cloud} -- ${s.message}`);
+          this.in3d.hidden = false;
+          log(`${this.robot.name}: scan fused, ${s.cloud}`);
+          return;
+        }
+        this.scanNoted(`${s.message}...`);
+        await new Promise(done => setTimeout(done, 1000));
+      }
+    } catch (e) {
+      this.scanNoted(`not fused: ${e.message}`, true);
+      log(`${this.robot.name}: scan not fused -- ${e.message}`, true);
+    }
   }
 
   showSettings(list) {   // the speed slider, and a field for each other speed and pause
@@ -445,6 +496,17 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
       return;
     }
     const low = LOW_V[this.robot.kind];
+    if (this.scanNote) {   // a scan that ends well is fused at once
+      if (s.busy && s.job === 'scan' && !this.scanning) {
+        this.scanning = true;
+        this.in3d.hidden = true;
+        this.scanNoted('scanning: the robot goes round the thing (~2 min)');
+      } else if (this.scanning && !s.busy) {
+        this.scanning = false;
+        if (s.error) this.scanNoted(`scan stopped: ${s.error}`, true);
+        else this.fuseScan();
+      }
+    }
     this.setPill(s.busy ? `${s.job.replace('_', ' ')}: ${s.step}` : 'idle', s.busy);
     $('.volts', this.el).textContent = s.battery_v == null ? '' : `${s.battery_v.toFixed(1)} V`;
     $('.volts', this.el).classList.toggle('low', s.battery_v != null && s.battery_v < low);
@@ -691,9 +753,13 @@ async function main() {
 
   const m3 = () => cards.find(c => c instanceof M3Card);
   addEventListener('keydown', e => {
-    const typing = e.target instanceof Element && e.target.matches('input[type=text], textarea');
+    if (e.key === 'Escape') { e.preventDefault(); stopAll(); return; }   // even while typing
+    // in a field (a thing's name has no type attribute; a scan's size is a number) letters are
+    // letters: not the base's WASD, and a space is not STOP ALL
+    const typing = e.target instanceof Element &&
+      e.target.matches('input:not([type=range]):not([type=checkbox]), textarea, select');
     if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
-    if (e.key === ' ' || e.key === 'Escape') { e.preventDefault(); stopAll(); return; }
+    if (e.key === ' ') { e.preventDefault(); stopAll(); return; }
     const k = e.key.toLowerCase();
     if (DIRS[k] && m3()) { e.preventDefault(); if (!e.repeat) m3().key(k, true); }
   });

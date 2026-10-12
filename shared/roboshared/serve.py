@@ -14,6 +14,8 @@ x3plus/tools/x3bridge.py) -- what the console's arm card drives and watches:
     GET  /pick/frame.jpg      the last look, marked
     GET  /pick/settings       [{key, label, unit, min, max, step, default, value}]; POST {key: value} changes them
     GET  /pick/taught         {"names": [...]}: the things taught by showing them (the M3 only)
+    GET  /pick/scan.zip[?stamp=YYYYmmdd_HHMMSS]   a scan's views, the newest by default, as
+                        STAMP/<file> in a zip (the M3 only; the console fuses them on the laptop)
     GET  /api/metrics         where the time went (roboshared.metrics: one run a job)
 
 A bridge's handler asks reply() first and sends what it gives (respond()); None means the path is
@@ -22,7 +24,11 @@ the bridge's own. No authentication: the lab network only.
 
 from __future__ import annotations
 
+import io
 import json
+import re
+import zipfile
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import cv2
@@ -42,6 +48,22 @@ _BLANK = None
 
 def _json(payload, status: int = 200) -> tuple[int, str, bytes]:
     return status, "application/json", json.dumps(payload).encode()
+
+
+def scan_zip(scans: Path, stamp: str | None) -> tuple[int, str, bytes]:
+    """The scan folder `stamp` under `scans` (the newest when None) as a zip of STAMP/<file>:
+    its views are JPEGs and PNGs already, so stored, not compressed again."""
+    folders = sorted(f for f in scans.glob("*") if f.is_dir() and re.fullmatch(r"\d{8}_\d{6}", f.name))
+    if stamp is not None:
+        folders = [f for f in folders if f.name == stamp]
+    if not folders:
+        return _json({"error": f"no scan {stamp or 'yet'}"}, 404)
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as z:
+        for file in sorted(folders[-1].iterdir()):
+            if file.is_file():
+                z.write(file, f"{folders[-1].name}/{file.name}")
+    return 200, "application/zip", buffer.getvalue()
 
 
 def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple[int, str, bytes] | None:
@@ -64,6 +86,8 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
             return _json({"settings": picker.settings()})
         if url.path == "/pick/taught" and hasattr(picker, "taught"):
             return _json({"names": picker.taught()})
+        if url.path == "/pick/scan.zip" and "scan" in picker.jobs() and picker.out is not None:
+            return scan_zip(picker.out.parent / "scan", parse_qs(url.query).get("stamp", [None])[0])
         if url.path == "/pick/frame.jpg":
             if picker.frame is None and _BLANK is None:
                 _BLANK = blank_frame()

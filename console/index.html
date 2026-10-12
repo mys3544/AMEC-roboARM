@@ -103,6 +103,14 @@
       <button class="find" title="names every thing on the table in front by what it was taught (the last look shows it)">Find</button>
       <button class="pick-named" title="finds the thing with this name and picks it into the box">Pick it</button>
     </div>
+    <div class="scan" title="a 3D model of the thing in front: the robot drives round it (~2 min), then this laptop fuses the views into the 3D view">
+      <button class="scan-it" title="the thing ALONE ~26 cm in front of the bumper, up to 20 cm tall, nothing else within ~70 cm of it: the robot drives a circle round it">Scan</button>
+      <input class="tall" type="number" min="1" max="20" step="0.5" placeholder="height cm" aria-label="the thing's height, cm (only if the scan asks)" title="only if the scan says the thing runs off its picture: its height and width, cm">
+      <input class="wide" type="number" min="1" max="30" step="0.5" placeholder="width cm" aria-label="the thing's width, cm (only if the scan asks)" title="the widest way across, cm, with the height">
+      <button class="fuse-last" title="fetch the robot's newest scan and fuse it here again">Fuse last scan</button>
+      <span class="scan-note"></span>
+      <button class="in-3d" hidden>Show in 3D</button>
+    </div>
     <label class="speed armspeed" title="every arm move, as a share of the speeds below">arm speed <input type="range" min="30" max="150" step="5" value="100"> <output>100 %</output></label>
     <details class="tuning">
       <summary>Speeds, pauses, fingertip room</summary>

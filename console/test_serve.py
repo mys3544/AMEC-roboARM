@@ -1,16 +1,19 @@
 """console/serve.py against a pretend robot: JSON passes through both ways, an unreachable
 robot is a 502 with a reason, and nothing outside console/ is served; of the 3D scans, only the
-PLY files and floor prints in their own folder.
+PLY files and floor prints in their own folder; an object scan fetched from the robot and fused.
 
     python -m pytest console
 """
 
+import io
 import json
 import pathlib
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
@@ -104,3 +107,53 @@ def test_the_clouds_are_the_scans_and_floor_prints_in_their_folder_and_nothing_e
     gone = serve.make_handler([], tmp_path / "not there")   # no export yet: an empty list
     port = start(ThreadingHTTPServer(("127.0.0.1", 0), gone))
     assert json.loads(fetch(f"http://127.0.0.1:{port}/clouds.json")[1]) == []
+
+
+def test_a_scan_is_fetched_from_the_robot_and_fused_into_the_3d_scans(tmp_path):
+    stamp = "20261012_165541"
+    zipped = io.BytesIO()
+    with zipfile.ZipFile(zipped, "w") as z:   # as the robot's /pick/scan.zip gives it
+        z.writestr(f"{stamp}/00_0.json", "{}")
+        z.writestr(f"{stamp}/scan.json", "{}")
+
+    class ScanRobot(Robot):
+        def do_GET(self):
+            if self.path != "/pick/scan.zip":
+                return self.answer(404, {"error": "no such endpoint"})
+            if self.server.zipped is None:
+                return self.answer(404, {"error": "no scan yet"})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(len(self.server.zipped)))
+            self.end_headers()
+            self.wfile.write(self.server.zipped)
+
+    with_scan = ThreadingHTTPServer(("127.0.0.1", 0), ScanRobot)
+    with_scan.zipped = zipped.getvalue()
+    without = ThreadingHTTPServer(("127.0.0.1", 0), ScanRobot)
+    without.zipped = None
+    robots = [{"id": "m3arm", "url": f"http://127.0.0.1:{start(with_scan)}"},
+              {"id": "bare", "url": f"http://127.0.0.1:{start(without)}"}]
+    fused = []
+    scans = serve.Scans(tmp_path / "scan", fuse=lambda s: fused.append(s) or "the thing: 16.7 cm tall")
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler(robots, tmp_path / "rtab", scans=scans)))
+    base = f"http://127.0.0.1:{port}"
+
+    def finished():
+        for _ in range(100):
+            state = json.loads(fetch(f"{base}/api/scan")[1])
+            if state["state"] in ("done", "failed"):
+                return state
+            time.sleep(0.05)
+        raise AssertionError(f"still {state}")
+
+    assert json.loads(fetch(f"{base}/api/scan")[1])["state"] == "idle"
+    status, _body = fetch(f"{base}/api/scan", {"robot": "m3arm"})
+    assert status == 200
+    assert finished() == {"state": "done", "stamp": stamp, "cloud": f"object_{stamp}.ply",
+                          "message": "the thing: 16.7 cm tall"}
+    assert (tmp_path / "scan" / stamp / "00_0.json").is_file() and fused == [stamp]
+
+    fetch(f"{base}/api/scan", {"robot": "bare"})   # the robot's own reason
+    assert finished() == {"state": "failed", "stamp": None, "cloud": None, "message": "no scan yet"}
+    assert fetch(f"{base}/api/scan", {"robot": "nobody"})[0] == 404
