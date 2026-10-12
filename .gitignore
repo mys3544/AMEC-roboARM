@@ -14,3 +14,7 @@ out/
 
 # Per-robot compose settings, e.g. the wrist camera (cameras/README.md).
 .env
+
+# hekate's training: the set is built from m3pro/out, the runs come back from hekate
+train/datasets/
+train/runs/

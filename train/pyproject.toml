@@ -1,0 +1,26 @@
+# Training on hekate, the lab's RTX 5090 PC (CLAUDE.md): the kit detector (PLAN.md M5) for now.
+# Its own uv project, outside the workspace: CUDA torch is for hekate only, not the laptop's lock.
+# Copied to hekate's `Sim Arm 2026\train` with this lock; there `uv sync --frozen`.
+[project]
+name = "roboarm-train"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "ultralytics>=8.4.165",
+    "torch>=2.8",
+    "torchvision>=0.23",
+    # export to ONNX for the robots' TensorRT builds -- listed so Ultralytics does not pip-install
+    # them into the venv by itself
+    "onnx>=1.17",
+    "onnxslim>=0.1.71",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+# CUDA 12.8 wheels: the first with Blackwell (the 5090, compute 12.0)
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

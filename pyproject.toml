@@ -3,6 +3,8 @@
 # own member's pins, exported from this lock by its tools/sync_robot.py.
 [tool.uv.workspace]
 members = ["shared", "console", "x3plus", "m3pro"]
+# train/ is hekate's own project (CUDA torch), locked on its own
+exclude = ["train"]
 
 [dependency-groups]
 # Tests and lint for all three, run from each folder: `uv run python -m pytest -q`.
