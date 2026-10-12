@@ -13,6 +13,12 @@ own floor plane puts it (the camera levelled, an upper bound). For every kit pie
 height from each (the 90th percentile over its outline, as x3plus's parallax reads it) against the
 kit's true height; and the floor's flatness away from the pieces. Depth Anything runs on the
 laptop's CPU (onnxruntime, the X3's ONNX export: 0.6 s; 26 ms as the X3's TensorRT engine).
+
+A second contestant since 2026-10-12, when there is its ONNX (PLAN.md M5 model 8; exported on hekate
+to train/runs/extra/): YOLO26n-depth, 3.8 ms as an engine on either robot. Its log-depth head reads
+the scene's shape, its absolute scale a fit to its training cameras -- so it is scored three ways:
+as it reads (its depth taken for metres, heights through the DCW2-levelled camera), and anchored
+exactly as Depth Anything is (its 1/depth as the disparity), on each floor.
 """
 
 from __future__ import annotations
@@ -42,6 +48,10 @@ HOST, REMOTE = "192.168.73.66", "/home/jetson/roboarm/out/pick"
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 STD = np.array([0.229, 0.224, 0.225], np.float32)
 NAMED_MM = 7   # a height within this of a kit piece's names it (m3vision.kit_item)
+YOLO_MODEL = ROOT.parent / "train" / "runs" / "extra" / "yolo26n-depth.onnx"   # 480 x 640, RGB / 255 in, depth out
+COLUMNS = [("dcw2", "DCW2"), ("arm", "DA, arm's floor"), ("floor", "DA, DCW2's floor"),
+           ("y_raw", "YOLO26n-depth as it reads"), ("y_arm", "YOLO26n-depth, arm's floor"),
+           ("y_floor", "YOLO26n-depth, DCW2's floor")]
 
 # x3plus/roboarm/monodepth.py by its path: both robots' packages are called roboarm
 _spec = importlib.util.spec_from_file_location("monodepth", ROOT.parent / "x3plus" / "roboarm" / "monodepth.py")
@@ -97,7 +107,9 @@ def run(panels: int) -> None:
     import onnxruntime
 
     session = onnxruntime.InferenceSession(str(MODEL), providers=["CPUExecutionProvider"])
-    rows, floors, spent = [], [], []
+    yolo = onnxruntime.InferenceSession(str(YOLO_MODEL), providers=["CPUExecutionProvider"]) \
+        if YOLO_MODEL.exists() else None
+    rows, floors, spent, spent_yolo = [], [], [], []
     shown = 0
     for meta_path in sorted(FRAMES.glob("*.json")):
         meta = json.loads(meta_path.read_text())
@@ -123,6 +135,20 @@ def run(panels: int) -> None:
                 maps[name] = None
                 continue
             maps[name] = cv2.resize(fit["height"].astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+        if yolo is not None:
+            rgb = cv2.cvtColor(cv2.resize(bgr, (640, 480)), cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+            began = time.perf_counter()
+            depth_y = yolo.run(None, {"images": np.ascontiguousarray(rgb.transpose(2, 0, 1)[None])})[0][0, 0]
+            spent_yolo.append(time.perf_counter() - began)
+            depth_y = cv2.resize(depth_y.astype(np.float32), (w, h), interpolation=cv2.INTER_LINEAR)
+            maps["y_raw"] = dcw2_heights(np.clip(depth_y * 1000, 0, 65535), K, cameras["floor"])
+            for name, cam in cameras.items():
+                try:
+                    fit = monodepth.anchor(1.0 / np.maximum(depth_y, 1e-3), (w, h), K, np.zeros(5), cam[:3, :3],
+                                           cam[:3, 3], m3kinematics.FLOOR)
+                    maps[f"y_{name}"] = fit["height"].astype(np.float32)
+                except ValueError:
+                    maps[f"y_{name}"] = None
         pieces = np.zeros((h, w), bool)
         look = "close" if "close" in stem else "wide"
         for o in meta["found"]:
@@ -147,7 +173,7 @@ def run(panels: int) -> None:
         if shown < panels and rows and rows[-1]["frame"] == stem and maps["arm"] is not None:
             write_panel(OUT / f"panel_{shown}_{stem}.jpg", bgr, real, maps, meta, stem)
             shown += 1
-    report(rows, floors, spent)
+    report(rows, floors, spent, spent_yolo)
 
 
 def colour(hm: np.ndarray, top: float = 0.065) -> np.ndarray:
@@ -183,43 +209,49 @@ def write_panel(path: Path, bgr, real, maps, meta, stem) -> None:
     cv2.imwrite(str(path), np.vstack([np.hstack(tiles[:2]), np.hstack(tiles[2:])]))
 
 
-def report(rows: list[dict], floors: list[dict], spent: list[float]) -> None:
-    lines = ["# The depth duel: the DCW2 against Depth Anything V2 Small, the same pictures", "",
+def report(rows: list[dict], floors: list[dict], spent: list[float], spent_yolo: list[float] = ()) -> None:
+    keys = [(k, label) for k, label in COLUMNS if any(r.get(k) is not None for r in rows)]
+    lines = ["# The depth duel: the DCW2 against Depth Anything V2 Small (and YOLO26n-depth), the same pictures", "",
              (f"{len({r['frame'] for r in rows})} pictures, {len(rows)} kit pieces (m3pro/tools/m3_duel.py, "
               f"{time.strftime('%Y-%m-%d')}). Heights: the 90th percentile over each piece's outline; "
               f"'named' = within {NAMED_MM} mm of its true height (what m3vision.kit_item needs)."), "",
              ("Mind: the pieces are the ones the DCW2's depth found and named (whole, not black), so its own "
               "column cannot miss by much -- it says how exact it is, not how often it finds them."), "",
-             "| look | pieces | DCW2: error mm (median / p90), named | DA, arm's floor | DA, DCW2's floor |",
-             "|---|---|---|---|---|"]
+             "Error mm (median / p90), named:", "",
+             "| look | pieces | " + " | ".join(label for _k, label in keys) + " |",
+             "|---|---|" + "---|" * len(keys)]
     for look in ("wide", "close", "all"):
         chosen = [r for r in rows if look in ("all", r["look"])]
         if not chosen:
             continue
         cells = []
-        for key in ("dcw2", "arm", "floor"):
-            err = np.array([abs(r[key] - r["truth"]) * 1000 for r in chosen if r[key] is not None])
+        for key, _label in keys:
+            err = np.array([abs(r[key] - r["truth"]) * 1000 for r in chosen if r.get(key) is not None])
             cells.append(f"{np.median(err):.1f} / {np.percentile(err, 90):.1f}, {np.mean(err <= NAMED_MM):.0%}"
                          if len(err) else "--")
         lines.append(f"| {look} | {len(chosen)} | " + " | ".join(cells) + " |")
-    lines += ["", "| look | floor flatness, sd mm: DCW2 | DA, arm's floor | DA, DCW2's floor |", "|---|---|---|---|"]
+    lines += ["", "| look | floor flatness, sd mm: " + " | ".join(label for _k, label in keys) + " |",
+              "|---|" + "---|" * len(keys)]
     for look in ("wide", "close"):
         chosen = [f for f in floors if f["look"] == look]
         if chosen:
-            cells = [f"{1000 * np.median([f[k] for f in chosen if f[k] is not None]):.1f}" for k in ("dcw2", "arm", "floor")]
+            cells = [f"{1000 * np.median(v):.1f}" if (v := [f[k] for f in chosen if f.get(k) is not None]) else "--"
+                     for k, _label in keys]
             lines.append(f"| {look} | " + " | ".join(cells) + " |")
     by_truth = {}
     for r in rows:
         by_truth.setdefault(round(r["truth"] * 1000), []).append(r)
-    lines += ["", "| true height mm | pieces | DCW2 reads (median) | DA, arm's floor | DA, DCW2's floor |", "|---|---|---|---|---|"]
+    lines += ["", "| true height mm | pieces | reads (median): " + " | ".join(label for _k, label in keys) + " |",
+              "|---|---|" + "---|" * len(keys)]
     for truth, chosen in sorted(by_truth.items()):
-        cells = [f"{1000 * np.median([r[k] for r in chosen if r[k] is not None]):.0f}" for k in ("dcw2", "arm", "floor")]
+        cells = [f"{1000 * np.median(v):.0f}" if (v := [r[k] for r in chosen if r.get(k) is not None]) else "--"
+                 for k, _label in keys]
         lines.append(f"| {truth} | {len(chosen)} | " + " | ".join(cells) + " |")
-    lines += ["", f"Depth Anything on the laptop's CPU: {1000 * np.median(spent):.0f} ms a picture (median)."]
+    lines += ["", f"Depth Anything on the laptop's CPU: {1000 * np.median(spent):.0f} ms a picture (median)"
+              + (f"; YOLO26n-depth {1000 * np.median(spent_yolo):.0f} ms." if len(spent_yolo) else ".")]
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "results.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])

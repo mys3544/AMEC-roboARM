@@ -645,10 +645,17 @@ What it says so far:
   mask head's proto conv, even pinned to FP16). At 3 ms against a 33 ms frame there is nothing to win.
 - **YOLOE baked into an engine is ~8x its PyTorch speed** (5.4 ms against ~41 ms served today): the
   open-set teach could run that way. **RF-DETR** is no better on the kit at 2.7x the time.
-- **YOLO26n-depth at 3.8 ms** against Depth Anything V2 Small's ~26 ms engine on the X3: worth the
-  depth duel's accuracy test before anything else on the X3.
-- Not yet: end-to-end times with pre/post-processing, the kit detector served by a robot's vision
-  service, energy (tegrastats), locked clocks, and a val with tens of 40 mm cubes.
+- **YOLO26n-depth at 3.8 ms** against Depth Anything V2 Small's ~26 ms engine on the X3 -- but in the
+  depth duel (S1; m3pro/tools/m3_duel.py, 69 pictures, 192 pieces) it **flattens the 30 mm pieces to
+  ~6 mm**: anchored as Depth Anything is, height error 23.9 mm median and 8 % named (DA 6.5 mm, 54 %;
+  the DCW2 0.5, 100 %), the floor about as flat (8-10 mm sd); as it reads, its scale is off by ~0.5 m.
+  As trained it cannot stand in for Depth Anything on the X3; fine-tuned on the M3's own RGB-D (the
+  DCW2 as the label) it might -- a study of its own.
+- **End to end on the M3** (train/robot_e2e.py, its 92 pick looks, Ultralytics' predict): the kit
+  detector as an FP16 engine 8.3 ms a picture (p99 9.6: preprocess 0.8, inference 3.2, the masks'
+  postprocess 3.5), in PyTorch 32.6 ms -- the masks, not the network, are now the bigger share.
+- Not yet: the kit detector served by a robot's vision service, energy (tegrastats), locked clocks,
+  and a val with tens of 40 mm cubes.
 
 ## The research program -- gaps worth a paper, demos worth watching
 
