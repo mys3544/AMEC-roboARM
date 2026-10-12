@@ -13,11 +13,13 @@ import urllib.request
 
 import cv2
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 import m3bridge
 
 from roboarm import camera, m3arm
+from roboarm.m3arm import ArmError
 from roboarm.web import bridge
 
 HOME = dict(zip(m3arm.JOINTS, m3arm.POSES["home"]))
@@ -118,3 +120,15 @@ def test_a_stop_reaches_a_move_under_way_and_only_the_allowed_calls_pass():
     finally:
         server.shutdown()
         the_bridge.close()
+
+
+def test_a_camera_that_has_stopped_sending_is_an_error_not_an_old_picture():
+    frames = m3bridge.Frames()
+    with frames.lock:
+        frames.color, frames.depth = np.zeros((480, 640, 3), np.uint8), np.zeros((480, 640), np.uint16)
+        frames.K = [480.8, 0, 320, 0, 480.8, 240, 0, 0, 1]
+        frames.arrived = {"colour": time.monotonic(), "depth": time.monotonic()}
+    assert frames.arrays()[0].shape == (480, 640, 3)   # fresh: the picture
+    frames.arrived["depth"] -= m3bridge.STALE_S + 1    # the depth stopped coming
+    with pytest.raises(ArmError, match="camera has stopped: its newest depth"):
+        frames.arrays()

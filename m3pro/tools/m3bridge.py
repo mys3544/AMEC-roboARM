@@ -60,6 +60,8 @@ from roboarm.web import bridge
 from roboarm.web.bridge import Server, send_json
 
 HOST, PORT = "0.0.0.0", 8761
+STALE_S = 2.0   # a picture older than this is the camera stopped, not a slow frame (it sends ~15 a second):
+                # on 2026-10-12 its driver stopped mid-afternoon and Find worked on a picture from minutes before
 OUT = Path(__file__).resolve().parents[1] / "out" / "pick"
 
 
@@ -69,13 +71,19 @@ class Frames:
     def __init__(self):
         self.lock = threading.Lock()
         self.color = self.color_stamp = self.depth = self.depth_stamp = self.K = None
+        self.arrived = {}   # "colour"/"depth" -> time.monotonic() when the newest came
 
     def arrays(self):
-        """(colour BGR, depth mm, K 3 x 3) as they are now, copies; an ArmError while one is missing."""
+        """(colour BGR, depth mm, K 3 x 3) as they are now, copies; an ArmError while one is missing,
+        or when the camera has stopped sending (the newest older than STALE_S)."""
         with self.lock:
-            color, depth, K = self.color, self.depth, self.K
+            color, depth, K, arrived = self.color, self.depth, self.K, dict(self.arrived)
         if color is None or depth is None or K is None:
             raise ArmError("no picture from the camera yet: was the bridge started with --camera?")
+        for what, when in arrived.items():
+            if time.monotonic() - when > STALE_S:
+                raise ArmError(f"the camera has stopped: its newest {what} is {time.monotonic() - when:.0f} s old "
+                               "(systemctl --user restart roboarm-m3bridge restarts its driver)")
         return color.copy(), depth.copy(), np.asarray(K, float).reshape(3, 3)
 
     def snapshot(self, joints) -> dict:
@@ -165,12 +173,14 @@ def make_node(frames: Frames, stream: camera.Stream):
             img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR) if msg.encoding == "rgb8" else img.copy()
             with frames.lock:
                 frames.color, frames.color_stamp = img, self.stamp(msg)
+                frames.arrived["colour"] = time.monotonic()
             stream.publish(img)
 
         def on_depth(self, msg):
             depth = np.frombuffer(msg.data, np.uint16).reshape(msg.height, msg.width).copy()
             with frames.lock:
                 frames.depth, frames.depth_stamp = depth, self.stamp(msg)
+                frames.arrived["depth"] = time.monotonic()
 
         def on_info(self, msg):
             with frames.lock:
