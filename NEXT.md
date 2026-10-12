@@ -1,56 +1,61 @@
-# What is left for later -- from the 2026-10-12 session
+# Tomorrow, 2026-10-13 -- the list
 
-Things set aside at the end of the day, roughly in the order they unblock each other. The background
-is in PLAN.md (v2.4, stage 1) and the commits of 2026-10-12 on branch `m3pro` (all pushed).
+Stage 1 (PLAN.md, "First show") has four demos: a coloured 3D scan in the console, "teach in 30 s,
+picked out from look-alikes", real vs predicted depth, and the speed table. The scan (now also as a
+Gaussian splat) and the speed table (PLAN.md M5) are done. The list below goes for the other two,
+and feeds the kit detector on the way. The robot work (you) and the laptop/hekate work (me) run side
+by side.
 
-## Done on 2026-10-12
+## 0. Before we start (~5 min)
 
-- **hekate** set up (phase 2): `ssh hekate` works with the key, uv 0.13 under `daniel`, a training
-  project in `Sim Arm 2026\train` (this repo's `train/`). Over the lab LAN for now -- see below.
-- **The kit detector, first pass:** `m3pro/tools/kit_dataset.py` -> YOLO26n/s-seg trained on hekate
-  (`train/train_kit.py`): mAP50 0.94 on the 30 mm cube; the 40 mm cube (19 examples) and the block
-  cannot be judged yet. ONNX at 480x640 in `train/runs/kit/` (not in git).
-- **The object scan works live:** a first look that holds a 20 cm thing, the thing read again at
-  every stop (the wheels drift 1-3 cm a stop, ~10 cm a circle), the views anchored on it when fused,
-  a size correction only for views that do not see the thing's top. A 500 ml can: 16.7 cm tall, 31 mm
-  round (33 true); the Jetson box: 16.7 x 11.5 x 4.6 cm (16.4 x 11 x 4 true).
-- **Console:** Scan, Fuse last scan, Show in 3D, Teach from last scan on the M3 arm card; typing in
-  a field no longer drives the base or STOPs ALL.
-- **Teach from a scan:** a name + Scan teaches the thing from its 24-36 views all round; Find scores
-  a name by its best 3 views. 'jetson box' and 'monster can' taught; Find names the box (0.78-0.79).
-- **Find looks closer** at what the wide look cannot name; **the bridge refuses a frozen camera**
-  (the DCW2 driver stopped once; `systemctl --user restart roboarm-m3bridge` brings it back).
+- [ ] **M3 charged** -- it was charging on 2026-10-12 after running low (the arm refuses below 10.5 V).
+- [ ] **Restart the console** -- the one started 2026-10-12 at 15:15 runs the old code (no Splat
+      button): Ctrl-C in its terminal, then `.venv/Scripts/python console/serve.py` from the repo root.
+- [ ] I check hekate (`tools\status.ps1`: GPU free, nobody training) and the M3's bridge and camera.
 
-## Next
+## 1. Teach from look-alikes -- you at the robot, me at the console (~45 min)
 
-1. **Charge the M3** -- it ended the day at 10.72 V (the arm refuses below 10.5).
-2. **Re-teach the picture cubes from all sides.** Find with the box, the can and the two news cubes:
-   the box named, both news cubes unknown even after the closer look (0.64 with fish 0.01 behind;
-   0.61, news first but under 0.65). They were taught on 2026-10-09 from one side (5-8 views), and
-   Find sees other faces. No code needed: Teach again with the same name ADDS its views (kept in
-   out/teach/NAME/, Find scores the best 3 of all; test_m3teach checks it). For each picture cube
-   (news, fish, cosmetics, apricot -- all taught from one side on 2026-10-09): alone ~20-25 cm before
-   the bumper, Teach; turn it a quarter on the spot, Teach again with the same name; 4 rounds (a 5th
-   tipped over is a bonus), ~1 min each. Then Find with the box, the can, both news cubes and fish,
-   and the seconds from Teach to the first pick (the paper's headline number).
-3. **More kit frames, then the detector again:** a few pick runs with 40 mm cubes and blocks out
-   (every pick look keeps its labelled frame), then `uv run python tools/kit_cycle.py --int8` from the
-   repo root. Afternoon results (val: 14 real pictures from 8 sessions, only 3 of them 40 mm cubes),
-   mask mAP50: YOLO26n real only 0.653; + 1500 Isaac Sim pictures with the camera at the robot's
-   looks, then fine-tuned on real, **0.791** (40 mm cube 0.343 -> 0.672; `n-synth2-ft`); INT8 QAT
-   costs ~0.014; RF-DETR-Seg-Nano 0.683. The speed half of the model table is in PLAN.md M5 (both
-   robots: YOLO26n-seg FP16 3.0 ms, INT8 QAT 3.2 -- slower, 100 reformats --, YOLO26s 5.4, YOLOE-26s
-   engine 5.4, RF-DETR-Seg-N 8.0, YOLO26n-depth 3.8; `train/robot_bench.sh`). Next: a 40 mm cube
-   validation worth the name, synthetic pictures in `kit_cycle.py`, the kit detector served by the
-   robots' vision services (FP16 engine), end-to-end times, YOLO26n-depth in the depth duel.
-4. **Scan loose ends:** the Jetson box reads ~6 cm off at one stop (stop 5-6, both times -- one side
-   of it?); the box comes out ~0.7 cm too tall; the can's lid comes out open (shiny, no depth); the
-   fusion still runs on the laptop (Open3D's aarch64 wheel would put it on the robot).
-5. **Teach your lab objects** (from the 2026-10-09 list): the 3 electrical-tape rolls (measure their
-   outside diameter), the screwdriver, the yellow cylinder -- scanned and taught now; the pick first
-   needs a grip for things that are not the kit's sizes (a tape roll is at the gripper's ~65 mm limit).
-6. **Depth duel, the open question:** why Depth Anything reads heights 15.5 mm off on the close look
-   though its floor fit holds (PLAN.md S1).
+The picture cubes (news, fish, cosmetics, apricot) were taught on 2026-10-09 from one side only
+(5-8 views), so Find does not know their other faces: on 2026-10-12 both news cubes stayed unknown
+(0.64 and 0.61, under the 0.65 bar). No code needed -- Teach again with the same name ADDS views.
+
+- [ ] For each of the 4 cubes: alone ~20-25 cm before the bumper, name in the field, **Teach**; turn
+      it a quarter on the spot, **Teach** again with the same name; 4 rounds (a 5th, tipped over, is
+      a bonus). ~1 min a round, ~20 min in all.
+- [ ] **Find** with the box, the can, both news cubes and the fish together: all named?
+- [ ] **The headline number:** a new thing (one never taught) -- Teach, then Pick it by name; I time
+      Teach -> first pick from the log. The demo says "teach in 30 s".
+- [ ] If a cube is still unknown: I look at its scores and views (out/teach/NAME/) and we decide
+      (more views, a lower bar, or a scan-teach with Scan + its name).
+
+## 2. Frames for the kit detector -- you (~30 min), then hekate trains on its own (~1 h)
+
+The detector's validation had only 3 pictures with a 40 mm cube and the block is barely judged.
+
+- [ ] Pick runs with **40 mm cubes** and **the 30x30x60 block** out (each pick look keeps its labelled
+      frame): ~15 looks each, cubes in different places and turns.
+- [ ] I run `uv run python tools/kit_cycle.py --synth --int8` and compare it with today's best
+      (YOLO26n + Isaac Sim pictures, then real: mask mAP50 **0.791**; 40 mm cube 0.672).
+
+## 3. Me, while the robot work runs (laptop + hekate)
+
+- [ ] **Depth duel** (stage 1's "real vs predicted depth"): why Depth Anything reads heights 15.5 mm
+      off on the close look though its floor fit holds (PLAN.md S1) -- from the saved looks if they
+      hold enough, else a few new looks on the robot; then the duel's table and picture for the demo.
+- [ ] **The scan's cloud from the splat's cameras:** the splat now corrects each camera (median 3-6 mm,
+      up to 17 mm on the can; `splat_poses.json` beside each scan). Fusing with those may fix the box
+      coming out ~0.7 cm too tall and its stop-5/6 reading ~6 cm off.
+- [ ] **The kit detector on the robots** (FP16 engine, 3.0 ms on both Orins) in their vision services
+      -- once step 2 says which model.
+
+## 4. If time is left
+
+- [ ] **Splat ghost:** from high up a see-through copy of the floor tape floats over the box -- the
+      scan only looks from low down. Try a second, higher look at each stop (+~1 min a scan).
+- [ ] **Your lab objects** (2026-10-09 list): the 3 electrical-tape rolls (measure their outside
+      diameter), the screwdriver, the yellow cylinder -- Scan with a name teaches them, Splat shows
+      them; picking them needs a grip beyond the kit's sizes (a tape roll is at the ~65 mm limit).
+- [ ] The fusion on the robot (Open3D's aarch64 wheel), so a scan needs no laptop.
 
 ## Waiting on others
 
@@ -64,3 +69,19 @@ is in PLAN.md (v2.4, stage 1) and the commits of 2026-10-12 on branch `m3pro` (a
 - Where the shared station stands -- the box within both arms' reach (before stage 2, the Slovak
   mission).
 - RESEARCH.md's open choices: quick-win venues, contacting the two Slovak groups, the overhead webcam.
+
+## Done on 2026-10-12
+
+- **hekate** set up over the lab LAN: key login, uv, `train/` as its training project; VS 2022 Build
+  Tools and CUDA 12.8 for gsplat.
+- **The object scan works live:** re-read at every stop, anchored fusion, size correction only where
+  the top is unseen. Can 16.7 cm x 31 mm (33 true); Jetson box 16.7 x 11.5 x 4.6 cm (16.4 x 11 x 4).
+- **Console:** Scan, Fuse last scan, Teach from last scan, **Splat last scan**, Show in 3D; the 3D view
+  draws Gaussian splats; typing in a field no longer drives the base.
+- **Teach from a scan** (name + Scan); Find scores the best 3 views and looks closer at unknowns; the
+  bridge refuses a frozen camera.
+- **Kit detector:** YOLO26n-seg with Isaac Sim pictures (camera at the robot's looks) 0.791 mask
+  mAP50; `tools/kit_cycle.py` does the whole cycle; the model table on both robots (PLAN.md M5).
+- **Gaussian splats on hekate:** depth supervision (held-out depth 64 -> 6 mm), cropped to the scan,
+  pose refinement (+1 dB on both); `tools/splat_cycle.py` or the console button, ~2 min a scan.
+  In the console: `splat_box_20261012_172202`, `splat_can_20261012_165048`.
