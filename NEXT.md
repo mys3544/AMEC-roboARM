@@ -31,9 +31,12 @@ is in PLAN.md (v2.4, stage 1) and the commits of 2026-10-12 on branch `m3pro` (a
    standing teach that looks at it from several sides. Then Find again with the same layout, and the
    seconds from Teach to the first pick (the paper's headline number).
 3. **More kit frames, then the detector again:** a few pick runs with 40 mm cubes and blocks out
-   (every pick look keeps its labelled frame), `kit_dataset.py`, retrain on hekate; then INT8 engines
-   on both robots and the timing table (PLAN.md M5). The validation split puts one whole session in
-   val: revisit it when there is more data.
+   (every pick look keeps its labelled frame), then `uv run python tools/kit_cycle.py --int8` from the
+   repo root. Afternoon results (val: 14 real pictures from 8 sessions, only 3 of them 40 mm cubes),
+   mask mAP50: YOLO26n real only 0.653; + 1500 Isaac Sim pictures with the camera at the robot's
+   looks, then fine-tuned on real, **0.791** (40 mm cube 0.343 -> 0.672; `n-synth2-ft`); INT8 QAT
+   costs ~0.014; RF-DETR-Seg-Nano 0.683. Next: a 40 mm cube validation worth the name, synthetic
+   pictures in `kit_cycle.py`, INT8 engines on both robots and the timing table (PLAN.md M5).
 4. **Scan loose ends:** the Jetson box reads ~6 cm off at one stop (stop 5-6, both times -- one side
    of it?); the box comes out ~0.7 cm too tall; the can's lid comes out open (shiny, no depth); the
    fusion still runs on the laptop (Open3D's aarch64 wheel would put it on the robot).

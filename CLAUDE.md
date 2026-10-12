@@ -15,6 +15,10 @@ Plans: PLAN.md (both robots), x3plus/PLAN.md, m3pro/PLAN.md. What is left from t
 - Start Isaac Sim (headless, streaming, Python server): `ssh hekate "schtasks /run /tn IsaacSimStreaming"`
   Never launch Isaac Sim directly over SSH: it would die with the SSH session and has no desktop session for the GPU.
   It is ready when status shows `Loaded: yes`.
+  To stop it: `post_quit()` through isaac_exec hung for minutes in the streaming app (2026-10-12);
+  `ssh hekate "schtasks /end /tn IsaacSimStreaming"`, then stop the kit.exe that task started (check
+  its start time -- never another instance's).
+- Synthetic kit pictures: `train/synth/kit_synth.py` inside the running sim (see its docstring).
 - Run code inside the running sim: `python tools/isaac_exec.py --via hekate <script.py>` or `--via hekate -c "<code>"`.
   It opens and closes the SSH tunnel itself and talks to port 8230 on the PC.
 - Daniel watches the sim with the Isaac Sim WebRTC Streaming Client connected to hekate (Tailscale IP, or the LAN address while Tailscale is blocked).
