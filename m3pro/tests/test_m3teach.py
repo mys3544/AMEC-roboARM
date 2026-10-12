@@ -119,3 +119,29 @@ def test_a_scan_with_a_name_teaches_the_thing_from_its_views_all_round(tmp_path,
     assert len(list((tmp_path / "teach" / "box again").glob("*_rgb.jpg"))) == len(views)
     with pytest.raises(RuntimeError, match="no scan 20990101_000000"):
         picker.teach_scan("x", stamp="20990101_000000")
+
+
+def test_find_looks_again_from_nearer_at_what_the_wide_look_could_not_name(tmp_path, monkeypatch):
+    table = Table([(0.24, 0.05, 0.0, 0.03, 0.03), (0.30, -0.07, 30.0, 0.03, 0.03)])
+    looks = []
+
+    def ask(path, payload=None, timeout=30.0):   # unsure from afar, sure from near
+        assert path == "/identify"
+        looks.append((dict(table.pose), len(payload["boxes"])))
+        sure, margin = (0.60, 0.02) if len(looks) == 1 else (0.80, 0.20)
+        return {"things": [{"name": "news", "sure": sure, "margin": margin, "scores": {}} for _ in payload["boxes"]]}
+    monkeypatch.setattr(m3teach, "ask", ask)
+    picker = m3pick.Picker(table.call, table.snapshot, tmp_path / "pick", settle_s=0.0)
+    named = m3teach.find(picker)
+    assert len(named) == 2 and all(o["taught"] == "news" and o["closer"] for o in named)
+    assert looks[0][1] == 2 and [n for _pose, n in looks[1:]] == [1, 1]   # the wide look, then one each
+    for (pose, _n), o in zip(looks[1:], sorted(named, key=lambda o: float(np.hypot(*o["centre"][:2]))), strict=True):
+        assert pose[2] != m3scan.LOOK_AT[2] and m3kinematics.problem(pose) is None
+        for x in named:   # clear of every thing on the table, not just the one looked at
+            assert m3scan.clear_of(pose, x["centre"][:2], m3teach.reach_of(x), x["top"])
+    assert {j: table.pose[j] for j in m3scan.LOOK_AT} == m3scan.LOOK_AT   # back to the table in view
+
+    looks.clear()   # named from afar: no nearer look
+    monkeypatch.setattr(m3teach, "ask", lambda path, payload=None, timeout=30.0: (looks.append(1), {"things": [
+        {"name": "news", "sure": 0.8, "margin": 0.2, "scores": {}} for _ in payload["boxes"]]})[1])
+    assert all(o["taught"] == "news" and not o.get("closer") for o in m3teach.find(picker)) and len(looks) == 1

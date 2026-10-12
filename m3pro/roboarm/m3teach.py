@@ -11,7 +11,7 @@ the teach model (tools/teach_service.py, YOLOE-26 visual prompts, 127.0.0.1:8762
 - teach_from_scan(name, folder): the same from an object scan's views (m3scan.run: the base went round
   the thing, 24-36 views from all sides where teach() has 5-8 from one) -- the scan's job when it is
   given a name, or its own job on a scan already made (the user's choice, 2026-10-12).
-- find(): what each thing on the table is -- the wide look's things (the depth), each named by
+- find(): what each thing on the table is -- what the wide look cannot name looked at again from nearer -- the wide look's things (the depth), each named by
   DINOv2 against the taught views (the service's /identify), or unknown. YOLOE's own detections,
   first used for this, named 1 of 4 picture cubes right, DINOv2 4 of 4 (2026-10-09, the user's choice
   to switch).
@@ -40,6 +40,10 @@ STEEP = 82                           # deg the camera looks down from over it (a
                                      # the arm and the depth's 0.2 m allow, 2026-10-09)
 SAME = 0.65    # DINOv2 similarity to a name's views that names a thing (the right ones read 0.74-0.80)
 MARGIN = 0.05  # and ahead of the next name by this (the right ones led by 0.09-0.17), else unknown
+CLOSER = 4     # things the wide look could not name, looked at again from nearer: the nearest this many
+               # (2026-10-12: two picture cubes at its far edge, ~75 px, read 0.62 and 0.53, unknown)
+CLOSE_ELEVATIONS = (82, 75, 65, 55, 45, 35)   # deg, steepest first (most like a teach's views): a thing
+                                              # ~24 cm ahead is seen only from 75-80, one ~34 cm out from 55 down
 
 
 def ask(path: str, payload: dict | None = None, timeout: float = 30.0) -> dict:
@@ -251,12 +255,57 @@ def find(p) -> list[dict]:
         normal, height, _ = m3vision.floor_plane(depth, K)
         found = m3vision.objects(depth, K, cam, floor=(normal, height))
     with p.step("teach.identify"):
-        identified = ask("/identify", {"jpeg": jpeg(image), "boxes": [box_of(o) for o in found]})["things"]             if found else []
+        identified = ask("/identify", {"jpeg": jpeg(image), "boxes": [box_of(o) for o in found]})["things"] \
+            if found else []
         named = name_things(found, identified)
+    nearest_first = sorted((o for o in named if o["taught"] is None), key=lambda o: float(np.hypot(*o["centre"][:2])))
+    looked = 0
+    for o in nearest_first[:CLOSER]:   # what the wide look could not name, looked at again from nearer
+        pose = close_view(o, [x for x in named if x is not o])
+        if pose is None:
+            continue
+        p.check()
+        with p.step("look.find"):
+            p.move(pose, speed=p.dps("free_dps"))
+            time.sleep(p.settle_s if p.settle_s is not None else p.cfg["settle_close_s"])
+            near_image, near_depth, near_K, joints = p.snapshot()
+            box = box_around(near_depth, near_K, m3scan.levelled(near_depth, near_K, joints), o["centre"][:2],
+                             reach_of(o))
+        looked += 1
+        if box is None:
+            continue
+        with p.step("teach.identify"):
+            again = name_things([o], ask("/identify", {"jpeg": jpeg(near_image), "boxes": [box]})["things"])[0]
+        o.update(taught=again["taught"], sure=again["sure"], margin=again["margin"], closer=True)
+    if looked:
+        p.move(m3scan.LOOK_AT, speed=p.dps("free_dps"))   # back to the table in view
     p.show(mark_names(image, named), named, tag="find")
-    p.say("found: " + ("; ".join(f"{o['taught'] or 'unknown'} ({o['sure']:.2f}, +{o['margin']:.2f}) at "
+    p.say("found: " + ("; ".join(f"{o['taught'] or 'unknown'} ({o['sure']:.2f}, +{o['margin']:.2f}"
+                                 f"{', closer' if o.get('closer') else ''}) at "
                                  f"x {o['centre'][0]:.3f} y {o['centre'][1]:+.3f}" for o in named) or "nothing"))
     return named
+
+
+def reach_of(o: dict) -> float:
+    """How far round a found thing's middle it may reach (m): half its footprint's diagonal and a little."""
+    return 0.5 * math.hypot(*o["footprint"]) + 0.008
+
+
+def close_view(thing: dict, others: list[dict]) -> dict | None:
+    """A pose that looks at a found thing from as near as the depth allows and as steeply as the arm
+    can (CLOSE_ELEVATIONS), the arm clear of it AND of every one of `others` (m3scan.view keeps clear
+    of its one thing only); None when there is none."""
+    centre, top, reach = np.asarray(thing["centre"][:2], float), float(thing["top"]), reach_of(thing)
+    base = np.asarray(m3kinematics.CHAIN[0][0][:2])
+    j1 = 90 - math.degrees(math.atan2(centre[1] - base[1], centre[0] - base[0]))
+    middle = np.r_[centre, top / 2]
+    nearest = m3scan.NEAREST + math.hypot(reach, top / 2)
+    for elevation in CLOSE_ELEVATIONS:
+        for distance in (nearest, nearest + 0.03, nearest + 0.06):
+            pose = m3scan.view(j1, middle, elevation, distance, reach, top)
+            if pose is not None and all(m3scan.clear_of(pose, o["centre"][:2], reach_of(o), o["top"]) for o in others):
+                return pose
+    return None
 
 
 def pick_named(p, name: str) -> None:
