@@ -568,7 +568,10 @@ it writes, cropped to the starting points' cylinder (0.4 of the Gaussians only p
 drawn by the console's own WebGL viewer (cloud.js: EWA quads, a counting sort, 5-10 ms for 0.2 M
 Gaussians) beside the clouds -- no Spark needed yet. The can: 206,625 Gaussians, 6.6 MB.
 All of it is one command, `tools/splat_cycle.py` (scan -> console, ~2 min); the Jetson box: held-out
-PSNR 22.7 dB, depth 3.2 mm off; where the scan's poses disagree, a doubled edge (pose refinement next).
+PSNR 22.7 dB, depth 3.2 mm off; where the scan's poses disagree, a doubled edge. Pose refinement (each
+camera's move and turn fitted with the splat, rate 1e-4; held-out views aligned to the splat before
+scoring) on the same exports: the box 24.4 -> 25.5 dB, the can 20.3 -> 21.5 dB; the cameras moved a
+median 3-6 mm and 0.5-1 deg (the can's up to 17 mm). The can's print and lid now read from all round.
 
 Exit: press Scan -> within about two minutes a coloured mesh and point cloud of the object in the
 console; an arena point cloud; one Gaussian splat of the arena with the robots in it.

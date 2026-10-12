@@ -5,13 +5,16 @@ first time it runs, with hekate's CUDA 12.8 toolkit and Visual C++ -- and writes
 layout the viewers read), NAME.splat (the console's 3D view reads it: copy it to the laptop's
 m3pro/out/arena/rtab), a turntable of rendered frames, and how well it renders the views it did not see.
 
-    splat\\splat.bat SPLAT_DIR [--steps 7000] [--depth-weight 0.5] [--name splat]
+    splat\\splat.bat SPLAT_DIR [--steps 7000] [--depth-weight 0.5] [--pose-lr 1e-4] [--name splat]
     splat\\splat.bat SPLAT_DIR --name splat --convert      # NAME.ply -> NAME.splat again, no training
 
 Depth supervision: the splat's expected depth is held to the depth camera's (the M3's DCW2, aligned to
 the colour) wherever that read anything, weighted --depth-weight (0: pictures only) -- the first can's
-splat, pictures only, floated smears where the scan saw least. Every HOLD_EVERY-th view is held out and
-only scored: PSNR, and the median depth error against the camera's: the honest numbers.
+splat, pictures only, floated smears where the scan saw least. Pose refinement: each view's camera
+gets a small move and turn fitted with the splat (--pose-lr; 0: the scan's poses as they are), and
+NAME_poses.json keeps the cameras as the splat has them. Every HOLD_EVERY-th view is held out and only
+scored -- its camera first fitted to the finished splat (the trained ones have moved): PSNR, and the
+median depth error against the camera's: the honest numbers.
 """
 
 from __future__ import annotations
@@ -59,6 +62,8 @@ C0 = 0.28209479177387814   # the 0th spherical harmonic
 HOLD_EVERY = 6
 START_SIZE = 0.003         # m: the starting points' spacing (m3_scan's export, 3 mm)
 DEPTH_NEAR, DEPTH_FAR = 0.15, 1.5   # m: the depth camera's readings believed (it starts at ~0.17-0.19)
+POSE_LR = 1e-4                     # the views' corrections' learning rate (m; the turn's 6D form)
+ALIGN_STEPS, ALIGN_LR = 300, 1e-3  # a held-out view's camera fitted to the finished splat before it is scored
 
 
 def read_points(path: Path) -> tuple[np.ndarray, np.ndarray]:
@@ -91,6 +96,35 @@ def look_at(eye: np.ndarray, at: np.ndarray) -> np.ndarray:
     m[:3, :3] = np.stack([x, y, z])
     m[:3, 3] = -m[:3, :3] @ eye
     return m
+
+
+class Poses(torch.nn.Module):
+    """A correction to each view's camera -- the scan's poses are the wheels' odometry, anchored on the
+    thing, still a cm or a degree off here and there (doubled edges in the first box's splat): a move
+    and a turn in the camera's own frame, both nothing to start with. The turn as the first two rows
+    of its matrix (the 6D form of Zhou et al. 2019, smooth everywhere, as gsplat's own pose
+    optimisation has it)."""
+
+    def __init__(self, n: int, dev: str):
+        super().__init__()
+        self.move = torch.nn.Parameter(torch.zeros(n, 3, device=dev))
+        self.turn = torch.nn.Parameter(torch.zeros(n, 6, device=dev))
+        self.register_buffer("one", torch.tensor([1.0, 0, 0, 0, 1, 0], device=dev))
+        self.register_buffer("bottom", torch.tensor([[0.0, 0, 0, 1]], device=dev))
+
+    def forward(self, i: int) -> torch.Tensor:
+        """View i's correction, 4 x 4: corrected camera <- the scan's."""
+        a = self.turn[i] + self.one
+        x = F.normalize(a[:3], dim=0)
+        y = F.normalize(a[3:] - (x @ a[3:]) * x, dim=0)
+        R = torch.stack([x, y, torch.linalg.cross(x, y)])
+        return torch.cat([torch.cat([R, self.move[i][:, None]], 1), self.bottom])
+
+
+def size_of(fix: torch.Tensor) -> tuple[float, float]:
+    """How far a correction moves the camera (mm) and turns it (degrees)."""
+    turn = math.degrees(math.acos(max(-1.0, min(1.0, (float(torch.trace(fix[:3, :3])) - 1) / 2))))
+    return 1000 * float(torch.linalg.norm(fix[:3, 3])), turn   # it turns the camera round its own centre
 
 
 def save_ply(path: Path, p: dict) -> None:
@@ -157,6 +191,7 @@ def main() -> None:
     ap.add_argument("--steps", type=int, default=7000)
     ap.add_argument("--max-points", type=int, default=150_000)
     ap.add_argument("--depth-weight", type=float, default=0.5, help="the depth loss's weight (m); 0: pictures only")
+    ap.add_argument("--pose-lr", type=float, default=POSE_LR, help="the cameras' corrections' rate; 0: the scan's poses as they are")
     ap.add_argument("--name", default="splat", help="the outputs' name: NAME.ply, NAME_turntable.jpg, ...")
     ap.add_argument("--convert", action="store_true", help="only write DIR/NAME.ply's .splat, no training")
     a = ap.parse_args()
@@ -216,36 +251,78 @@ def main() -> None:
 
     rng, began = np.random.default_rng(1), time.time()
     weight = a.depth_weight if depths is not None else 0.0
-    print(f"{len(trained)} views to fit, {len(held)} held out; {n} Gaussians to start; scene scale {scene_scale:.2f} m; "
-          f"depth weight {weight}" + ("" if depths is not None else " (no depths in this export)"), flush=True)
-    for step in range(a.steps):
-        i = trained[rng.integers(len(trained))]
-        pred, depth, info = render(params, viewmats[i], Ks[i], min(step // 1000, 3))
-        strategy.step_pre_backward(params, optimizers, state, step, info)
+
+    def loss_of(pred, depth, i):
         gt = images[i]
         loss = 0.8 * F.l1_loss(pred, gt) + 0.2 * (1 - ssim(pred.permute(2, 0, 1)[None], gt.permute(2, 0, 1)[None]))
-        if weight > 0:
-            loss = loss + weight * (depth - depths[i]).abs()[valid[i]].mean()
+        return loss + weight * (depth - depths[i]).abs()[valid[i]].mean() if weight > 0 else loss
+
+    poses = Poses(len(frames), dev)   # the trained views' corrections, fitted with the splat when --pose-lr
+    pose_opt = torch.optim.Adam(poses.parameters(), lr=a.pose_lr, weight_decay=1e-6) if a.pose_lr > 0 else None
+    pose_decay = pose_opt and torch.optim.lr_scheduler.ExponentialLR(pose_opt, gamma=0.01 ** (1.0 / a.steps))
+    print(f"{len(trained)} views to fit, {len(held)} held out; {n} Gaussians to start; scene scale {scene_scale:.2f} m; "
+          f"depth weight {weight}" + ("" if depths is not None else " (no depths in this export)")
+          + f"; poses {f'refined (rate {a.pose_lr:g})' if pose_opt else 'as scanned'}", flush=True)
+    for step in range(a.steps):
+        i = trained[rng.integers(len(trained))]
+        pred, depth, info = render(params, poses(i) @ viewmats[i] if pose_opt else viewmats[i], Ks[i], min(step // 1000, 3))
+        strategy.step_pre_backward(params, optimizers, state, step, info)
+        loss = loss_of(pred, depth, i)
         loss.backward()
         strategy.step_post_backward(params, optimizers, state, step, info, packed=False)
-        for opt in optimizers.values():
+        for opt in [*optimizers.values(), *([pose_opt] if pose_opt else [])]:
             opt.step()
             opt.zero_grad(set_to_none=True)
         decay.step()
+        if pose_opt:
+            pose_decay.step()
         if step % 1000 == 0 or step == a.steps - 1:
             print(f"step {step}: loss {loss.item():.4f}, {params['means'].shape[0]} Gaussians, {time.time() - began:.0f} s",
                   flush=True)
 
+    frozen = {k: v.detach() for k, v in params.items()}
+
+    def align(i):
+        """Held-out view i's camera fitted to the finished splat, the splat left as it is: its
+        correction. Without it a held-out view would be scored against cameras the fit has moved."""
+        fix = Poses(1, dev)
+        opt = torch.optim.Adam(fix.parameters(), lr=ALIGN_LR)
+        sched = torch.optim.lr_scheduler.ExponentialLR(opt, gamma=0.01 ** (1.0 / ALIGN_STEPS))
+        for _ in range(ALIGN_STEPS):
+            pred, depth, _ = render(frozen, fix(0) @ viewmats[i], Ks[i], 3)
+            loss_of(pred, depth, i).backward()
+            opt.step()
+            opt.zero_grad(set_to_none=True)
+            sched.step()
+        return fix(0).detach()
+
+    fixes = {i: (poses(i).detach() if pose_opt else torch.eye(4, device=dev)) for i in trained}
+    psnr_scanned, psnr, depth_err = [], [], []
+    for i in held:
+        with torch.no_grad():
+            pred = render(frozen, viewmats[i], Ks[i], 3)[0]
+        psnr_scanned.append(float(-10 * torch.log10(F.mse_loss(pred, images[i]))))
+        fixes[i] = align(i)
+        with torch.no_grad():
+            pred, depth, _ = render(frozen, fixes[i] @ viewmats[i], Ks[i], 3)
+        psnr.append(float(-10 * torch.log10(F.mse_loss(pred, images[i]))))
+        if depths is not None:
+            depth_err.append(1000 * float((depth - depths[i]).abs()[valid[i]].median()))
+        if i == held[0]:
+            side = torch.cat([images[i], pred], 1).mul(255).byte().cpu().numpy()
+            cv2.imwrite(str(a.dir / f"{a.name}_held_view.jpg"), cv2.cvtColor(side, cv2.COLOR_RGB2BGR))
+    sizes = {i: size_of(fixes[i]) for i in sorted(fixes)}
+    for group, ids in (("the trained views' poses", trained if pose_opt else []), ("the held-out ones, aligned", held)):
+        if ids:
+            mm, deg = np.array([sizes[i] for i in ids]).T
+            print(f"{group}: moved {np.median(mm):.1f} mm, turned {np.median(deg):.2f} deg (median); "
+                  f"at most {mm.max():.1f} mm, {deg.max():.2f} deg", flush=True)
+    (a.dir / f"{a.name}_poses.json").write_text(json.dumps({   # the cameras as the splat has them
+        "frames": [{"file": f["file"], "c2w": torch.linalg.inv(fixes[i] @ viewmats[i]).cpu().tolist(),
+                    "moved_mm": round(sizes[i][0], 2), "turned_deg": round(sizes[i][1], 3), "held": i in held}
+                   for i, f in enumerate(frames)]}, indent=1))
+
     with torch.no_grad():
-        psnr, depth_err = [], []
-        for i in held:
-            pred, depth, _ = render(params, viewmats[i], Ks[i], 3)
-            psnr.append(float(-10 * torch.log10(F.mse_loss(pred, images[i]))))
-            if depths is not None:
-                depth_err.append(1000 * float((depth - depths[i]).abs()[valid[i]].median()))
-            if i == held[0]:
-                side = torch.cat([images[i], pred], 1).mul(255).byte().cpu().numpy()
-                cv2.imwrite(str(a.dir / f"{a.name}_held_view.jpg"), cv2.cvtColor(side, cv2.COLOR_RGB2BGR))
         save_ply(a.dir / f"{a.name}.ply", params)
         kept = save_splat(a.dir / f"{a.name}.splat", params, inside(a.dir, params["means"].detach().cpu().numpy()))
         k = Ks[0]
@@ -261,7 +338,8 @@ def main() -> None:
             tiles.append(cv2.resize(cv2.cvtColor(pic, cv2.COLOR_RGB2BGR), (320, 240)))
         cv2.imwrite(str(a.dir / f"{a.name}_turntable.jpg"),
                     np.vstack([np.hstack(tiles[r * 6:(r + 1) * 6]) for r in range(4)]))
-    print(f"held-out views: PSNR {np.mean(psnr):.2f} dB (median {np.median(psnr):.2f})"
+    print(f"held-out views: PSNR {np.mean(psnr):.2f} dB (median {np.median(psnr):.2f}; {np.mean(psnr_scanned):.2f} "
+          "at the scan's poses, unaligned)"
           + (f", depth off the camera's by {np.median(depth_err):.1f} mm (median)" if depth_err else "")
           + f"; {params['means'].shape[0]} Gaussians ({kept} in the .splat); {time.time() - began:.0f} s -> "
           f"{a.dir / (a.name + '.ply')}",

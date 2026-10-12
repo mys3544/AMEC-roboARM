@@ -2,6 +2,7 @@
 hekate fits the splat -> the console's 3D view shows it.
 
     uv run python tools/splat_cycle.py [STAMP] [--name can] [--fetch] [--steps 7000] [--depth-weight 0.5]
+                                       [--pose-lr 1e-4]
 
 Run it from the repo root (the workspace's venv, as tools/kit_cycle.py). The steps:
   1. the scan: m3pro/out/scan/STAMP -- the newest there (the console's Scan button fetches and fuses
@@ -10,10 +11,11 @@ Run it from the repo root (the workspace's venv, as tools/kit_cycle.py). The ste
   2. its views as the splat's input (m3_scan.py fuse STAMP --export -> STAMP/splat/; ~20 s, Open3D);
   3. to hekate (`ssh hekate`, CLAUDE.md) as train\\datasets\\scans\\NAME, with train/splat/ and
      train/'s project and lock;
-  4. hekate fits it (train/splat/splat.bat: gsplat, the depth camera's depth held to the render;
-     ~1 min for a 36-view scan), its progress shown here;
+  4. hekate fits it (train/splat/splat.bat: gsplat, the depth camera's depth held to the render,
+     each view's camera refined with it; ~1 min for a 36-view scan), its progress shown here;
   5. NAME.splat -> m3pro/out/arena/rtab/splat_NAME.splat, which the console's 3D view lists; its
-     turntable, held-out view and log beside the scan (STAMP/splat_turntable.jpg, ...).
+     turntable, held-out view, refined cameras and log beside the scan (STAMP/splat_turntable.jpg,
+     splat_poses.json, ...).
 NAME is STAMP, or THING_STAMP with --name THING. Fitting is GPU work on a shared PC: hekate's
 CLAUDE.md asks first when under ~16 GB is free -- this stops then.
 """
@@ -35,10 +37,10 @@ CLOUDS = M3 / "out" / "arena" / "rtab"   # the console's 3D view lists these (co
 NOISE = re.compile(r"^W\d{4} ")   # torch's own warnings: its check of cl's version fails, harmlessly
 
 
-def fit(name: str, steps: int, depth_weight: float, log: Path) -> None:
+def fit(name: str, steps: int, depth_weight: float, pose_lr: float, log: Path) -> None:
     """splat.bat on hekate's copy of the scan, its lines shown as they come (and kept in `log`)."""
     command = (f'cd "{REMOTE_WIN}"; cmd /c "splat\\splat.bat datasets\\scans\\{name} --name splat '
-               f'--steps {steps} --depth-weight {depth_weight} 2>&1"')
+               f'--steps {steps} --depth-weight {depth_weight} --pose-lr {pose_lr} 2>&1"')
     lines = []
     with subprocess.Popen(["ssh", "-o", "BatchMode=yes", HOST, command], stdout=subprocess.PIPE,
                           stderr=subprocess.STDOUT, text=True, errors="replace") as proc:
@@ -59,6 +61,7 @@ def main() -> int:
     ap.add_argument("--fetch", action="store_true", help="fetch the scan from the robot first")
     ap.add_argument("--steps", type=int, default=7000)
     ap.add_argument("--depth-weight", type=float, default=0.5, help="0: fitted to the pictures only")
+    ap.add_argument("--pose-lr", type=float, default=1e-4, help="the cameras' refinement; 0: the scan's poses")
     a = ap.parse_args()
     if a.name and not re.fullmatch(r"[A-Za-z0-9_-]+", a.name):
         ap.error("--name: letters, digits, _ and - only")
@@ -90,14 +93,14 @@ def main() -> int:
         print(f"   {synced}", flush=True)
 
     print("4. fitting the splat on hekate", flush=True)
-    fit(name, a.steps, a.depth_weight, here / "splat_train.log")
+    fit(name, a.steps, a.depth_weight, a.pose_lr, here / "splat_train.log")
 
     print("5. back here", flush=True)
     CLOUDS.mkdir(parents=True, exist_ok=True)
     out = CLOUDS / f"splat_{name}.splat"
     there = f"{HOST}:{REMOTE}/datasets/scans/{name}"
     scp(f"{there}/splat.splat", str(out))
-    for f in ("splat_turntable.jpg", "splat_held_view.jpg"):
+    for f in ("splat_turntable.jpg", "splat_held_view.jpg", "splat_poses.json"):
         scp(f"{there}/{f}", str(here / f))
     print(f"-> {out.relative_to(ROOT)} ({out.stat().st_size // 32:,} Gaussians, {out.stat().st_size / 1e6:.1f} MB): "
           f"the console's 3D view lists it; its turntable and held-out view in {here.relative_to(ROOT)}", flush=True)
