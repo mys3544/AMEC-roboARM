@@ -29,6 +29,9 @@ Plans: PLAN.md (both robots), x3plus/PLAN.md, m3pro/PLAN.md. What is left from t
   `Sim Arm 2026\train` with its lock. The kit detector's whole cycle, from the repo root:
   `uv run python tools/kit_cycle.py [--size n|s] [--int8]` (fetch the M3's looks, build the set,
   train on hekate, ONNX and weights back to train/runs/kit/).
+  An object scan's Gaussian splat: `uv run python tools/splat_cycle.py [STAMP] [--name THING]` (the
+  newest scan in m3pro/out/scan -> fuse --export -> train/splat/ on hekate, ~1 min -> the .splat into
+  the console's 3D view).
 - Training runs on that GPU. Do not stop, kill or restart anything there that you did not start.
   Ask before starting anything GPU-heavy when less than ~16 GB VRAM is free, and before any firewall,
   SSH, scheduled-task or software change there.

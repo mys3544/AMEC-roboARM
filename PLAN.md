@@ -567,6 +567,8 @@ the depth camera's depth held to the render (weight 0.5: held-out depth 64 -> 6 
 it writes, cropped to the starting points' cylinder (0.4 of the Gaussians only painted the room), is
 drawn by the console's own WebGL viewer (cloud.js: EWA quads, a counting sort, 5-10 ms for 0.2 M
 Gaussians) beside the clouds -- no Spark needed yet. The can: 206,625 Gaussians, 6.6 MB.
+All of it is one command, `tools/splat_cycle.py` (scan -> console, ~2 min); the Jetson box: held-out
+PSNR 22.7 dB, depth 3.2 mm off; where the scan's poses disagree, a doubled edge (pose refinement next).
 
 Exit: press Scan -> within about two minutes a coloured mesh and point cloud of the object in the
 console; an arena point cloud; one Gaussian splat of the arena with the robots in it.

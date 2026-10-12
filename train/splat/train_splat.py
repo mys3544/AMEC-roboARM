@@ -247,7 +247,7 @@ def main() -> None:
                 side = torch.cat([images[i], pred], 1).mul(255).byte().cpu().numpy()
                 cv2.imwrite(str(a.dir / f"{a.name}_held_view.jpg"), cv2.cvtColor(side, cv2.COLOR_RGB2BGR))
         save_ply(a.dir / f"{a.name}.ply", params)
-        save_splat(a.dir / f"{a.name}.splat", params, inside(a.dir, params["means"].detach().cpu().numpy()))
+        kept = save_splat(a.dir / f"{a.name}.splat", params, inside(a.dir, params["means"].detach().cpu().numpy()))
         k = Ks[0]
         spin = a.dir / f"{a.name}_turntable"
         spin.mkdir(exist_ok=True)
@@ -263,7 +263,8 @@ def main() -> None:
                     np.vstack([np.hstack(tiles[r * 6:(r + 1) * 6]) for r in range(4)]))
     print(f"held-out views: PSNR {np.mean(psnr):.2f} dB (median {np.median(psnr):.2f})"
           + (f", depth off the camera's by {np.median(depth_err):.1f} mm (median)" if depth_err else "")
-          + f"; {params['means'].shape[0]} Gaussians; {time.time() - began:.0f} s -> {a.dir / (a.name + '.ply')}",
+          + f"; {params['means'].shape[0]} Gaussians ({kept} in the .splat); {time.time() - began:.0f} s -> "
+          f"{a.dir / (a.name + '.ply')}",
           flush=True)
 
 
