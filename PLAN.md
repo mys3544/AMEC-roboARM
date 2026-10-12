@@ -618,6 +618,38 @@ export changes.
 
 Exit: the table for models 1-3 and 8 on both robots; the kit detector served as an INT8 engine.
 
+**The table, first fill (2026-10-12).** Speed: TensorRT 10.7 engines built on each robot (trtexec,
+GPU compute time only, CUDA graphs, 10 s after 0.5 s of warm-up), clocks not locked (no
+jetson_clocks), the robots' other GPU services up but idle. Both robots are Orin NX 16 GB at
+MAXN_SUPER and agree within 0.05 ms. Accuracy: mask mAP50 (mAP50-95) on the kit's real val -- 14 of
+the M3's pick looks from 8 sessions, only three of them 40 mm cubes, so read it as a direction.
+
+| # | model | input | precision | M3 ms median / p99 | X3 ms median / p99 | kit mask mAP50 (50-95) |
+|---|---|---|---|---|---|---|
+| 1 | YOLO26n-seg, real + Isaac Sim synthetic, fine-tuned on real | 480x640 | FP16 | 3.00 / 3.06 | 3.01 / 3.03 | **0.791** (0.537) |
+| 1 | the same, INT8 by quantization-aware training | 480x640 | INT8 Q/DQ | 3.18 / 3.21 | 3.18 / 3.20 | 0.796 (0.538) |
+| 1 | YOLO26n-seg, real pictures only | 480x640 | FP16 | (as above) | (as above) | 0.653 (0.532) |
+| 1 | YOLO26s-seg, real + synthetic, fine-tuned on real | 480x640 | FP16 | 5.37 / 6.56 | 5.39 / 6.54 | 0.697 (0.505) |
+| 2 | YOLOE-26s-seg, 3 text prompts baked in | 480x640 | FP16 | 5.36 / 6.40 | 5.39 / 6.57 | open-set: not on the kit yet |
+| 3 | RF-DETR-Seg-Nano, real pictures only | 312x312 | FP16 | 8.00 / 9.20 | 7.94 / 8.00 | 0.683 (0.537) |
+| 8 | YOLO26n-depth | 480x640 | FP16 | 3.80 / 4.89 | 3.80 / 4.96 | depth: the duel's to measure (S1) |
+
+What it says so far:
+- **YOLO26n-seg in FP16 is the kit detector**: 3 ms, the best accuracy, and synthetic pictures from
+  the robot's own camera poses lifted it most (0.653 -> 0.791; the 40 mm cube 0.343 -> 0.672). A
+  synthetic camera anywhere 18-55 cm away had made it lose the 40 mm cube: size in the picture is
+  what tells the two cubes apart from the robot's few poses.
+- **INT8 buys nothing here, so the exit's "INT8 engine" is moot for now**: the QAT engine keeps the
+  accuracy but runs 0.18 ms slower -- of its 301 layers 100 are reformats between INT8 and float
+  around the convolutions -- and a plain INT8 build fails (TensorRT 10.7 has no INT8 kernel for the
+  mask head's proto conv, even pinned to FP16). At 3 ms against a 33 ms frame there is nothing to win.
+- **YOLOE baked into an engine is ~8x its PyTorch speed** (5.4 ms against ~41 ms served today): the
+  open-set teach could run that way. **RF-DETR** is no better on the kit at 2.7x the time.
+- **YOLO26n-depth at 3.8 ms** against Depth Anything V2 Small's ~26 ms engine on the X3: worth the
+  depth duel's accuracy test before anything else on the X3.
+- Not yet: end-to-end times with pre/post-processing, the kit detector served by a robot's vision
+  service, energy (tegrastats), locked clocks, and a val with tens of 40 mm cubes.
+
 ## The research program -- gaps worth a paper, demos worth watching
 
 Each track: a gap checked against 2024-26 work (sources at the end), doable on these robots with the
