@@ -40,14 +40,23 @@ def test_a_stop_looks_at_the_thing_from_a_few_heights_never_nearer_than_the_dept
 
 
 def test_a_box_ahead_is_found_and_measured():
-    cam = m3scan.camera(m3scan.LOOK_AT)
+    cam = m3scan.camera(m3scan.LOOK_FIRST)
     depth = render(cam, [(0.36, 0.02, 0.0, 0.06, 0.05)])   # 60 x 30 mm, 50 mm tall (its top face)
     thing = m3scan.find_thing(depth, K, cam, (0.38, 0.0))
-    assert thing is not None
+    assert thing is not None and thing["whole"]
     assert np.allclose(thing["centre"], (0.36, 0.02), atol=0.006)
     assert abs(thing["top"] - 0.05) < 0.004
     assert 0.025 < thing["radius"] < 0.04
     assert m3scan.find_thing(depth, K, cam, (0.25, 0.15)) is None   # nothing there
+    tall = m3scan.find_thing(render(cam, [(0.38, 0.0, 0.0, 0.06, 0.20)]), K, cam, (0.38, 0.0))
+    assert tall["whole"] and abs(tall["top"] - 0.20) < 0.004        # the first look holds a 20 cm thing
+
+
+def test_a_thing_the_picture_cuts_is_told_from_a_whole_one():
+    # the pick's wide look, as the scan's first look until 2026-10-12: its top edge cut a 10 cm box at 42 cm
+    cam = m3scan.camera(m3scan.LOOK_AT)
+    cut = m3scan.find_thing(render(cam, [(0.42, 0.0, 0.0, 0.10, 0.05)]), K, cam, (0.42, 0.0))
+    assert cut is not None and not cut["whole"] and cut["radius"] < 0.03   # read short, as the can was
 
 
 class Round:
@@ -97,6 +106,24 @@ def test_the_scan_drives_round_the_thing_and_keeps_every_view(tmp_path):
     for x, y, yaw in world.trail:
         assert abs(math.hypot(x - plan["centre"][0], y - plan["centre"][1]) - 0.38) < 1e-6
     assert world.pose == dict(zip(m3arm.JOINTS, m3arm.POSES["home"]))
+
+
+def test_a_thing_off_the_picture_is_refused_and_a_given_size_is_kept(tmp_path):
+    world = Round((0.46, 0.0, 0.0, 0.12, 0.25))   # its top face past the first look's top edge
+    picker = m3pick.Picker(world.call, world.snapshot, tmp_path / "pick", settle_s=0.0,
+                           odom=lambda: world.odom, goto=world.goto)
+    with pytest.raises(RuntimeError, match="give its height and width"):
+        picker.scan(radius=0.38, stops=4)
+    assert world.trail == []   # the base did not move
+
+    world = Round((0.37, -0.01, 30.0, 0.06, 0.05))
+    picker = m3pick.Picker(world.call, world.snapshot, tmp_path / "pick", settle_s=0.0,
+                           odom=lambda: world.odom, goto=world.goto)
+    picker.scan(radius=0.38, stops=4, height=0.08, width=0.10)
+    plan = json.loads((max((tmp_path / "scan").iterdir()) / "scan.json").read_text())
+    assert plan["top"] == 0.08 and plan["radius"] == 0.05
+    # it read ~3 cm round; the 2 cm more it is given lie behind its near side, away from the robot
+    assert 0.37 + 0.012 < plan["centre"][0] < 0.37 + 0.026
 
 
 def test_the_views_fuse_into_the_box_where_it_stands(tmp_path):

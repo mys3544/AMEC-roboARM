@@ -2,13 +2,17 @@
 the M3 drives round the thing ahead, the camera on it), fetch its views, and fuse them into one
 coloured model that the console's 3D view shows.
 
-    python tools/m3_scan.py start [--radius 0.38] [--stops 12]   # on the robot; follows its log
+    python tools/m3_scan.py start [--radius 0.38] [--stops 12] [--height H --width W]   # on the robot;
+                                                # follows its log
     python tools/m3_scan.py fetch [STAMP]       # the robot's out/scan/STAMP (the newest) -> out/scan/
     python tools/m3_scan.py fuse [DIR]          # out/scan/DIR (the newest) -> its cloud.ply + mesh.ply,
                                                 # and the cloud as object_STAMP.ply among the console's scans
 
-Put the thing on the floor ~38 cm straight ahead of the robot with ~1.2 m clear round it: the
-robot goes round it. fuse needs Open3D (the workspace's laptop group: `uv sync` at the top).
+Put the thing on the floor with its middle `radius` m (0.38: ~26 cm from the bumper) straight ahead
+of the robot, nothing else within ~0.7 m of it: the robot goes round it, its back ~0.55 m out.
+Up to ~15 cm tall at 0.38; taller, --radius 0.42. The arm keeps clear of it by the size the first
+look reads; a thing that runs off that look's picture (a tall can's top) is refused until its
+--height and --width (m) are given. fuse needs Open3D (the workspace's laptop group: `uv sync` at the top).
 The SSH password comes from ROBOARM_SSH_PASSWORD, or is asked for.
 """
 
@@ -37,8 +41,8 @@ CLOUDS = ROOT / "out" / "arena" / "rtab"   # the console's 3D view lists the PLY
 HOST, REMOTE = "192.168.73.66", "/home/jetson/roboarm/out/scan"
 
 
-def start(radius: float, stops: int) -> None:
-    reply = he.http("/pick/scan", {"radius": radius, "stops": stops})
+def start(radius: float, stops: int, height: float | None = None, width: float | None = None) -> None:
+    reply = he.http("/pick/scan", {"radius": radius, "stops": stops, "height": height, "width": width})
     if "error" in reply:
         raise SystemExit(f"not started: {reply['error']}")
     since, began = 0, time.time()
@@ -115,11 +119,15 @@ def main() -> int:
     s = sub.add_parser("start")
     s.add_argument("--radius", type=float, default=m3scan.STOP_R)
     s.add_argument("--stops", type=int, default=m3scan.STOPS)
+    s.add_argument("--height", type=float, help="m, the thing's height: needed when it runs off the first look")
+    s.add_argument("--width", type=float, help="m, the widest way across it (with --height)")
     sub.add_parser("fetch").add_argument("stamp", nargs="?")
     sub.add_parser("fuse").add_argument("dir", nargs="?")
     args = parser.parse_args()
     if args.cmd == "start":
-        start(args.radius, args.stops)
+        if (args.height is None) != (args.width is None):
+            parser.error("--height and --width go together")
+        start(args.radius, args.stops, args.height, args.width)
     elif args.cmd == "fetch":
         fetch(args.stamp)
     else:

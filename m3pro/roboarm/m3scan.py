@@ -33,9 +33,16 @@ ARC_STEP = 30      # deg round the thing at most in one goto(): a straight drive
                    # between stops 90 deg apart it would pass 27 cm from the thing, the arm out at it
 VIEWS = 3          # a stop's views across the cone the arm can look through
 LOOK_AT = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90}   # the pick's wide look: the floor 12-45 cm ahead
+# The first look, for the thing's size: the wide look's top edge is low -- 10 cm up it sees only to
+# 34 cm ahead, so a can at 38 cm lost its top and read half its size (2026-10-12). Leaned back 30 deg
+# at the shoulder, the camera 5 cm further back and 5 cm higher, it holds all of 30-48 cm ahead,
+# +-6 cm across, floor to 20 cm tall, 60 px off every edge and 23 cm or more away (searched over
+# J2-J4 with the arm model, the chassis and a 20 cm thing at 0.39 clear).
+LOOK_FIRST = {1: 90, 2: 135, 3: 10, 4: 0, 5: 90, 6: SLIM}
 SHOULDER, CAMERA_REACH = np.array([0.0315, 0.0, 0.218]), 0.25   # m: J2's axis, and how far from it the
                                                                 # camera gets (0.248, sampled over all poses)
 GUESSES = tuple(itertools.product((40, 90, 140), (20, 70, 120), (20, 70, 120)))   # J2-J4 to start from
+EDGE_PX = 4        # a thing with depth this near the picture's edge runs off it: its size is not known
 
 
 def camera(pose: dict) -> np.ndarray:
@@ -157,8 +164,10 @@ def levelled(depth_mm: np.ndarray, K, pose: dict) -> np.ndarray:
 
 def find_thing(depth_mm: np.ndarray, K, cam: np.ndarray, near, reach: float = 0.15) -> dict | None:
     """The thing standing within `reach` m of `near` (x, y, base_link), from one view through the
-    levelled camera `cam`: {"centre" (x, y), "radius" (m round it, its footprint), "top" (m)}, or
-    None when fewer than 200 depth points stand there 8 mm-0.45 m over the floor."""
+    levelled camera `cam`: {"centre" (x, y), "radius" (m round it, its footprint), "top" (m), "whole"
+    (whether it is all in the picture)}, or None when fewer than 200 depth points stand there 8 mm-0.45 m
+    over the floor. A thing the picture's edge cuts reads short and narrow -- a 17 cm can whose top was
+    out of the wide look read 9 cm tall and 3 cm across, and 16.8 and 6.4 where it was whole (2026-10-12)."""
     p = m3vision.points(depth_mm, K, step=2)
     world = p @ cam[:3, :3].T + cam[:3, 3]
     up = world[:, 2] - m3kinematics.FLOOR
@@ -168,7 +177,12 @@ def find_thing(depth_mm: np.ndarray, K, cam: np.ndarray, near, reach: float = 0.
     xy = world[there, :2].astype(np.float32)
     (cx, cy), _size, _angle = cv2.minAreaRect(xy)
     radius = float(np.percentile(np.hypot(xy[:, 0] - cx, xy[:, 1] - cy), 98))
-    return {"centre": (float(cx), float(cy)), "radius": radius, "top": float(np.percentile(up[there], 98))}
+    uv = p[there] @ np.asarray(K, float).reshape(3, 3).T
+    u, v = uv[:, 0] / uv[:, 2], uv[:, 1] / uv[:, 2]
+    h, w = depth_mm.shape[:2]
+    whole = bool(u.min() >= EDGE_PX and v.min() >= EDGE_PX and u.max() < w - EDGE_PX and v.max() < h - EDGE_PX)
+    return {"centre": (float(cx), float(cy)), "radius": radius, "top": float(np.percentile(up[there], 98)),
+            "whole": whole}
 
 
 def to_world(odom, local) -> np.ndarray:
@@ -187,11 +201,14 @@ def world_of(odom) -> np.ndarray:
     return m
 
 
-def run(p, radius: float = STOP_R, stops_n: int = STOPS) -> None:
+def run(p, radius: float = STOP_R, stops_n: int = STOPS, height: float | None = None,
+        width: float | None = None) -> None:
     """The scan as a job of the M3's Picker `p` (its arm, camera, base and narration): find the
     thing about `radius` m ahead, stand `radius` from it facing it, then at each of `stops_n` stops
     round it take stop_views() and keep every view (out/scan/STAMP/: the colour, the depth, a JSON
-    of the pose, K and the odometry), and come back to the first stop."""
+    of the pose, K and the odometry), and come back to the first stop. The arm keeps clear of the
+    thing by its size as the first look reads it -- or as given (`height`, `width`: m, the widest way
+    across), which a thing that runs off that look's picture needs: there its reading is short."""
     if p.goto is None or p.odom is None:
         raise RuntimeError("the base cannot drive here: no wheel odometry")
     stops_n = int(stops_n)
@@ -199,18 +216,28 @@ def run(p, radius: float = STOP_R, stops_n: int = STOPS) -> None:
     folder = None if folder is None else folder / "scan" / time.strftime("%Y%m%d_%H%M%S")
     p.engaged()
     with p.step("look.scan"):
-        p.move(LOOK_AT, speed=p.dps("free_dps"))
+        p.move(LOOK_FIRST, speed=p.dps("free_dps"))
         time.sleep(p.settle_s if p.settle_s is not None else p.cfg["settle_wide_s"])
         _image, depth, K, pose = p.snapshot()
         thing = find_thing(depth, K, levelled(depth, K, pose), (radius, 0.0))
     if thing is None:
         raise RuntimeError(f"nothing standing about {100 * radius:.0f} cm ahead to scan")
+    if height is None or width is None:
+        if not thing["whole"]:
+            raise RuntimeError(f"the thing runs off the picture (it read {100 * thing['top']:.0f} cm tall, "
+                               f"{200 * thing['radius']:.0f} cm across, short): give its height and width")
+    else:
+        # the look saw its near side: what more it is across lies behind, away from the robot
+        grown = max(0.0, width / 2 - thing["radius"])
+        ahead = np.asarray(thing["centre"], float)
+        thing = {**thing, "centre": tuple(ahead + grown * ahead / np.linalg.norm(ahead)),
+                 "radius": width / 2, "top": height}
     here = p.odom()
     if here is None:
         raise RuntimeError("no wheel odometry (/odom_raw) from the board: not driving blind")
     centre = to_world(here, thing["centre"])
     p.say(f"to scan: a thing {100 * thing['top']:.0f} cm tall, {200 * thing['radius']:.0f} cm across, "
-          f"{100 * float(np.hypot(*thing['centre'])):.0f} cm ahead")
+          f"{100 * float(np.hypot(*thing['centre'])):.0f} cm ahead" + (" (its size as given)" if height else ""))
     views = stop_views(thing["radius"], thing["top"], radius)
     if not views:
         raise RuntimeError("the arm has no view of it from a stop: too tall or too wide for this camera")

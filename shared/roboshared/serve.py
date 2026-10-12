@@ -85,7 +85,8 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
     elif url.path == "/pick/home":
         answer = picker.start("home")
     elif url.path == "/pick/scan" and "scan" in picker.jobs():
-        answer = picker.start("scan", **{k: float(params[k]) for k in ("radius", "stops") if k in params})
+        answer = picker.start("scan", **{k: float(params[k]) for k in ("radius", "stops", "height", "width")
+                                         if params.get(k) is not None})
     elif url.path == "/pick/teach" and "teach" in picker.jobs():
         answer = picker.start("teach", name=str(params.get("name") or ""))
     elif url.path == "/pick/find" and "find" in picker.jobs():

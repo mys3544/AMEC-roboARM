@@ -655,9 +655,11 @@ class Picker(Task):
         except RuntimeError:
             return []
 
-    def scan(self, radius: float = m3scan.STOP_R, stops: float = m3scan.STOPS) -> None:
-        """Drive round the thing about `radius` m ahead, the camera on it, keeping every view (m3scan.run)."""
-        m3scan.run(self, radius, int(stops))
+    def scan(self, radius: float = m3scan.STOP_R, stops: float = m3scan.STOPS, height: float | None = None,
+             width: float | None = None) -> None:
+        """Drive round the thing about `radius` m ahead, the camera on it, keeping every view (m3scan.run);
+        its size as given (`height`, `width`, m) or as the first look reads it."""
+        m3scan.run(self, radius, int(stops), height, width)
 
     def wrist(self, thing: dict, around: list[dict], whole: bool | None = None, opened: int | None = None):
         """grip pose -> (J5s square, J5s off square) for `thing` (wrist_choices): the fingers, opened to
