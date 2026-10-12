@@ -43,6 +43,14 @@ SHOULDER, CAMERA_REACH = np.array([0.0315, 0.0, 0.218]), 0.25   # m: J2's axis, 
                                                                 # camera gets (0.248, sampled over all poses)
 GUESSES = tuple(itertools.product((40, 90, 140), (20, 70, 120), (20, 70, 120)))   # J2-J4 to start from
 EDGE_PX = 4        # a thing with depth this near the picture's edge runs off it: its size is not known
+FIRST_SHORT = 0.015   # m the first look reads a thing's radius short -- the depth's edge halo at its range:
+                      # 2.0 against 3.3 cm on a can, the stops' closer views 2.7-3.5 (2026-10-12) -- so the
+                      # first stop's views keep that much more off it, until they have read it themselves
+SIZE_SLACK = 0.005    # m: a size read again closer than this to the one the views were planned for keeps them
+SIGHT_PUSH = 0.25     # of a view's reading radius: how far its reading lies short of the thing's middle along
+                      # the line of sight -- one side seen, it leans toward the camera. Fitted on one can
+                      # (2026-10-12: 6-8 mm of 31; fused, the can came out 25.7 mm round without, 29.6 with,
+                      # 31.9 a single view's arc, 33 true); check it on a box
 
 
 def camera(pose: dict) -> np.ndarray:
@@ -147,7 +155,8 @@ def stops(here, centre, count: int = STOPS, stop_r: float = STOP_R) -> list[tupl
 def way_round(centre, a_from: float, a_to: float, stop_r: float = STOP_R) -> list[tuple[float, float, float]]:
     """The base's poses from `a_from` to `a_to` (rad) round `centre`, ARC_STEP deg apart at most,
     on the circle, facing it -- the last at `a_to`."""
-    n = max(1, math.ceil(abs(a_to - a_from) / math.radians(ARC_STEP) - 1e-9))
+    n = max(1, math.ceil(abs(a_to - a_from) / math.radians(ARC_STEP) - 0.05))   # a leg a degree or two
+                                                                              # over ARC_STEP (re-centred) is one
     return [on_circle(centre, a_from + (a_to - a_from) * j / n, stop_r) for j in range(1, n + 1)]
 
 
@@ -192,6 +201,13 @@ def to_world(odom, local) -> np.ndarray:
     return np.array([odom[0] + c * local[0] - s * local[1], odom[1] + s * local[0] + c * local[1]])
 
 
+def to_local(odom, world) -> tuple[float, float]:
+    """A point (x, y) of the odometry's frame in base_link, the base at `odom` (to_world's inverse)."""
+    c, s = math.cos(odom[2]), math.sin(odom[2])
+    dx, dy = world[0] - odom[0], world[1] - odom[1]
+    return (c * dx + s * dy, -s * dx + c * dy)
+
+
 def world_of(odom) -> np.ndarray:
     """odometry frame <- base_link, 4 x 4, for the base at `odom` (x, y, yaw) on the floor."""
     c, s = math.cos(odom[2]), math.sin(odom[2])
@@ -206,9 +222,14 @@ def run(p, radius: float = STOP_R, stops_n: int = STOPS, height: float | None = 
     """The scan as a job of the M3's Picker `p` (its arm, camera, base and narration): find the
     thing about `radius` m ahead, stand `radius` from it facing it, then at each of `stops_n` stops
     round it take stop_views() and keep every view (out/scan/STAMP/: the colour, the depth, a JSON
-    of the pose, K and the odometry), and come back to the first stop. The arm keeps clear of the
-    thing by its size as the first look reads it -- or as given (`height`, `width`: m, the widest way
-    across), which a thing that runs off that look's picture needs: there its reading is short."""
+    of the pose, K, the odometry and the thing as that view read it), and come back to the first stop.
+
+    The arm keeps clear of the thing by its size as the first look reads it, FIRST_SHORT wider -- or
+    as given (`height`, `width`: m, the widest way across), which a thing that runs off that look's
+    picture needs: there its reading is short. From the first stop on, the stop's own views read it
+    again: its size (the median so far) and where it stands, and the next leg goes round THAT -- the
+    wheel odometry drifts as the base goes round (a can seemed to move 9 cm in half a circle,
+    2026-10-12), the thing does not."""
     if p.goto is None or p.odom is None:
         raise RuntimeError("the base cannot drive here: no wheel odometry")
     stops_n = int(stops_n)
@@ -222,57 +243,117 @@ def run(p, radius: float = STOP_R, stops_n: int = STOPS, height: float | None = 
         thing = find_thing(depth, K, levelled(depth, K, pose), (radius, 0.0))
     if thing is None:
         raise RuntimeError(f"nothing standing about {100 * radius:.0f} cm ahead to scan")
-    if height is None or width is None:
+    given = height is not None and width is not None
+    if not given:
         if not thing["whole"]:
             raise RuntimeError(f"the thing runs off the picture (it read {100 * thing['top']:.0f} cm tall, "
                                f"{200 * thing['radius']:.0f} cm across, short): give its height and width")
+        size = (thing["radius"] + FIRST_SHORT, thing["top"])
     else:
         # the look saw its near side: what more it is across lies behind, away from the robot
         grown = max(0.0, width / 2 - thing["radius"])
         ahead = np.asarray(thing["centre"], float)
-        thing = {**thing, "centre": tuple(ahead + grown * ahead / np.linalg.norm(ahead)),
-                 "radius": width / 2, "top": height}
+        thing = {**thing, "centre": tuple(ahead + grown * ahead / np.linalg.norm(ahead))}
+        size = (width / 2, height)
     here = p.odom()
     if here is None:
         raise RuntimeError("no wheel odometry (/odom_raw) from the board: not driving blind")
     centre = to_world(here, thing["centre"])
     p.say(f"to scan: a thing {100 * thing['top']:.0f} cm tall, {200 * thing['radius']:.0f} cm across, "
-          f"{100 * float(np.hypot(*thing['centre'])):.0f} cm ahead" + (" (its size as given)" if height else ""))
-    views = stop_views(thing["radius"], thing["top"], radius)
+          f"{100 * float(np.hypot(*thing['centre'])):.0f} cm ahead" + (" (its size as given)" if given else ""))
+    views = stop_views(*size, radius)
     if not views:
         raise RuntimeError("the arm has no view of it from a stop: too tall or too wide for this camera")
-    plan = stops(here, centre, stops_n, radius)
     start = math.atan2(here[1] - centre[1], here[0] - centre[0])
+    record = {"centre": centre.tolist(), "radius": size[0], "top": size[1], "centres": []}
     if folder is not None:
         folder.mkdir(parents=True, exist_ok=True)
-        (folder / "scan.json").write_text(json.dumps({"centre": centre.tolist(), "radius": thing["radius"],
-                                                      "top": thing["top"], "stops": plan}, indent=1))
-    kept = 0
+        (folder / "scan.json").write_text(json.dumps(record, indent=1))
+    kept, sizes = 0, []
     for k in range(stops_n + 1):
         p.check()
+        aim = start + math.tau * k / stops_n
         with p.step("drive"):   # the first: onto the circle; then round it, the last back to the first
-            for way in ([plan[0]] if k == 0 else way_round(centre, start + math.tau * (k - 1) / stops_n,
-                                                             start + math.tau * k / stops_n, radius)):
+            if k == 0:
+                legs = [on_circle(centre, aim, radius)]
+            else:
+                now = p.odom()
+                at = math.atan2(now[1] - centre[1], now[0] - centre[0])
+                legs = way_round(centre, at, at + math.remainder(aim - at, math.tau), radius)
+            for way in legs:
                 p.check()
                 p.goto(*way)
         if k == stops_n:
             break   # back at the first: the loop closed
+        reads = []
         for i, pose in enumerate(views if k % 2 == 0 else views[::-1]):
             with p.step("look.scan"):
                 p.move(pose, speed=p.dps("free_dps"))
                 time.sleep(p.settle_s if p.settle_s is not None else p.cfg["settle_close_s"])
                 image, depth, K, joints = p.snapshot()
                 odom = p.odom()
+                seen = find_thing(depth, K, levelled(depth, K, joints), to_local(odom, centre))
+            if seen is not None and seen["whole"]:
+                reads.append((to_world(odom, seen["centre"]), seen["radius"], seen["top"]))
             if folder is not None:
                 name = f"{k:02d}_{i}"
                 cv2.imwrite(str(folder / f"{name}_rgb.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 95])
                 cv2.imwrite(str(folder / f"{name}_depth.png"), depth)
-                (folder / f"{name}.json").write_text(json.dumps({"stop": k, "pose": {str(j): v for j, v in joints.items()},
-                                                                 "K": np.asarray(K).tolist(), "odom": list(odom)}))
+                (folder / f"{name}.json").write_text(json.dumps({
+                    "stop": k, "pose": {str(j): v for j, v in joints.items()}, "K": np.asarray(K).tolist(),
+                    "odom": list(odom), "thing": seen and {**seen, "centre": list(seen["centre"])}}))
             kept += 1
-        p.say(f"stop {k + 1} of {stops_n}: {len(views)} views")
+        moved = 0.0
+        if reads:
+            was, centre = centre, np.median([c for c, _r, _t in reads], axis=0)
+            moved = float(np.linalg.norm(centre - was))
+            sizes += [(r, t) for _c, r, t in reads]
+            if not given:
+                read = (float(np.median([r for r, _t in sizes])), float(np.median([t for _r, t in sizes])))
+                if max(abs(read[0] - size[0]), abs(read[1] - size[1])) > SIZE_SLACK:
+                    size = read
+                    views = stop_views(*size, radius)
+                    if not views:
+                        raise RuntimeError("the arm has no view of it from a stop: too tall or too wide "
+                                           "for this camera")
+                    p.say(f"read again: {100 * size[1]:.0f} cm tall, {200 * size[0]:.0f} cm across")
+        record["centres"].append(centre.tolist())
+        p.say(f"stop {k + 1} of {stops_n}: {len(views)} views" + (f", the thing {100 * moved:.0f} cm off where "
+                                                                   f"the wheels had it" if moved >= 0.01 else ""))
+    record.update(centre=centre.tolist(), radius=size[0], top=size[1])
+    if folder is not None:
+        (folder / "scan.json").write_text(json.dumps(record, indent=1))
     p.home()
     p.say(f"scan done: {kept} views" + (f" in {folder}" if folder is not None else ""))
+
+
+def anchor(views: list[dict]) -> tuple[np.ndarray, float, float]:
+    """Take the wheels' drift out of the views' cameras ("camera": world <- optical, the odometry's
+    world): each is shifted (x, y) so that the thing it read ("seen": {"centre" (x, y, that world),
+    "radius", "top"}, or None) lands on one point -- each reading first moved SIGHT_PUSH of its radius
+    further along the line of sight; a view that read nothing moves as the one before it. Between
+    the first and the last stop the odometry drifted ~10 cm round a can (2026-10-12), and the views
+    fused as a smear. Returns (that point, the thing's radius, its top): the readings' medians."""
+    marks = []
+    for v in views:
+        seen = v.get("seen")
+        if seen is None:
+            marks.append(None)
+            continue
+        centre = np.asarray(seen["centre"], float)
+        sight = centre - np.asarray(v["camera"], float)[:2, 3]
+        marks.append(centre + SIGHT_PUSH * seen["radius"] * sight / np.linalg.norm(sight))
+    got = [m for m in marks if m is not None]
+    if not got:
+        raise ValueError("no view read the thing whole")
+    point, shift = np.median(got, axis=0), np.zeros(2)
+    for v, mark in zip(views, marks, strict=True):
+        if mark is not None:
+            shift = point - mark
+        v["camera"] = np.array(v["camera"], float)
+        v["camera"][:2, 3] += shift
+    seen = [v["seen"] for v in views if v.get("seen") is not None]
+    return point, float(np.median([s["radius"] for s in seen])), float(np.median([s["top"] for s in seen]))
 
 
 def fuse(views: list[dict], centre, radius: float, top: float, voxel: float = 0.0015):

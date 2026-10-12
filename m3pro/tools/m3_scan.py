@@ -81,6 +81,7 @@ def fuse(folder: Path) -> None:
     import open3d as o3d
 
     plan = json.loads((folder / "scan.json").read_text())
+    centres = plan.get("centres") or []   # each stop's own reading (scans before 2026-10-12: none)
     views = []
     for meta in sorted(folder.glob("[0-9][0-9]_*.json")):
         v = json.loads(meta.read_text())
@@ -88,10 +89,17 @@ def fuse(folder: Path) -> None:
         depth = cv2.imread(str(meta.with_name(meta.stem + "_depth.png")), cv2.IMREAD_UNCHANGED)
         pose = {int(j): a for j, a in v["pose"].items()}
         K = np.asarray(v["K"], float)
-        cam = m3scan.world_of(v["odom"]) @ m3scan.levelled(depth, K, pose)
-        views.append({"rgb": rgb, "depth": depth, "K": K, "camera": cam})
+        levelled = m3scan.levelled(depth, K, pose)
+        near = centres[v["stop"]] if v["stop"] < len(centres) else plan["centre"]   # where the stop had it
+        seen = m3scan.find_thing(depth, K, levelled, m3scan.to_local(v["odom"], near))
+        views.append({"rgb": rgb, "depth": depth, "K": K, "camera": m3scan.world_of(v["odom"]) @ levelled,
+                      "seen": {**seen, "centre": m3scan.to_world(v["odom"], seen["centre"])}
+                      if seen is not None and seen["whole"] else None})
+    centre, radius, top = m3scan.anchor(views)
+    print(f"the thing: {100 * top:.1f} cm tall, {200 * radius:.1f} cm across; "
+          f"{sum(v['seen'] is not None for v in views)} of {len(views)} views read it whole")
     began = time.time()
-    xyz, rgb, mesh, _cameras = m3scan.fuse(views, plan["centre"], plan["radius"], plan["top"])
+    xyz, rgb, mesh, _cameras = m3scan.fuse(views, centre, radius, top)
     print(f"{len(views)} views -> {len(xyz)} points, {len(mesh.triangles)} triangles in {time.time() - began:.0f} s")
     colours = (np.clip(rgb, 0, 1) * 255).round().astype(np.uint8)
     write_ply(folder / "cloud.ply", xyz, colours)
