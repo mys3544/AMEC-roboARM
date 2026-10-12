@@ -43,7 +43,7 @@ def test_a_box_ahead_is_found_and_measured():
     cam = m3scan.camera(m3scan.LOOK_FIRST)
     depth = render(cam, [(0.36, 0.02, 0.0, 0.06, 0.05)])   # 60 x 30 mm, 50 mm tall (its top face)
     thing = m3scan.find_thing(depth, K, cam, (0.38, 0.0))
-    assert thing is not None and thing["whole"]
+    assert thing is not None and thing["whole"] and thing["top_seen"] > m3scan.TOP_SEEN   # its top in view
     assert np.allclose(thing["centre"], (0.36, 0.02), atol=0.006)
     assert abs(thing["top"] - 0.05) < 0.004
     assert 0.025 < thing["radius"] < 0.04
@@ -73,6 +73,15 @@ def test_the_views_are_shifted_so_the_thing_lands_on_one_point_whatever_the_whee
         cam_at = np.array([0.40, 0.0]) + 0.38 * np.array([math.cos(2.0 * k), math.sin(2.0 * k)])
         assert np.allclose(v["camera"][:2, 3], cam_at + (0.03, -0.01), atol=1e-9)
     assert np.allclose(views[3]["camera"], views[2]["camera"])
+
+    # a view that saw the thing's top whole reads it true: no push
+    camera = np.eye(4)
+    camera[:2, 3] = (0.02, 0.0)
+    whole_top = {"camera": camera, "seen": {"centre": np.array([0.40, 0.0]), "radius": r, "top": 0.1, "top_seen": 1.0}}
+    leaning = {"camera": camera.copy(), "seen": {**whole_top["seen"], "top_seen": 0.8}}
+    m3scan.anchor([whole_top, leaning])
+    # the two marks a push apart, the point between them: the views shifted half of it each way
+    assert np.isclose(whole_top["camera"][0, 3] - leaning["camera"][0, 3], m3scan.SIGHT_PUSH * r)
 
 
 def test_a_thing_the_picture_cuts_is_told_from_a_whole_one():

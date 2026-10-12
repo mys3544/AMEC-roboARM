@@ -48,9 +48,14 @@ FIRST_SHORT = 0.015   # m the first look reads a thing's radius short -- the dep
                       # first stop's views keep that much more off it, until they have read it themselves
 SIZE_SLACK = 0.005    # m: a size read again closer than this to the one the views were planned for keeps them
 SIGHT_PUSH = 0.25     # of a view's reading radius: how far its reading lies short of the thing's middle along
-                      # the line of sight -- one side seen, it leans toward the camera. Fitted on one can
-                      # (2026-10-12: 6-8 mm of 31; fused, the can came out 25.7 mm round without, 29.6 with,
-                      # 31.9 a single view's arc, 33 true); check it on a box
+                      # the line of sight when the view does not see its top whole -- a top with no depth (a
+                      # can's shiny lid) leaves only the near side, and the reading leans toward the camera.
+                      # Fitted on a can (2026-10-12: 6-8 mm of 31; fused, 25.7 mm round without, 29.6 with,
+                      # 31.9 a single view's arc, 33 true). A box whose matte top was seen needs none: pushed,
+                      # its fused top and sides disagreed (16.9 x 11.3 against 19.1 x 13.1 cm; 16.9 x 12.2
+                      # and 17.1 x 12.3 unpushed; 16.4 x 11 true)
+TOP_SEEN = 0.95       # a view sees the thing's top whole when the top's outline covers this much of the
+                      # outline of all of it seen (the box's views 0.96-1.00; the can's 0.48-1.00, median 0.87)
 
 
 def camera(pose: dict) -> np.ndarray:
@@ -174,7 +179,8 @@ def levelled(depth_mm: np.ndarray, K, pose: dict) -> np.ndarray:
 def find_thing(depth_mm: np.ndarray, K, cam: np.ndarray, near, reach: float = 0.15) -> dict | None:
     """The thing standing within `reach` m of `near` (x, y, base_link), from one view through the
     levelled camera `cam`: {"centre" (x, y), "radius" (m round it, its footprint), "top" (m), "whole"
-    (whether it is all in the picture)}, or None when fewer than 200 depth points stand there 8 mm-0.45 m
+    (whether it is all in the picture), "top_seen" (how much of its outline seen from above its top's
+    covers: 1 when the top is seen whole)}, or None when fewer than 200 depth points stand there 8 mm-0.45 m
     over the floor. A thing the picture's edge cuts reads short and narrow -- a 17 cm can whose top was
     out of the wide look read 9 cm tall and 3 cm across, and 16.8 and 6.4 where it was whole (2026-10-12)."""
     p = m3vision.points(depth_mm, K, step=2)
@@ -190,8 +196,11 @@ def find_thing(depth_mm: np.ndarray, K, cam: np.ndarray, near, reach: float = 0.
     u, v = uv[:, 0] / uv[:, 2], uv[:, 1] / uv[:, 2]
     h, w = depth_mm.shape[:2]
     whole = bool(u.min() >= EDGE_PX and v.min() >= EDGE_PX and u.max() < w - EDGE_PX and v.max() < h - EDGE_PX)
-    return {"centre": (float(cx), float(cy)), "radius": radius, "top": float(np.percentile(up[there], 98)),
-            "whole": whole}
+    top = float(np.percentile(up[there], 98))
+    lid = world[there & (up > top - 0.01), :2].astype(np.float32)
+    outline = cv2.contourArea(cv2.convexHull(xy))
+    seen = cv2.contourArea(cv2.convexHull(lid)) / outline if len(lid) >= 3 and outline > 0 else 0.0
+    return {"centre": (float(cx), float(cy)), "radius": radius, "top": top, "whole": whole, "top_seen": float(seen)}
 
 
 def to_world(odom, local) -> np.ndarray:
@@ -330,8 +339,9 @@ def run(p, radius: float = STOP_R, stops_n: int = STOPS, height: float | None = 
 def anchor(views: list[dict]) -> tuple[np.ndarray, float, float]:
     """Take the wheels' drift out of the views' cameras ("camera": world <- optical, the odometry's
     world): each is shifted (x, y) so that the thing it read ("seen": {"centre" (x, y, that world),
-    "radius", "top"}, or None) lands on one point -- each reading first moved SIGHT_PUSH of its radius
-    further along the line of sight; a view that read nothing moves as the one before it. Between
+    "radius", "top", "top_seen"}, or None) lands on one point -- a reading from a view that did not see
+    the thing's top whole (top_seen under TOP_SEEN) first moved SIGHT_PUSH of its radius further along
+    the line of sight; a view that read nothing moves as the one before it. Between
     the first and the last stop the odometry drifted ~10 cm round a can (2026-10-12), and the views
     fused as a smear. Returns (that point, the thing's radius, its top): the readings' medians."""
     marks = []
@@ -342,7 +352,8 @@ def anchor(views: list[dict]) -> tuple[np.ndarray, float, float]:
             continue
         centre = np.asarray(seen["centre"], float)
         sight = centre - np.asarray(v["camera"], float)[:2, 3]
-        marks.append(centre + SIGHT_PUSH * seen["radius"] * sight / np.linalg.norm(sight))
+        push = SIGHT_PUSH * seen["radius"] if seen.get("top_seen", 0.0) < TOP_SEEN else 0.0
+        marks.append(centre + push * sight / np.linalg.norm(sight))
     got = [m for m in marks if m is not None]
     if not got:
         raise ValueError("no view read the thing whole")

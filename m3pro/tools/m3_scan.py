@@ -42,15 +42,17 @@ HOST, REMOTE = "192.168.73.66", "/home/jetson/roboarm/out/scan"
 
 
 def start(radius: float, stops: int, height: float | None = None, width: float | None = None) -> None:
+    # the log's lines are numbered (n) across jobs, the last 300 kept: start after the ones there now
+    since = max((line["n"] for line in he.http("/pick/log?since=0")["lines"]), default=0)
     reply = he.http("/pick/scan", {"radius": radius, "stops": stops, "height": height, "width": width})
     if "error" in reply:
         raise SystemExit(f"not started: {reply['error']}")
-    since, began = 0, time.time()
+    began = time.time()
     while True:
         lines = he.http(f"/pick/log?since={since}")["lines"]
         for line in lines:
             print(f"{line['t'] - began:6.1f} s  {line['text']}", flush=True)
-        since += len(lines)
+        since = max((line["n"] for line in lines), default=since)
         state = he.http("/pick/state")
         if not state["busy"]:
             print("error:" if state["error"] else "done.", state["error"] or "")
