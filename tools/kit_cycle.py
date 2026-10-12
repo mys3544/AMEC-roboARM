@@ -1,7 +1,7 @@
 """The kit detector's whole cycle from this laptop (PLAN.md M5): the M3's labelled pick looks ->
 the training set -> hekate trains it -> the weights and ONNX back here.
 
-    uv run python tools/kit_cycle.py [--size n|s] [--int8] [--epochs 150] [--no-fetch]
+    uv run python tools/kit_cycle.py [--size n|s] [--synth] [--int8] [--epochs N] [--no-fetch]
 
 Run it from the repo root (the workspace's venv: inside train/ `uv run` would install hekate's CUDA
 torch here). The steps:
@@ -9,8 +9,12 @@ torch here). The steps:
      ROBOARM_SSH_PASSWORD, or asked) -- skipped with --no-fetch;
   2. the set (m3pro/tools/kit_dataset.py -> m3pro/out/kit);
   3. it replaces datasets\\kit on hekate (`ssh hekate`, CLAUDE.md), with train/'s project and lock;
-  4. hekate trains YOLO26-seg from the pretrained weights as run NAME (train/train_kit.py), and
-     with --int8 then fine-tunes that with the quantizers in as NAME-int8 (quantization-aware);
+  4. hekate trains YOLO26-seg from the pretrained weights as run NAME (train/train_kit.py) -- with
+     --synth first on the real set and Isaac Sim's pictures together as NAME-mix (synth_to_yolo.py
+     on hekate's datasets\\synth_raw2: rendered with the camera at the robot's looks, train/synth/),
+     then NAME fine-tuned from it on the real set alone, 60 epochs each (the best way on 2026-10-12:
+     mask mAP50 0.653 -> 0.791); with --int8 then NAME fine-tuned with the quantizers in as
+     NAME-int8 (quantization-aware; no faster on the Orin NX, PLAN.md M5);
   5. each run exported to ONNX at 480x640, and its best.pt, best.onnx, results.csv and validation
      pictures fetched to train/runs/kit/NAME/.
 Training is GPU work on a shared PC: hekate's CLAUDE.md asks first when under ~16 GB is free --
@@ -34,10 +38,13 @@ FREE_MIB = 16_000
 FETCHED = ("weights/best.pt", "weights/best.onnx", "results.csv", "val_batch0_pred.jpg")
 
 
-def ssh(command: str, timeout: float = 600) -> str:
+def ssh(command: str, timeout: float = 600, check: bool = True) -> str:
+    """`command` in hekate's PowerShell: what it printed. check=False for a program whose stderr is
+    redirected (2>&1): Windows PowerShell then fails the command whatever the program did -- uv sync
+    writes its progress there (2026-10-12) -- and a real failure shows as the files not there after."""
     done = subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, command], capture_output=True, text=True,
                           timeout=timeout, check=False)
-    if done.returncode != 0:
+    if check and done.returncode != 0:
         raise SystemExit(f"hekate: {(done.stderr or done.stdout).strip()[-800:]}")
     return done.stdout
 
@@ -49,8 +56,8 @@ def scp(*paths: str, recursive: bool = False, timeout: float = 600) -> None:
 
 def on_hekate(args: str, timeout: float = 7200) -> str:
     """train_kit.py on hekate with `args`: its last lines."""
-    return ssh(f'cd "{REMOTE_WIN}"; & .\\.venv\\Scripts\\python.exe train_kit.py {args} 2>&1 | '
-               'ForEach-Object { "$_" } | Select-Object -Last 8', timeout=timeout)
+    return ssh(f'cd "{REMOTE_WIN}"; $env:PYTHONUTF8 = "1"; & .\\.venv\\Scripts\\python.exe train_kit.py {args} 2>&1 | '
+               'ForEach-Object { "$_" } | Select-Object -Last 8', timeout=timeout, check=False)
 
 
 def best_row(results: Path) -> dict:
@@ -63,7 +70,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--size", choices=("n", "s"), default="n")
     ap.add_argument("--int8", action="store_true", help="then quantization-aware training, and its INT8 ONNX")
-    ap.add_argument("--epochs", type=int, default=150)
+    ap.add_argument("--synth", nargs="?", const=r"datasets\synth_raw2", default=None, metavar="RAW",
+                    help=r"first on real + Isaac Sim's pictures (hekate's train\RAW, default datasets\synth_raw2)")
+    ap.add_argument("--epochs", type=int, default=None, help="each run's (default 150; 60 with --synth)")
     ap.add_argument("--qat-epochs", type=int, default=40)
     ap.add_argument("--name", default=None, help="the run's name (default: SIZE and today's date)")
     ap.add_argument("--no-fetch", action="store_true", help="use the looks already fetched")
@@ -85,9 +94,21 @@ def main() -> int:
         f'New-Item -ItemType Directory -Force "{REMOTE_WIN}\\datasets" | Out-Null')
     scp(*(str(ROOT / "train" / f) for f in ("pyproject.toml", "uv.lock", "train_kit.py")), f"{HOST}:{REMOTE}/")
     scp(str(m3 / "out" / "kit"), f"{HOST}:{REMOTE}/datasets/", recursive=True)
-    print(ssh(f'cd "{REMOTE_WIN}"; & $HOME\\.local\\bin\\uv.exe sync --frozen --no-progress 2>&1 | Select-Object -Last 1'))
+    print(ssh(f'cd "{REMOTE_WIN}"; & $HOME\\.local\\bin\\uv.exe sync --frozen --no-progress 2>&1 | Select-Object -Last 1', check=False))
 
-    runs = [(name, f"--model yolo26{a.size}-seg.pt --epochs {a.epochs} --name {name}", "")]
+    epochs = a.epochs or (60 if a.synth else 150)
+    first = f"--model yolo26{a.size}-seg.pt --epochs {epochs} --name {name}"
+    if a.synth:
+        print(f"3b. Isaac Sim's pictures ({a.synth}) as labels, and the real + synthetic set", flush=True)
+        ssh(f'New-Item -ItemType Directory -Force "{REMOTE_WIN}\\synth" | Out-Null')
+        scp(*(str(p) for p in (ROOT / "train" / "synth").glob("*.py")), f"{HOST}:{REMOTE}/synth/")
+        print(ssh(f'cd "{REMOTE_WIN}"; & .\\.venv\\Scripts\\python.exe synth\\synth_to_yolo.py --raw {a.synth} 2>&1 | '
+                  'Select-Object -Last 1', timeout=1200, check=False))
+        print(f"4a. training {name}-mix (real + synthetic)", flush=True)
+        print(on_hekate(f"--data datasets\\kit_synth.yaml --model yolo26{a.size}-seg.pt --epochs {epochs} "
+                        f"--name {name}-mix"))
+        first = f"--model runs\\kit\\{name}-mix\\weights\\best.pt --epochs {epochs} --name {name}"   # then real only
+    runs = [(name, first, "")]
     if a.int8:
         qat = f"--int8 --model runs\\kit\\{name}\\weights\\best.pt --epochs {a.qat_epochs} --name {name}-int8"
         runs.append((f"{name}-int8", qat, "--int8 "))
