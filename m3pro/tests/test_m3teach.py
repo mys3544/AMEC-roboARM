@@ -145,3 +145,19 @@ def test_find_looks_again_from_nearer_at_what_the_wide_look_could_not_name(tmp_p
     monkeypatch.setattr(m3teach, "ask", lambda path, payload=None, timeout=30.0: (looks.append(1), {"things": [
         {"name": "news", "sure": 0.8, "margin": 0.2, "scores": {}} for _ in payload["boxes"]]})[1])
     assert all(o["taught"] == "news" and not o.get("closer") for o in m3teach.find(picker)) and len(looks) == 1
+
+
+def test_teaching_a_name_again_adds_its_views_to_the_first_ones(tmp_path, monkeypatch):
+    # the news cubes, unknown from their untaught sides (2026-10-12): taught again, turned a quarter
+    # each time -- every round's views kept, the service's DINOv2 views made from them all
+    table = Table([(0.22, 0.01, 0.0, 0.03, 0.03)])
+    monkeypatch.setattr(m3teach, "ask", table.ask)
+    picker = m3pick.Picker(table.call, table.snapshot, tmp_path / "pick", settle_s=0.0)
+    picker.teach("news")
+    first = sorted(p.name for p in (tmp_path / "teach" / "news").glob("*.json"))
+    table.things = [(0.22, 0.01, 90.0, 0.03, 0.03)]   # turned
+    monkeypatch.setattr(m3teach.time, "strftime", lambda fmt, *a: "20991231_235959")   # a later round
+    picker.teach("news")
+    after = sorted(p.name for p in (tmp_path / "teach" / "news").glob("*.json"))
+    assert len(after) == 2 * len(first) and set(first) <= set(after)
+    assert list(table.taught) == ["news"]   # one name, its prompt the last round's

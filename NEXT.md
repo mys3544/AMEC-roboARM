@@ -27,9 +27,12 @@ is in PLAN.md (v2.4, stage 1) and the commits of 2026-10-12 on branch `m3pro` (a
 2. **Re-teach the picture cubes from all sides.** Find with the box, the can and the two news cubes:
    the box named, both news cubes unknown even after the closer look (0.64 with fish 0.01 behind;
    0.61, news first but under 0.65). They were taught on 2026-10-09 from one side (5-8 views), and
-   Find sees other faces. Either a scan of a cube (3 cm is near the scan's lower limit: try it) or a
-   standing teach that looks at it from several sides. Then Find again with the same layout, and the
-   seconds from Teach to the first pick (the paper's headline number).
+   Find sees other faces. No code needed: Teach again with the same name ADDS its views (kept in
+   out/teach/NAME/, Find scores the best 3 of all; test_m3teach checks it). For each picture cube
+   (news, fish, cosmetics, apricot -- all taught from one side on 2026-10-09): alone ~20-25 cm before
+   the bumper, Teach; turn it a quarter on the spot, Teach again with the same name; 4 rounds (a 5th
+   tipped over is a bonus), ~1 min each. Then Find with the box, the can, both news cubes and fish,
+   and the seconds from Teach to the first pick (the paper's headline number).
 3. **More kit frames, then the detector again:** a few pick runs with 40 mm cubes and blocks out
    (every pick look keeps its labelled frame), then `uv run python tools/kit_cycle.py --int8` from the
    repo root. Afternoon results (val: 14 real pictures from 8 sessions, only 3 of them 40 mm cubes),
