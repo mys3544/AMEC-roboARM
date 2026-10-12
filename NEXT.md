@@ -1,46 +1,57 @@
-# What is left for later -- from the 2026-10-09 session, to pick up on Monday 2026-10-12
+# What is left for later -- from the 2026-10-12 session
 
-Things set aside on the day, in the order they unblock each other. The background is in PLAN.md
-(v2.4, stage 1) and the commits of 2026-10-09 on branch `m3pro`.
+Things set aside at the end of the day, roughly in the order they unblock each other. The background
+is in PLAN.md (v2.4, stage 1) and the commits of 2026-10-12 on branch `m3pro` (all pushed).
 
-## Waiting on you (setup or hardware first)
+## Done on 2026-10-12
 
-1. **hekate, setup phase 2.** On hekate, in `C:\Users\daniel\Desktop\Sim Arm 2026`:
-   `powershell -ExecutionPolicy Bypass -File .\setup\setup-pc.ps1 -LaptopPublicKey "<this laptop's
-   ~/.ssh/id_ed25519.pub>" -RemoteControlAtLogon`, then say **"ready"**. Claude then: `ssh hekate
-   hostname` (must print HEKATE, no password), copies `tools\isaac_exec.py` here and merges
-   `laptop\CLAUDE-laptop-snippet.md` into this project's CLAUDE.md, and runs the snippet's status
-   command. Isaac Sim is not started, and nothing on hekate is stopped or changed without asking.
-   The laptop's `~/.ssh/config` already has `Host hekate` (the Tailscale name
-   `hekate.tail39f820.ts.net`).
-2. **The first live object scan.** The M3 on the floor -- the arena mat if possible, its print
-   helps line the views up -- the charging cable OFF (it drives), ~1.2 m clear all round, one object
-   ~38 cm straight ahead of its front (matte and colourful, up to ~15 cm tall; a 20 cm one needs
-   `--radius 0.42`). Then `m3pro/tools/m3_scan.py start`, `fetch`, `fuse`: the cloud shows in the
-   console's 3D view. Built and tested in simulation only so far.
+- **hekate** set up (phase 2): `ssh hekate` works with the key, uv 0.13 under `daniel`, a training
+  project in `Sim Arm 2026\train` (this repo's `train/`). Over the lab LAN for now -- see below.
+- **The kit detector, first pass:** `m3pro/tools/kit_dataset.py` -> YOLO26n/s-seg trained on hekate
+  (`train/train_kit.py`): mAP50 0.94 on the 30 mm cube; the 40 mm cube (19 examples) and the block
+  cannot be judged yet. ONNX at 480x640 in `train/runs/kit/` (not in git).
+- **The object scan works live:** a first look that holds a 20 cm thing, the thing read again at
+  every stop (the wheels drift 1-3 cm a stop, ~10 cm a circle), the views anchored on it when fused,
+  a size correction only for views that do not see the thing's top. A 500 ml can: 16.7 cm tall, 31 mm
+  round (33 true); the Jetson box: 16.7 x 11.5 x 4.6 cm (16.4 x 11 x 4 true).
+- **Console:** Scan, Fuse last scan, Show in 3D, Teach from last scan on the M3 arm card; typing in
+  a field no longer drives the base or STOPs ALL.
+- **Teach from a scan:** a name + Scan teaches the thing from its 24-36 views all round; Find scores
+  a name by its best 3 views. 'jetson box' and 'monster can' taught; Find names the box (0.78-0.79).
+- **Find looks closer** at what the wide look cannot name; **the bridge refuses a frozen camera**
+  (the DCW2 driver stopped once; `systemctl --user restart roboarm-m3bridge` brings it back).
 
-## Then
+## Next
 
-3. **The kit detector and the model table** (stage 1, M5), on hekate: YOLO26n/s trained on the
-   M3's labelled frames (every pick look keeps `*_rgb.jpg` + depth + outlines since 2026-10-09; ~90
-   so far -- a few more clean-up runs give more), INT8 engines, timed on both robots.
-4. **Teach your lab objects:** the 3 electrical-tape rolls (measure their outside diameter), the
-   screwdriver, the yellow cylinder. The pick first needs a grip for things that are not the kit's
-   sizes: a tape roll is at the gripper's ~65 mm limit (or pinched by its wall), the screwdriver
-   by its handle.
-5. **Object scan, after its first run:** a Scan button in the console; the fusion on the robot
-   (Open3D's aarch64 wheel); the teach taken from the scan's own views.
-6. **Teach follow-ups:** re-teach "news" from another angle (one news cube was named only 0.04
-   ahead of the next name, under the 0.05 needed); measure the seconds from Teach to the first pick
-   (the paper's headline number); set the unknown threshold on more scenes.
-7. **Depth duel, the open question:** why Depth Anything reads heights 15.5 mm off on the close
-   look though its floor fit holds (PLAN.md S1).
-8. *Optional:* a few more taught grips with blocks and in the corners (`m3pro/tools/m3_teach.py`)
-   to firm up the aim table (`m3pro/roboarm/m3aim.py`).
+1. **Charge the M3** -- it ended the day at 10.72 V (the arm refuses below 10.5).
+2. **Re-teach the picture cubes from all sides.** Find with the box, the can and the two news cubes:
+   the box named, both news cubes unknown even after the closer look (0.64 with fish 0.01 behind;
+   0.61, news first but under 0.65). They were taught on 2026-10-09 from one side (5-8 views), and
+   Find sees other faces. Either a scan of a cube (3 cm is near the scan's lower limit: try it) or a
+   standing teach that looks at it from several sides. Then Find again with the same layout, and the
+   seconds from Teach to the first pick (the paper's headline number).
+3. **More kit frames, then the detector again:** a few pick runs with 40 mm cubes and blocks out
+   (every pick look keeps its labelled frame), `kit_dataset.py`, retrain on hekate; then INT8 engines
+   on both robots and the timing table (PLAN.md M5). The validation split puts one whole session in
+   val: revisit it when there is more data.
+4. **Scan loose ends:** the Jetson box reads ~6 cm off at one stop (stop 5-6, both times -- one side
+   of it?); the box comes out ~0.7 cm too tall; the can's lid comes out open (shiny, no depth); the
+   fusion still runs on the laptop (Open3D's aarch64 wheel would put it on the robot).
+5. **Teach your lab objects** (from the 2026-10-09 list): the 3 electrical-tape rolls (measure their
+   outside diameter), the screwdriver, the yellow cylinder -- scanned and taught now; the pick first
+   needs a grip for things that are not the kit's sizes (a tape roll is at the gripper's ~65 mm limit).
+6. **Depth duel, the open question:** why Depth Anything reads heights 15.5 mm off on the close look
+   though its floor fit holds (PLAN.md S1).
 
-## Carried over from the plan (not from this day)
+## Waiting on others
+
+- **Rene: SSH to hekate over Tailscale.** `tailscale ping` answers, port 22 times out, hekate's
+  firewall allows the Tailscale range -- so shields-up or the tailnet ACL on Rene's side (Tailscale
+  there runs as AMEC-PC). Meanwhile `Host hekate` in `~/.ssh/config` is the lab LAN address
+  192.168.73.87; switch it back to `hekate.tail39f820.ts.net` once fixed.
+
+## Carried over from the plan
 
 - Where the shared station stands -- the box within both arms' reach (before stage 2, the Slovak
   mission).
 - RESEARCH.md's open choices: quick-win venues, contacting the two Slovak groups, the overhead webcam.
-- Branch `m3pro` is 12 commits ahead of GitHub (not pushed).
