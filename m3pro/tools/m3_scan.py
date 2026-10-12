@@ -7,6 +7,7 @@ coloured model that the console's 3D view shows.
     python tools/m3_scan.py fetch [STAMP]       # the robot's out/scan/STAMP (the newest) -> out/scan/
     python tools/m3_scan.py fuse [DIR]          # out/scan/DIR (the newest) -> its cloud.ply + mesh.ply,
                                                 # and the cloud as object_STAMP.ply among the console's scans
+    python tools/m3_scan.py fuse [DIR] --export # and DIR/splat: a Gaussian splat's input (train/splat/)
 
 Put the thing on the floor with its middle `radius` m (0.38: ~26 cm from the bumper) straight ahead
 of the robot, nothing else within ~0.7 m of it: the robot goes round it, its back ~0.55 m out.
@@ -117,16 +118,19 @@ SPLAT_REACH = 0.30   # m round the thing whose floor the splat's first points ke
 
 
 def export_splat(out: Path, views: list[dict], cameras: list[np.ndarray], centre, radius: float, top: float) -> None:
-    """The scan as a Gaussian splat's input (train/splat/train_splat.py, on hekate): every view's picture,
-    its intrinsics and its camera as the fuse corrected it (world <- camera, OpenCV axes: x right, y
-    down, z ahead) in transforms.json, and points.ply -- every view's depth within SPLAT_REACH of the
-    thing and under its top, in those cameras, 3 mm apart: where the Gaussians start."""
+    """The scan as a Gaussian splat's input (train/splat/train_splat.py, on hekate): every view's picture
+    and its depth (mm, the depth camera's), its intrinsics and its camera as the fuse corrected it (world
+    <- camera, OpenCV axes: x right, y down, z ahead) in transforms.json, and points.ply -- every view's
+    depth within SPLAT_REACH of the thing and under its top, in those cameras, 3 mm apart: where the
+    Gaussians start."""
     (out / "images").mkdir(parents=True, exist_ok=True)
+    (out / "depths").mkdir(parents=True, exist_ok=True)
     frames, points, colours = [], [], []
     for i, (v, cam) in enumerate(zip(views, cameras, strict=True)):
-        name = f"images/{i:03d}.jpg"
+        name, depth = f"images/{i:03d}.jpg", f"depths/{i:03d}.png"
         cv2.imwrite(str(out / name), cv2.cvtColor(v["rgb"], cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 95])
-        frames.append({"file": name, "K": np.asarray(v["K"]).tolist(), "c2w": np.asarray(cam).tolist()})
+        cv2.imwrite(str(out / depth), v["depth"])   # the DCW2's, aligned to the colour: mm, 0 where none
+        frames.append({"file": name, "depth": depth, "K": np.asarray(v["K"]).tolist(), "c2w": np.asarray(cam).tolist()})
         K, z = np.asarray(v["K"], float), v["depth"].astype(np.float64) / 1000
         rows, cols = z.shape
         vv, uu = np.mgrid[0:rows:2, 0:cols:2]

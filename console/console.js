@@ -621,17 +621,22 @@ class CloudCard {   // the M3's 3D scans: not a robot -- nothing polled, no STOP
 
   async display(name, buffer) {
     const t0 = performance.now();
-    const { count, size } = (await this.viewer).load(buffer);
+    // a Gaussian splat (train/splat/train_splat.py) is drawn as itself: its own colours, its own sizes
+    const splat = this.clouds.find(c => c.name === name)?.kind === 'splat';
+    const viewer = await this.viewer;
+    const { count, size } = splat ? viewer.loadSplat(buffer) : viewer.load(buffer);
+    this.el.querySelectorAll('[data-colour], .cloud-controls input').forEach(c => { c.disabled = splat; });
+    const what = splat ? 'Gaussians' : 'points';
     this.message('');
-    $('.note', this.el).textContent = `${count.toLocaleString('en')} points`;
+    $('.note', this.el).textContent = `${count.toLocaleString('en')} ${what}`;
     this.facts.scan = [
-      `scan     ${name}`,
-      `points   ${count.toLocaleString('en')}, ${(buffer.byteLength / 1e6).toFixed(1)} MB, ` +
+      `scan     ${name}${splat ? '  (a Gaussian splat)' : ''}`,
+      `${what.padEnd(8)} ${count.toLocaleString('en')}, ${(buffer.byteLength / 1e6).toFixed(1)} MB, ` +
         `on screen in ${Math.round(performance.now() - t0)} ms`,
       `extent   ${size.map(v => v.toFixed(2)).join(' x ')} m  (x y z, 1st to 99th percentile)`,
     ];
     this.writeFacts();
-    log(`3D scan: ${name}, ${count.toLocaleString('en')} points`);
+    log(`3D scan: ${name}, ${count.toLocaleString('en')} ${what}`);
   }
 
   setPrint(file) {

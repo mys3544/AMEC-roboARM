@@ -87,13 +87,16 @@ def test_the_clouds_are_the_scans_and_floor_prints_in_their_folder_and_nothing_e
     (clouds / "arena_floor.png").write_bytes(b"png")
     (clouds / "arena_camera_poses.txt").write_bytes(b"poses")
     (clouds / "old.ply").write_bytes(b"ply ")   # a scan without a floor print
+    (clouds / "splat_can.splat").write_bytes(bytes(64))   # a Gaussian splat: two of 32 bytes
     (clouds / "sub" / "deeper.ply").write_bytes(b"ply ")
     (tmp_path / "outside.ply").write_bytes(b"ply ")
     port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler([], clouds)))
     base = f"http://127.0.0.1:{port}"
 
     listed = {c["name"]: c for c in json.loads(fetch(f"{base}/clouds.json")[1])}
-    assert sorted(listed) == ["arena_arena.ply", "old.ply"]
+    assert sorted(listed) == ["arena_arena.ply", "old.ply", "splat_can.splat"]
+    assert listed["splat_can.splat"]["kind"] == "splat" and listed["old.ply"]["kind"] == "cloud"
+    assert fetch(f"{base}/clouds/splat_can.splat") == (200, bytes(64))
     assert listed["arena_arena.ply"]["bytes"] == 4 + 256 * 400
     assert listed["arena_arena.ply"]["floor"] == "arena_floor.png" and listed["old.ply"]["floor"] is None
     status, body = fetch(f"{base}/clouds/arena_arena.ply")

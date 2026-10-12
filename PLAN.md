@@ -561,6 +561,13 @@ Orin; GPL-3.0; documented for JetPack 5), is an experiment, not the plan. Feed-f
 they may help -- black or shiny objects, closer than 0.2 m, the X3's monocular camera -- they run on
 the servers (study S4).
 
+*Done 2026-10-12, the object first:* `m3_scan.py fuse --export` writes the scan's views, depths and
+corrected cameras; `train/splat/train_splat.py` (gsplat 1.5.3 built for Windows on hekate) fits it with
+the depth camera's depth held to the render (weight 0.5: held-out depth 64 -> 6 mm off); the `.splat`
+it writes, cropped to the starting points' cylinder (0.4 of the Gaussians only painted the room), is
+drawn by the console's own WebGL viewer (cloud.js: EWA quads, a counting sort, 5-10 ms for 0.2 M
+Gaussians) beside the clouds -- no Spark needed yet. The can: 206,625 Gaussians, 6.6 MB.
+
 Exit: press Scan -> within about two minutes a coloured mesh and point cloud of the object in the
 console; an arena point cloud; one Gaussian splat of the arena with the robots in it.
 

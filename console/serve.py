@@ -12,7 +12,8 @@ through here as /robot/<id>/<path> -- the X3's panel sends no CORS headers, and 
 the page simple; camera frames and maps come straight from the robots, which images may. The
 3D view gets the M3's exported scans from this laptop: /clouds.json lists the PLY files in
 m3pro/out/arena/rtab (where `arena_map.py rtab-export` puts them), each with its floor print if
-there is one, and /clouds/<name> is one of those files (.ply or .png). Voice commands go to
+there is one, and the Gaussian splats there (.splat, train/splat/train_splat.py's, made on hekate),
+and /clouds/<name> is one of those files (.ply, .splat or .png). Voice commands go to
 /api/voice: a WAV in, what was said and the command in it out (voice.py; the speech model loads
 the first time the page asks, GET /api/voice). An object scan's views are fused here, on this
 laptop: POST /api/scan {"robot": id} fetches the robot's newest scan (GET /pick/scan.zip) into
@@ -51,7 +52,8 @@ FAKES = [   # --fake starts these; robots.fake.json points at them
 ]
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
          ".css": "text/css; charset=utf-8", ".json": "application/json"}
-CLOUD_TYPES = {".ply": "application/octet-stream", ".png": "image/png"}   # scans, floor prints
+CLOUD_TYPES = {".ply": "application/octet-stream", ".splat": "application/octet-stream",
+               ".png": "image/png"}   # scans, Gaussian splats, floor prints
 GET_TIMEOUT, POST_TIMEOUT = 3, 30   # s; a POST may move an arm before it answers
 FETCH_TIMEOUT, FUSE_TIMEOUT = 120, 900   # s: a scan's ~110 files (~15 MB); its fuse (~20 s for 36 views)
 
@@ -198,12 +200,13 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None):
 
 
 def list_clouds(folder):
-    """The PLY files in the folder, newest first: name, size, when each was written, and the
-    floor print exported with it (NAME_arena.ply -> NAME_floor.png), or None."""
-    files = sorted(folder.glob("*.ply"), key=lambda f: f.stat().st_mtime, reverse=True)
+    """The scans in the folder, newest first: the point clouds (PLY) and the Gaussian splats (.splat,
+    train/splat/train_splat.py's): name, kind ("cloud" or "splat"), size, when each was written, and
+    the floor print exported with it (NAME_arena.ply -> NAME_floor.png), or None."""
+    files = sorted([*folder.glob("*.ply"), *folder.glob("*.splat")], key=lambda f: f.stat().st_mtime, reverse=True)
     prints = [f.with_name(f.name.removesuffix("_arena.ply").removesuffix(".ply") + "_floor.png")
               for f in files]
-    return [{"name": f.name, "bytes": f.stat().st_size,
+    return [{"name": f.name, "kind": "splat" if f.suffix == ".splat" else "cloud", "bytes": f.stat().st_size,
              "written": time.strftime("%Y-%m-%d %H:%M", time.localtime(f.stat().st_mtime)),
              "floor": floor.name if floor.is_file() else None}
             for f, floor in zip(files, prints)]
