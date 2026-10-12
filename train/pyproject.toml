@@ -13,6 +13,12 @@ dependencies = [
     # them into the venv by itself
     "onnx>=1.17",
     "onnxslim>=0.1.71",
+    # INT8 by quantization-aware training (train quantize=8: Ultralytics wraps the model with
+    # NVIDIA's ModelOpt; it imports huggingface_hub without declaring it)
+    "nvidia-modelopt>=0.44",
+    "huggingface_hub",
+    # the model table's transformer row (PLAN.md M5, model 3): RF-DETR-Seg on the same kit set
+    "rfdetr[train]",
 ]
 
 [tool.uv.sources]

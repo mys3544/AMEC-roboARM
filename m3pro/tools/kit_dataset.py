@@ -51,11 +51,13 @@ def label_lines(meta: dict, w: int = 640, h: int = 480) -> list[str]:
 
 
 def scenes(stems: list[str]) -> list[list[str]]:
-    """The looks grouped into scenes: a new one wherever a minute or more passes between looks."""
+    """The looks grouped into scenes: a pick's wide look and the close looks after it -- a new one at
+    every wide look, and wherever a minute or more passes. (A minute's gap alone made one scene of a
+    whole session of picks in a row, and every 5th of those put that one session in val, 2026-10-12.)"""
     out, last = [], None
     for stem in sorted(stems):
         t = time.mktime(time.strptime(stem[:15], "%Y%m%d_%H%M%S"))
-        if last is None or t - last >= SCENE_GAP_S:
+        if last is None or t - last >= SCENE_GAP_S or stem[16:].startswith("wide"):
             out.append([])
         out[-1].append(stem)
         last = t

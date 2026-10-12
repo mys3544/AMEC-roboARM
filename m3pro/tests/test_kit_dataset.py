@@ -24,9 +24,12 @@ def test_the_kit_s_pieces_are_named_and_the_rest_left_out():
     assert lines == ["0 0.00000 0.02083 1.00000 0.02083 0.50000 0.50000"]   # clipped to the picture
 
 
-def test_looks_a_minute_apart_are_separate_scenes():
-    stems = ["20261009_174744_wide", "20261009_174825_close", "20261009_175153_wide", "20261009_175201_close"]
-    assert kit_dataset.scenes(stems) == [stems[:2], stems[2:]]
+def test_a_scene_is_a_pick_s_wide_look_and_its_close_looks():
+    stems = ["20261009_174744_wide", "20261009_174825_close", "20261009_175153_wide", "20261009_175201_close",
+             "20261009_175214_wide", "20261009_175230_close", "20261009_175235_close"]   # picks in a row
+    assert kit_dataset.scenes(stems) == [stems[:2], stems[2:4], stems[4:]]
+    assert kit_dataset.scenes(["20261009_174825_close", "20261009_175201_close"]) == [
+        ["20261009_174825_close"], ["20261009_175201_close"]]   # a minute apart: apart
 
 
 def test_the_box_views_are_left_out(tmp_path, monkeypatch):

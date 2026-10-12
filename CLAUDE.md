@@ -20,6 +20,11 @@ Plans: PLAN.md (both robots), x3plus/PLAN.md, m3pro/PLAN.md. What is left from t
 - Daniel watches the sim with the Isaac Sim WebRTC Streaming Client connected to hekate (Tailscale IP, or the LAN address while Tailscale is blocked).
 - For longer work on the PC (several steps, editing files there), message the Remote Control session "hekate"
   instead of driving everything over SSH.
+- Our training there: `train/` (its own uv project, CUDA torch; NOT a workspace member -- never
+  `uv run` inside train/ on this laptop, it installs hekate's torch here) is copied to
+  `Sim Arm 2026\train` with its lock. The kit detector's whole cycle, from the repo root:
+  `uv run python tools/kit_cycle.py [--size n|s] [--int8]` (fetch the M3's looks, build the set,
+  train on hekate, ONNX and weights back to train/runs/kit/).
 - Training runs on that GPU. Do not stop, kill or restart anything there that you did not start.
   Ask before starting anything GPU-heavy when less than ~16 GB VRAM is free, and before any firewall,
   SSH, scheduled-task or software change there.
