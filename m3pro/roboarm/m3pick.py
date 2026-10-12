@@ -634,7 +634,8 @@ class Picker(Task):
         self.odom, self.goto = odom, goto
 
     def jobs(self) -> dict:
-        return {**super().jobs(), "scan": self.scan, "teach": self.teach, "find": self.find, "pick_named": self.pick_named}
+        return {**super().jobs(), "scan": self.scan, "teach": self.teach, "teach_scan": self.teach_scan,
+                "find": self.find, "pick_named": self.pick_named}
 
     def teach(self, name: str) -> None:
         """Learn the thing alone in front as `name`, from views round it (m3teach.teach)."""
@@ -656,10 +657,24 @@ class Picker(Task):
             return []
 
     def scan(self, radius: float = m3scan.STOP_R, stops: float = m3scan.STOPS, height: float | None = None,
-             width: float | None = None) -> None:
+             width: float | None = None, name: str | None = None) -> None:
         """Drive round the thing about `radius` m ahead, the camera on it, keeping every view (m3scan.run);
-        its size as given (`height`, `width`, m) or as the first look reads it."""
-        m3scan.run(self, radius, int(stops), height, width)
+        its size as given (`height`, `width`, m) or as the first look reads it. Given a `name`, then
+        learn the thing as that from the views (m3teach.teach_from_scan)."""
+        if name is not None:
+            m3teach.checked_name(name)   # before the drive, not after it
+        folder = m3scan.run(self, radius, int(stops), height, width)
+        if name is not None and folder is not None:
+            m3teach.teach_from_scan(self, name, folder)
+
+    def teach_scan(self, name: str, stamp: str | None = None) -> None:
+        """Learn `name` from a scan already made (out/scan/STAMP, the newest by default)."""
+        if self.out is None:
+            raise RuntimeError("no pictures kept here: no scan to teach from")
+        folders = sorted(f for f in (self.out.parent / "scan").glob("*_*") if f.is_dir() and stamp in (None, f.name))
+        if not folders:
+            raise RuntimeError(f"no scan {stamp or 'yet'} to teach from")
+        m3teach.teach_from_scan(self, name, folders[-1])
 
     def wrist(self, thing: dict, around: list[dict], whole: bool | None = None, opened: int | None = None):
         """grip pose -> (J5s square, J5s off square) for `thing` (wrist_choices): the fingers, opened to

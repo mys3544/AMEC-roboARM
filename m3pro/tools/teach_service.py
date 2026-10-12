@@ -15,7 +15,8 @@ jobs (roboarm/m3teach.py) ask it over 127.0.0.1:8762:
                     the taught prompts as its classes, pixels
 
 Who is who: DINOv2 (ViT-S/14, the CLS token and the mean patch token of a square crop round the box,
-unit length), scored against every view a thing was taught from -- the mean similarity. 2026-10-09,
+unit length), scored against the views a thing was taught from -- the mean similarity of its BEST
+three (all of them until 2026-10-12, when things were first taught from scans all round). 2026-10-09,
 the four picture cubes taught, a scene of four: DINOv2 named 4 of 4, the right name 0.09-0.17 ahead;
 YOLOE's visual prompts 1 of 4, at 640 px and at 1280 (one name won everywhere: its prompts tell a
 cube from a cup, not one print from another). So YOLOE stays for finding things where there is no
@@ -51,6 +52,7 @@ TEACH = ROOT / "out" / "teach"
 LIBRARY = TEACH / "library.npz"
 MEAN, STD = np.array([0.485, 0.456, 0.406]), np.array([0.229, 0.224, 0.225])
 CROP_GROW, CROP_PX = 0.15, 224
+BEST = 3   # the taught views of a name a crop is scored on: its most like it
 
 
 def crop(image: np.ndarray, box) -> np.ndarray:
@@ -107,7 +109,10 @@ class Teacher:
             seen = self.features(image, boxes)
             out = []
             for f in seen:
-                scores = {n: float(np.mean(v @ f)) for n, v in self.views.items() if len(v)}
+                # a name's score: its BEST views' mean -- taught from a scan, its views go all round it,
+                # and a look sees one side (the user's choice, 2026-10-12; on the taught cubes left out
+                # one at a time: 24/24 either way, own 0.88 and the next name's 0.70 at the median)
+                scores = {n: float(np.mean(np.sort(v @ f)[-BEST:])) for n, v in self.views.items() if len(v)}
                 ranked = sorted(scores, key=scores.get, reverse=True)
                 margin = scores[ranked[0]] - (scores[ranked[1]] if len(ranked) > 1 else 0.0)
                 out.append({"scores": {n: round(s, 3) for n, s in scores.items()}, "name": ranked[0],

@@ -1,5 +1,6 @@
 """roboarm/m3teach.py: the box round a thing in a view, the views round it, a thing named by the
-detection that covers it, and the teach and the pick by name against a pretend arm and model."""
+detection that covers it, and the teach and the pick by name against a pretend arm and model; the
+teach from a scan's views all round the thing."""
 
 
 import numpy as np
@@ -80,3 +81,41 @@ def test_the_teach_looks_from_round_the_thing_and_stores_the_average(tmp_path, m
     assert len(list((tmp_path / "teach" / "apricot").glob("*_rgb.jpg"))) == len(table.embedded)
     with pytest.raises(RuntimeError, match="name"):
         picker.teach("  ")
+
+
+def test_a_scan_with_a_name_teaches_the_thing_from_its_views_all_round(tmp_path, monkeypatch):
+    from test_m3scan import Round
+
+    world = Round((0.37, -0.01, 30.0, 0.06, 0.05))
+    embedded, taught = [], {}
+
+    def ask(path, payload=None, timeout=30.0):
+        if path == "/embed":
+            embedded.append(payload["boxes"][0])
+            return {"embeddings": [list(np.eye(4)[len(embedded) % 4] + 1.0)]}
+        if path == "/teach":
+            taught[payload["name"]] = payload["embedding"]
+            return {"names": list(taught)}
+        raise AssertionError(path)
+    monkeypatch.setattr(m3teach, "ask", ask)
+    picker = m3pick.Picker(world.call, world.snapshot, tmp_path / "pick", settle_s=0.0,
+                           odom=lambda: world.odom, goto=world.goto)
+    with pytest.raises(RuntimeError, match="name"):
+        picker.scan(radius=0.38, stops=4, name="  ")
+    assert world.trail == []   # refused before the drive
+
+    picker.scan(radius=0.38, stops=4, name="jetson box")
+    scan = next((tmp_path / "scan").iterdir())
+    views = list(scan.glob("[0-9][0-9]_*_rgb.jpg"))
+    kept = list((tmp_path / "teach" / "jetson box").glob("*_rgb.jpg"))
+    assert len(views) >= 8 and len(kept) == len(views) == len(embedded)   # every view, from all round
+    assert list(taught) == ["jetson box"] and abs(np.linalg.norm(taught["jetson box"]) - 1) < 1e-6
+    for box in embedded:
+        assert 0 <= box[0] < box[2] < 640 and 0 <= box[1] < box[3] < 480
+
+    driven = len(world.trail)   # a scan already made: taught again, the base still
+    picker.teach_scan("box again")
+    assert len(world.trail) == driven
+    assert len(list((tmp_path / "teach" / "box again").glob("*_rgb.jpg"))) == len(views)
+    with pytest.raises(RuntimeError, match="no scan 20990101_000000"):
+        picker.teach_scan("x", stamp="20990101_000000")

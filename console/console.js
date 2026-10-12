@@ -301,7 +301,7 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     $('.cleanup', controls).onclick = () => this.act('clean up: started', call(robot, 'pick/cleanup', { drive: drive() }));
     $('.home', controls).onclick = () => this.act('home: started', call(robot, 'pick/home', {}));
     this.teachRow(robot, $('.teach', controls));
-    this.scanRow(robot, $('.scan', controls));
+    this.scanRow(robot, $('.scan', controls), $('.teach .thing', controls));
     this.speed = $('.armspeed input', controls);
     this.speed.oninput = () => { $('.armspeed output', controls).textContent = `${this.speed.value} %`; };
     this.speed.onchange = () => this.setting('speed', this.speed.value);
@@ -361,8 +361,9 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     };
   }
 
-  scanRow(robot, row) {   // a 3D model of the thing in front: the M3 drives round it (m3pro/roboarm/m3scan.py),
-                          // then this laptop fuses the views (serve.py /api/scan)
+  scanRow(robot, row, thing) {   // a 3D model of the thing in front: the M3 drives round it (m3pro/roboarm/m3scan.py),
+                                 // then this laptop fuses the views (serve.py /api/scan); with a name
+                                 // in `thing`, the robot also learns it from the views (m3teach)
     if (robot.kind !== 'm3arm') {
       row.style.display = 'none';
       return;
@@ -371,12 +372,23 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     this.in3d = $('.in-3d', row);
     $('.scan-it', row).onclick = () => {
       const tall = Number($('.tall', row).value), wide = Number($('.wide', row).value);
+      const name = thing.value.trim();
       const body = { radius: 0.42 };   // m round it: a thing up to 20 cm tall (0.38 holds ~15)
       if (tall && wide) Object.assign(body, { height: tall / 100, width: wide / 100 });
-      this.act(`scan: started${tall && wide ? ` (${tall} cm tall, ${wide} cm across, as given)` : ''}`,
-        call(robot, 'pick/scan', body));
+      if (name) body.name = name;
+      this.act(`scan: started${tall && wide ? ` (${tall} cm tall, ${wide} cm across, as given)` : ''}` +
+        `${name ? `, then taught as '${name}'` : ''}`, call(robot, 'pick/scan', body));
     };
     $('.fuse-last', row).onclick = () => this.fuseScan();
+    $('.teach-scan', row).onclick = () => {
+      const name = thing.value.trim();
+      if (!name) {
+        log(`${robot.name}: teach from the scan -- give the thing a name first`, true);
+        thing.focus();
+        return;
+      }
+      this.act(`teach '${name}' from the last scan: started`, call(robot, 'pick/teach_scan', { name }));
+    };
     this.in3d.onclick = () => $('#layouts [data-layout="cloud"]').click();
   }
 

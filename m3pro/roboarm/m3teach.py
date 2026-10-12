@@ -8,6 +8,9 @@ the teach model (tools/teach_service.py, YOLOE-26 visual prompts, 127.0.0.1:8762
   views' embeddings, averaged, are what `name` is (A2: the user's choice of YOLOE, 2026-10-09; one
   view of one face named an apricot cube the news one in the next layout). Every view is kept
   (out/teach/NAME/) for training a detector on later (A4).
+- teach_from_scan(name, folder): the same from an object scan's views (m3scan.run: the base went round
+  the thing, 24-36 views from all sides where teach() has 5-8 from one) -- the scan's job when it is
+  given a name, or its own job on a scan already made (the user's choice, 2026-10-12).
 - find(): what each thing on the table is -- the wide look's things (the depth), each named by
   DINOv2 against the taught views (the service's /identify), or unknown. YOLOE's own detections,
   first used for this, named 1 of 4 picture cubes right, DINOv2 4 of 4 (2026-10-09, the user's choice
@@ -23,6 +26,7 @@ import math
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -124,9 +128,7 @@ def the_thing(p) -> tuple[dict, np.ndarray, np.ndarray, np.ndarray]:
 
 def teach(p, name: str) -> None:
     """Learn the thing standing alone in front of the robot as `name` (see the module)."""
-    name = str(name).strip()
-    if not name:
-        raise RuntimeError("a taught thing needs a name")
+    name = checked_name(name)
     p.engaged()
     with p.step("look.teach"):
         thing, *_ = the_thing(p)
@@ -136,10 +138,7 @@ def teach(p, name: str) -> None:
     poses = views_of(centre, radius, thing["top"])
     p.say(f"to teach '{name}': {100 * thing['top']:.0f} cm tall, {100 * max(w, h):.0f} cm long, "
           f"at x {centre[0]:.3f} y {centre[1]:+.3f}; {len(poses)} views")
-    folder = None if p.out is None else p.out.parent / "teach" / name.replace("/", "_")
-    if folder is not None:
-        folder.mkdir(parents=True, exist_ok=True)
-    embeddings = []
+    shots = []
     for i, pose in enumerate(poses):
         p.check()
         with p.step("look.teach"):
@@ -147,24 +146,71 @@ def teach(p, name: str) -> None:
             time.sleep(p.settle_s if p.settle_s is not None else p.cfg["settle_close_s"])
             image, depth, K, joints = p.snapshot()
             box = box_around(depth, K, m3scan.levelled(depth, K, joints), centre, radius)
-        if box is None:
-            continue
+        if box is not None:
+            shots.append((f"{time.strftime('%Y%m%d_%H%M%S')}_{i}", image, depth, K, joints, box))
+    learn(p, name, shots)
+    p.home()
+
+
+def checked_name(name) -> str:
+    name = str(name).strip()
+    if not name:
+        raise RuntimeError("a taught thing needs a name")
+    return name
+
+
+def learn(p, name: str, shots: list[tuple]) -> None:
+    """Teach `name` from views of it -- each (a file stem, the picture, the depth, K, the joints, its
+    pixel box): each view kept in out/teach/NAME/ (the service's DINOv2 views of it are made from
+    them), their YOLOE embeddings averaged into its prompt."""
+    folder = None if p.out is None else p.out.parent / "teach" / name.replace("/", "_")
+    if folder is not None:
+        folder.mkdir(parents=True, exist_ok=True)
+    embeddings = []
+    for stem, image, depth, K, joints, box in shots:
+        p.check()
         with p.step("teach.embed"):
             embeddings.append(ask("/embed", {"jpeg": jpeg(image), "boxes": [box]})["embeddings"][0])
         if folder is not None:
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            cv2.imwrite(str(folder / f"{stamp}_{i}_rgb.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            cv2.imwrite(str(folder / f"{stamp}_{i}_depth.png"), depth)
-            (folder / f"{stamp}_{i}.json").write_text(json.dumps({"name": name, "box": box, "K": np.asarray(K).tolist(),
-                                                                  "pose": {str(j): v for j, v in joints.items()}}))
+            cv2.imwrite(str(folder / f"{stem}_rgb.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            cv2.imwrite(str(folder / f"{stem}_depth.png"), depth)
+            (folder / f"{stem}.json").write_text(json.dumps({"name": name, "box": box, "K": np.asarray(K).tolist(),
+                                                             "pose": {str(j): v for j, v in joints.items()}}))
     if not embeddings:
         raise RuntimeError(f"'{name}' was not seen in any view")
     mean = np.mean(np.asarray(embeddings), axis=0)
     mean = mean / np.linalg.norm(mean)
     spread = float(np.mean(np.asarray(embeddings) @ mean))
     names = ask("/teach", {"name": name, "embedding": mean.tolist()})["names"]
-    p.home()
     p.say(f"taught '{name}' from {len(embeddings)} views (they agree {spread:.2f}); known: {', '.join(names)}")
+
+
+def teach_from_scan(p, name: str, folder) -> None:
+    """Learn `name` from an object scan's views (m3scan.run's folder): views from all round the thing,
+    where teach() sees one side -- each boxed by the depth round where that view read the thing."""
+    name, folder = checked_name(name), Path(folder)
+    plan = json.loads((folder / "scan.json").read_text())
+    centres = plan.get("centres") or []
+    shots = []
+    for meta in sorted(folder.glob("[0-9][0-9]_*.json")):
+        v = json.loads(meta.read_text())
+        image = cv2.imread(str(meta.with_name(meta.stem + "_rgb.jpg")))
+        depth = cv2.imread(str(meta.with_name(meta.stem + "_depth.png")), cv2.IMREAD_UNCHANGED)
+        if image is None or depth is None:
+            continue
+        joints, K = {int(j): a for j, a in v["pose"].items()}, np.asarray(v["K"], float)
+        cam = m3scan.levelled(depth, K, joints)
+        seen = v.get("thing")   # the view's own reading (scans before 2026-10-12: read it now)
+        if seen is None:
+            near = centres[v["stop"]] if v["stop"] < len(centres) else plan["centre"]
+            seen = m3scan.find_thing(depth, K, cam, m3scan.to_local(v["odom"], near))
+        if not seen or not seen["whole"]:
+            continue
+        box = box_around(depth, K, cam, seen["centre"], max(seen["radius"], plan["radius"]) + 0.02)
+        if box is not None:
+            shots.append((f"scan{folder.name}_{meta.stem}", image, depth, K, joints, box))
+    p.say(f"to teach '{name}': {len(shots)} views from the scan {folder.name}")
+    learn(p, name, shots)
 
 
 def box_of(o: dict, margin: int = 4) -> list[int]:

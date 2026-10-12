@@ -227,11 +227,12 @@ def world_of(odom) -> np.ndarray:
 
 
 def run(p, radius: float = STOP_R, stops_n: int = STOPS, height: float | None = None,
-        width: float | None = None) -> None:
+        width: float | None = None):
     """The scan as a job of the M3's Picker `p` (its arm, camera, base and narration): find the
     thing about `radius` m ahead, stand `radius` from it facing it, then at each of `stops_n` stops
     round it take stop_views() and keep every view (out/scan/STAMP/: the colour, the depth, a JSON
     of the pose, K, the odometry and the thing as that view read it), and come back to the first stop.
+    Returns that folder (None when the Picker keeps no pictures).
 
     The arm keeps clear of the thing by its size as the first look reads it, FIRST_SHORT wider -- or
     as given (`height`, `width`: m, the widest way across), which a thing that runs off that look's
@@ -334,6 +335,7 @@ def run(p, radius: float = STOP_R, stops_n: int = STOPS, height: float | None = 
         (folder / "scan.json").write_text(json.dumps(record, indent=1))
     p.home()
     p.say(f"scan done: {kept} views" + (f" in {folder}" if folder is not None else ""))
+    return folder
 
 
 def anchor(views: list[dict]) -> tuple[np.ndarray, float, float]:
