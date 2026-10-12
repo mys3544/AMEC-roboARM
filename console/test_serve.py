@@ -1,6 +1,7 @@
 """console/serve.py against a pretend robot: JSON passes through both ways, an unreachable
 robot is a 502 with a reason, and nothing outside console/ is served; of the 3D scans, only the
-PLY files and floor prints in their own folder; an object scan fetched from the robot and fused.
+PLY files, splats and floor prints in their own folder; an object scan fetched from the robot and
+fused; the newest scan made a Gaussian splat.
 
     python -m pytest console
 """
@@ -160,3 +161,47 @@ def test_a_scan_is_fetched_from_the_robot_and_fused_into_the_3d_scans(tmp_path):
     fetch(f"{base}/api/scan", {"robot": "bare"})   # the robot's own reason
     assert finished() == {"state": "failed", "stamp": None, "cloud": None, "message": "no scan yet"}
     assert fetch(f"{base}/api/scan", {"robot": "nobody"})[0] == 404
+
+
+def test_the_newest_scan_becomes_a_splat_among_the_3d_scans(tmp_path):
+    scans = tmp_path / "scan"
+    for stamp in ("20261012_165048", "20261012_172202", "20261013_090000"):
+        (scans / stamp).mkdir(parents=True)
+    for stamp in ("20261012_165048", "20261012_172202"):   # the third has no scan.json: not a scan
+        (scans / stamp / "scan.json").write_text("{}")
+    said = ["2. scan: its views", "4. fitting the splat on hekate", "** WARNING: ssh's key exchange",
+            "held-out views: PSNR 25.52 dB", "-> m3pro/out/arena/rtab/splat_jetson-box_20261012_172202.splat"]
+    asked = []
+
+    def cycle(args):   # tools/splat_cycle.py, pretended: what it was asked, then its lines
+        asked.append(args)
+        return [sys.executable, "-c", f"import sys; print(*{said!r}, sep=chr(10)); sys.exit({len(asked) - 1})"]
+
+    splats = serve.Splats(scans, command=cycle)
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler([], tmp_path / "rtab", splats=splats)))
+    base = f"http://127.0.0.1:{port}"
+
+    def finished():
+        for _ in range(200):
+            state = json.loads(fetch(f"{base}/api/splat")[1])
+            if state["state"] in ("done", "failed"):
+                return state
+            time.sleep(0.05)
+        raise AssertionError(f"still {state}")
+
+    assert json.loads(fetch(f"{base}/api/splat")[1])["state"] == "idle"
+    status, body = fetch(f"{base}/api/splat", {"name": "jetson box!"})
+    assert status == 200 and json.loads(body)["stamp"] == "20261012_172202"
+    assert finished() == {"state": "done", "stamp": "20261012_172202", "message": "held-out views: PSNR 25.52 dB",
+                          "splat": "splat_jetson-box_20261012_172202.splat"}
+    assert asked == [["20261012_172202", "--name", "jetson-box"]]
+
+    fetch(f"{base}/api/splat", {})   # the cycle fails (exit 1): its last line says why
+    state = finished()
+    assert state["state"] == "failed" and state["message"].endswith("splat_jetson-box_20261012_172202.splat")
+    assert asked[-1] == ["20261012_172202"]
+
+    empty = serve.make_handler([], tmp_path / "rtab", splats=serve.Splats(tmp_path / "none", command=cycle))
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), empty))
+    status, body = fetch(f"http://127.0.0.1:{port}/api/splat", {})
+    assert status == 409 and "no scan" in json.loads(body)["error"]

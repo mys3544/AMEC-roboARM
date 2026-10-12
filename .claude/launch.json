@@ -40,6 +40,16 @@
         "console/serve.py"
       ],
       "port": 8099
+    },
+    {
+      "name": "console-alt",
+      "runtimeExecutable": ".venv/Scripts/python",
+      "runtimeArgs": [
+        "console/serve.py",
+        "--port",
+        "8098"
+      ],
+      "port": 8098
     }
   ]
 }

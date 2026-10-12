@@ -34,7 +34,8 @@ ROOT = Path(__file__).resolve().parents[1]
 M3 = ROOT / "m3pro"
 SCANS = M3 / "out" / "scan"
 CLOUDS = M3 / "out" / "arena" / "rtab"   # the console's 3D view lists these (console/serve.py)
-NOISE = re.compile(r"^W\d{4} ")   # torch's own warnings: its check of cl's version fails, harmlessly
+# torch's own warnings (its check of cl's version fails, harmlessly), and ssh's about its key exchange
+NOISE = re.compile(r"^(W\d{4} |\*\* )")
 
 
 def fit(name: str, steps: int, depth_weight: float, pose_lr: float, log: Path) -> None:

@@ -18,7 +18,9 @@ and /clouds/<name> is one of those files (.ply, .splat or .png). Voice commands 
 the first time the page asks, GET /api/voice). An object scan's views are fused here, on this
 laptop: POST /api/scan {"robot": id} fetches the robot's newest scan (GET /pick/scan.zip) into
 m3pro/out/scan/ and runs m3pro/tools/m3_scan.py fuse on it, which puts object_STAMP.ply among
-the 3D scans; GET /api/scan says how far it is. The
+the 3D scans; GET /api/scan says how far it is. POST /api/splat {"name": THING or none} makes the
+newest scan there a Gaussian splat (tools/splat_cycle.py: hekate fits it, ~2 min) among the 3D scans,
+splat_[THING_]STAMP.splat; GET /api/splat says how far it is. The
 console listens on localhost only: it is this laptop's (and a microphone needs localhost).
 Standard library only (and sherpa-onnx for voice, when it is there; Open3D for the fuse, in
 the fuse's own process).
@@ -27,7 +29,9 @@ the fuse's own process).
 import argparse
 import io
 import json
+import os
 import pathlib
+import re
 import socket
 import subprocess
 import sys
@@ -56,6 +60,7 @@ CLOUD_TYPES = {".ply": "application/octet-stream", ".splat": "application/octet-
                ".png": "image/png"}   # scans, Gaussian splats, floor prints
 GET_TIMEOUT, POST_TIMEOUT = 3, 30   # s; a POST may move an arm before it answers
 FETCH_TIMEOUT, FUSE_TIMEOUT = 120, 900   # s: a scan's ~110 files (~15 MB); its fuse (~20 s for 36 views)
+SPLAT_TIMEOUT = 1800   # s: a splat takes ~2 min; gsplat's first build on hekate ~10
 
 
 def fuse_scan(stamp: str) -> str:
@@ -115,10 +120,69 @@ class Scans:
             self.set(state="failed", message=str(e) or type(e).__name__)
 
 
-def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None):
+def splat_cycle(args: list[str]) -> list[str]:
+    """tools/splat_cycle.py with `args`, as a command (this venv's Python: the fuse needs Open3D)."""
+    return [sys.executable, "-u", str(ROOT / "tools" / "splat_cycle.py"), *args]
+
+
+class Splats:
+    """One Gaussian splat at a time, of the newest scan on this laptop, into the 3D scans: hekate fits
+    it (tools/splat_cycle.py); its lines as they come say how far it is."""
+
+    def __init__(self, folder=SCANS, command=splat_cycle):
+        self.folder, self.command = folder, command
+        self.lock = threading.Lock()
+        self.state = {"state": "idle", "stamp": None, "splat": None, "message": ""}
+
+    def status(self) -> dict:
+        with self.lock:
+            return dict(self.state)
+
+    def set(self, **changes):
+        with self.lock:
+            self.state.update(changes)
+
+    def start(self, name: str | None) -> dict:
+        """The newest scan's splat, named after the thing (`name`, made file-safe) if given."""
+        stamps = sorted(f.parent.name for f in self.folder.glob("*/scan.json")) if self.folder.is_dir() else []
+        if not stamps:
+            return {"error": "no scan on this laptop yet: Scan, or Fuse last scan"}
+        name = re.sub(r"[^A-Za-z0-9_-]+", "-", name or "").strip("-")
+        with self.lock:
+            if self.state["state"] == "running":
+                return {"error": f"a splat of {self.state['stamp']} is running already"}
+            self.state = {"state": "running", "stamp": stamps[-1], "splat": None, "message": "starting"}
+        threading.Thread(target=self.run, args=(stamps[-1], name), daemon=True).start()
+        return self.status()
+
+    def run(self, stamp: str, name: str):
+        try:
+            proc = subprocess.Popen(self.command([stamp, *(["--name", name] if name else [])]), cwd=ROOT,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
+                                    env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1"})
+            watchdog = threading.Timer(SPLAT_TIMEOUT, proc.kill)
+            watchdog.start()
+            last = scored = ""
+            for line in proc.stdout:
+                if (line := line.strip()) and not line.startswith("** "):   # not ssh's warnings
+                    last = line
+                    scored = line if line.startswith("held-out views") else scored
+                    self.set(message=line[:240])
+            proc.wait()
+            watchdog.cancel()
+            if proc.returncode != 0:
+                raise RuntimeError(last or f"splat_cycle.py ended with {proc.returncode}")
+            self.set(state="done", splat=f"splat_{name + '_' if name else ''}{stamp}.splat",
+                     message=(scored or last).split(" -> ")[0])   # not where it lies on hekate
+        except Exception as e:   # noqa: BLE001 -- whatever it was, the page says it
+            self.set(state="failed", message=str(e) or type(e).__name__)
+
+
+def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None, splats=None):
     urls = {r["id"]: r["url"].rstrip("/") for r in robots}
     recognizer = recognizer or voice.Recognizer()   # loads nothing until the page asks
     scans = scans or Scans()
+    splats = splats or Splats()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"   # keep-alive: the page polls several times a second
@@ -147,6 +211,8 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None):
                 return self.send(200, json.dumps(list_clouds(clouds)).encode(), TYPES[".json"])
             if path == "/api/scan":   # the object scan's fetch and fuse: how far
                 return self.send(200, json.dumps(scans.status()).encode(), TYPES[".json"])
+            if path == "/api/splat":   # the newest scan's Gaussian splat, on hekate: how far
+                return self.send(200, json.dumps(splats.status()).encode(), TYPES[".json"])
             if path == "/api/voice":   # ready, loading, or why not; starts the model's load
                 return self.send(200, json.dumps(recognizer.status()).encode(), TYPES[".json"])
             if path.startswith("/clouds/"):
@@ -174,6 +240,13 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None):
                 if robot not in urls:
                     return self.error(404, f"no robot {robot!r}")
                 reply = scans.start(urls[robot])
+                return self.send(409 if "error" in reply else 200, json.dumps(reply).encode(), TYPES[".json"])
+            if self.path == "/api/splat":   # {"name": THING or none}: the newest scan's splat
+                try:
+                    name = json.loads(body or b"{}").get("name")
+                except (ValueError, AttributeError):
+                    name = None
+                reply = splats.start(name if isinstance(name, str) else None)
                 return self.send(409 if "error" in reply else 200, json.dumps(reply).encode(), TYPES[".json"])
             self.error(404, "not found")
 
@@ -219,18 +292,19 @@ class Server6(ThreadingHTTPServer):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--fake", action="store_true", help="pretend robots, no hardware")
+    parser.add_argument("--port", type=int, default=PORT, help=f"(default {PORT}) another, for a second console beside one open")
     args = parser.parse_args()
     robots = json.loads((HERE / ("robots.fake.json" if args.fake else "robots.json")).read_text())
     # not waited for: the page asks each robot every 0.5 s until it answers
     procs = [subprocess.Popen(cmd, cwd=ROOT) for cmd in FAKES] if args.fake else []
     handler = make_handler(robots)
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), handler)
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     try:   # "localhost" is tried as ::1 first on Windows; without this each connection waits
-        server6 = Server6(("::1", PORT), handler)
+        server6 = Server6(("::1", args.port), handler)
         threading.Thread(target=server6.serve_forever, daemon=True).start()
     except OSError:
         pass   # no IPv6 loopback here
-    print(f"console: http://localhost:{PORT}/  (Ctrl-C to stop)", flush=True)
+    print(f"console: http://localhost:{args.port}/  (Ctrl-C to stop)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

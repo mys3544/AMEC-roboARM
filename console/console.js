@@ -389,6 +389,7 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
       }
       this.act(`teach '${name}' from the last scan: started`, call(robot, 'pick/teach_scan', { name }));
     };
+    $('.splat-last', row).onclick = e => this.splatScan(e.currentTarget, thing.value.trim());
     this.in3d.onclick = () => $('#layouts [data-layout="cloud"]').click();
   }
 
@@ -420,6 +421,37 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     } catch (e) {
       this.scanNoted(`not fused: ${e.message}`, true);
       log(`${this.robot.name}: scan not fused -- ${e.message}`, true);
+    }
+  }
+
+  async splatScan(button, name) {   // the newest scan here -> a Gaussian splat among the 3D scans (serve.py /api/splat)
+    this.in3d.hidden = true;
+    button.disabled = true;
+    try {
+      const reply = await fetch('/api/splat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name || null }),
+      });
+      const started = await reply.json().catch(() => ({}));
+      if (!reply.ok) throw new Error(started.error || `HTTP ${reply.status}`);
+      log(`splat of scan ${started.stamp}: started on hekate${name ? ` as '${name}'` : ''}`);
+      for (;;) {
+        await new Promise(done => setTimeout(done, 1500));
+        const s = await (await fetch('/api/splat')).json();
+        if (s.state === 'failed') throw new Error(s.message);
+        if (s.state === 'done') {
+          store.set('console.cloud', s.splat);
+          this.scanNoted(`${s.splat} -- ${s.message}`);
+          this.in3d.hidden = false;
+          log(`splat ready: ${s.splat}`);
+          return;
+        }
+        this.scanNoted(`splat of ${s.stamp}: ${s.message.replace(/^\d\. /, '')}...`);
+      }
+    } catch (e) {
+      this.scanNoted(`no splat: ${e.message}`, true);
+      log(`splat: ${e.message}`, true);
+    } finally {
+      button.disabled = false;
     }
   }
 
