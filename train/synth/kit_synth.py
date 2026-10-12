@@ -10,8 +10,8 @@ render goes on inside Isaac Sim: count OUT's instance_segmentation_semantics_map
 Each frame: the arena mat (grey or green, yellow and white lines), 1-6 kit pieces (the 30 and 40 mm
 cubes, the 30x30x60 block lying or standing; colours as the real kit's, jittered) placed apart, 0-3
 things that are not the kit (tape rolls, cans, boxes, balls: no label), the light, and the M3's camera
-(fx 480.8 at 640 x 480: m3pro's K) looking down at them from 35-89 deg, 0.18-0.55 m away -- the pick's
-wide and close looks and the scan's. Written by Replicator's BasicWriter (rgb + instance segmentation)
+(fx 480.8 at 640 x 480: m3pro's K) where the pick's wide and close looks put it (LOOKS), turned any way
+round. Written by Replicator's BasicWriter (rgb + instance segmentation)
 to OUT; train/synth/synth_to_yolo.py turns that into the real set's labels. Why: the real set has 19
 pictures of the 40 mm cube in all (2026-10-12), and synthetic pieces cost nothing.
 """
@@ -36,6 +36,13 @@ FLOORS = [(0.33, 0.33, 0.38), (0.40, 0.39, 0.44), (0.27, 0.27, 0.30), (0.16, 0.4
 LINES = [(0.92, 0.78, 0.10), (0.92, 0.92, 0.92)]
 FAR = (50.0, 50.0, -5.0)             # where an unused prim waits, out of every picture
 DOME, SUN = (60.0, 250.0), (0.0, 600.0)   # light: 300-1500 and 0-3000 washed the mat out to white
+# The camera where the M3's own looks put it -- (name, height over the floor m, down deg): the pick's
+# wide look (m3scan.LOOK_AT) and its close look over a piece. A camera anywhere from 18 to 55 cm away
+# made a far 40 mm cube look like a near 30 mm one: trained on that, the 40 mm cubes went unfound
+# (0 of 3, against 1 of 3 on the real pictures alone, 2026-10-12) -- seen from the robot's few poses
+# a piece's size in the picture is what tells the two apart.
+LOOKS = (("wide", 0.279, 69.5), ("close", 0.21, 85.0))
+WIDE_SHARE = 0.6
 
 
 def _colour(prim, rgb):
@@ -126,11 +133,12 @@ def _frame(scene, rng):
             _colour(prim, rng.uniform(0.05, 0.95, 3))
         else:
             rep.functional.modify.pose(prim, position_value=FAR)
-    elevation, azimuth = math.radians(rng.uniform(35, 89)), rng.uniform(0, 2 * math.pi)
-    distance = rng.uniform(0.18, 0.55)
-    aim = np.r_[rng.uniform(-0.05, 0.05, 2), 0.015]
-    eye = aim + distance * np.array([math.cos(elevation) * math.cos(azimuth), math.cos(elevation) * math.sin(azimuth),
-                                     math.sin(elevation)])
+    _, height, down = LOOKS[int(rng.random() >= WIDE_SHARE)]
+    height, down = height + rng.uniform(-0.02, 0.02), math.radians(down + rng.uniform(-4, 4))
+    azimuth = rng.uniform(0, 2 * math.pi)
+    aim = np.r_[rng.uniform(-0.05, 0.05, 2), 0.0]   # where the optical axis meets the floor
+    ahead = height / math.tan(down)
+    eye = aim + np.array([-ahead * math.cos(azimuth), -ahead * math.sin(azimuth), height])
     rep.functional.modify.pose(scene["cam"], position_value=tuple(eye), look_at_value=tuple(aim))
     rep.functional.modify.attribute(scene["dome"], "inputs:intensity", float(rng.uniform(DOME[0], DOME[1])))
     rep.functional.modify.attribute(scene["sun"], "inputs:intensity", float(rng.uniform(SUN[0], SUN[1])))
