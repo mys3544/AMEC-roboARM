@@ -43,7 +43,8 @@ def ssh(command: str, timeout: float = 600, check: bool = True) -> str:
     redirected (2>&1): Windows PowerShell then fails the command whatever the program did -- uv sync
     writes its progress there (2026-10-12) -- and a real failure shows as the files not there after."""
     done = subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, command], capture_output=True, text=True,
-                          timeout=timeout, check=False)
+                          encoding="utf-8", errors="replace", timeout=timeout, check=False)   # (2026-10-13: cp1252
+    # met a byte it has no character for in Ultralytics' output, and the step's report came back None)
     if check and done.returncode != 0:
         raise SystemExit(f"hekate: {(done.stderr or done.stdout).strip()[-800:]}")
     return done.stdout
