@@ -1444,7 +1444,7 @@ class Session:
         else:
             self.missed += 1
         try:
-            step = grasp.plan(grasp.aim_for(target, self.reach_offset_mm / 1000), reach_offset_m=0.0)
+            step = grasp.plan(grasp.aim_for(target, self.reach_offset_mm / 1000), reach_offset_m=None)
         except grasp.GraspError:
             step = None
         self.last_pick = {"picked": held, "kind": kind_of(target) or target.label,

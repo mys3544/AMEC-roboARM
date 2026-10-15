@@ -68,6 +68,30 @@ def test_clean_up_takes_both_and_says_why_it_stopped(rig):
     assert any("clean-up done" in e["text"] for e in picker.log())
 
 
+def test_the_look_finds_the_pieces_and_picks_none(rig):
+    """/pick/look, for the grips taught by hand (tools/x3_teach.py): found, sized, nothing moved."""
+    world, arm, picker = rig([sim.Block(0.160, 0.020, 0.040, (0, 120, 255))])
+    state = run(picker, "look")
+    assert state["error"] is None and state["picked"] == 0
+    assert not world.blocks[0].held and world.blocks[0].x == pytest.approx(0.160)
+    kit = [o for o in state["found"] if o["kind"]]
+    assert len(kit) == 1 and kit[0]["x"] == pytest.approx(0.160, abs=0.01)
+    assert kit[0]["size"] and kit[0]["top"]
+    assert arm.read()[2] == cfg.HOME_POSE[2]
+
+
+def test_the_taught_aim_follows_the_consoles_setting(rig):
+    from roboarm import x3aim
+    _world, _arm, picker = rig([sim.Block(0.160, 0.020, 0.040, (0, 120, 255))])
+    found = picker.as_found(picker.wide_look(sides=True)[0]["target"])
+    picker.set_settings({"taught_aim": 0}, save=False)
+    picker.plan(found, [found])
+    assert x3aim.ON is False
+    picker.set_settings({"taught_aim": 1}, save=False)
+    picker.plan(found, [found])
+    assert x3aim.ON is True
+
+
 def test_the_found_dict_is_the_shared_flows():
     from roboarm import detect
     target = detect.Target(x=0.16, y=0.02, width_m=0.03, length_m=0.06, angle_deg=200.0, label="colour",

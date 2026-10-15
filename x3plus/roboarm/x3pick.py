@@ -42,7 +42,7 @@ from roboshared import kit, metrics
 from roboshared.box import BOX_DROP_OVER, BOX_INSIDE
 from roboshared.task import NothingToPick, Refused, Stopped, Task, describe
 
-from roboarm import camera, detect, grasp, lens, sweep
+from roboarm import camera, detect, grasp, lens, sweep, x3aim
 from roboarm import config as cfg
 from roboarm import kinematics as kin
 
@@ -91,6 +91,7 @@ SETTINGS = {
     "reach_passes": ("corrections after the descent (0: it grips where it lands)", "", 0, 3, 1, 0),
     "grip_deg": ("the fingers close this far past where the piece first touches them (1.8 a mm)", "deg", 0, 12, 0.5, 6),
     "reach_offset_mm": ("aim this much further out than seen", "mm", -30, 40, 1, round(cfg.REACH_OFFSET_M * 1000)),
+    "taught_aim": ("aim by the grips taught by hand (roboarm/x3aim.py): 1 on, 0 the old way", "", 0, 1, 1, 1),
     "release_s": ("open at the drop-off before going back", "s", 0.0, 1.0, 0.05, 0.15),
     "drive_cm_s": ("driving speed", "cm/s", 1.0, 10.0, 0.5, 5.0),
     "driven_s": ("still after driving, before the look", "s", 0.0, 2.0, 0.05, 0.4),
@@ -506,6 +507,7 @@ class Picker(Task):
             self.arm.home(speed_dps=self.dps("free_dps"))
 
     def plan(self, thing: dict, around: list[dict]):
+        x3aim.ON = self.cfg["taught_aim"] >= 0.5   # as the console has it now (grasp.aim_for)
         target = thing["target"]
         if at_drop_spot(target):
             return None
@@ -516,6 +518,7 @@ class Picker(Task):
 
     def grip(self, target: dict, planned, found: list[dict]) -> dict:
         """Seen again from a standstill, then grasp.pick: whether it holds something, the gripper says."""
+        x3aim.ON = self.cfg["taught_aim"] >= 0.5
         t = target["target"]
         self.station_seen = target.get("station") or self.station_seen   # where to look again after
         with self.step("look.close"):
@@ -528,7 +531,7 @@ class Picker(Task):
             except grasp.GraspError as exc:
                 raise Refused(np.array([t.x, t.y]), f"refused: {exc}") from exc
         try:
-            step = grasp.plan(grasp.aim_for(t, offset), reach_offset_m=0.0)
+            step = grasp.plan(grasp.aim_for(t, offset), reach_offset_m=None)
         except grasp.GraspError:
             step = None
         reading = found_of(t, reach=True)

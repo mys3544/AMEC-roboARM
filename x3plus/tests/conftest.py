@@ -9,7 +9,18 @@ is tested in test_cameras.py, in fresh interpreters.
 import os
 import time
 
+import pytest
+
 os.environ["ROBOARM_CAMERA"] = "sonix"
+
+
+@pytest.fixture(autouse=True)
+def arm_as_modelled(monkeypatch):
+    """The simulator's arm goes exactly where the model says: the grips taught by hand on the real
+    one (roboarm/x3aim.py) off, as the M3's suite has its own (m3pro/tests/test_m3pick.py). The
+    tests of the taught aim turn it on."""
+    from roboarm import x3aim
+    monkeypatch.setattr(x3aim, "ON", False)
 
 
 def _wait(condition, timeout: float = 5.0):

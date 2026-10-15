@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from roboarm import config as cfg
-from roboarm import detect, grasp
+from roboarm import detect, grasp, x3aim
 from roboarm import kinematics as kin
 from roboarm import workspace as ws
 
@@ -158,6 +158,32 @@ def test_the_aim_point_is_beyond_the_object_along_its_bearing():
     assert math.atan2(aimed.y, aimed.x) == pytest.approx(math.atan2(seen.y, seen.x))
     assert aimed.width_m == seen.width_m and aimed.label == seen.label
     assert grasp.aim_for(seen, 0.0) == seen
+
+
+def test_grips_taught_by_hand_replace_the_reach_offset(monkeypatch):
+    """x3aim's table (tools/x3_teach.py) says where to aim near where it was taught, the reach
+    offset only trims it (the user, 2026-10-15); None: aimed already, nothing added twice."""
+    seen = target(x=0.200, y=-0.040, width_m=0.030)
+    monkeypatch.setattr(x3aim, "ON", True)   # (the suite's arm_as_modelled turns it off)
+    monkeypatch.setattr(x3aim, "TAUGHT", ((0.200, -0.040, -0.006, +0.004),))
+    aimed = grasp.aim_for(seen, 0.0)
+    assert (aimed.x, aimed.y) == pytest.approx((0.194, -0.036), abs=1e-4)
+    assert grasp.aim_for(seen, None) == seen
+    monkeypatch.setattr(x3aim, "ON", False)   # the console's "taught aim" 0: the old way
+    assert grasp.aim_for(seen, 0.0) == seen
+    monkeypatch.setattr(x3aim, "ON", True)
+    monkeypatch.setattr(x3aim, "TAUGHT", ())
+    assert grasp.aim_for(seen, 0.0) == seen   # nothing taught: the reach offset's, here 0
+
+
+def test_the_taught_aim_draws_back_more_the_further_out():
+    """2026-10-15's nine grips: the arm reaches further than the model, more far out; a line in
+    the reach and a constant sideways fit them."""
+    a, b, left = x3aim.model()
+    assert a == pytest.approx(-0.007, abs=0.002) and b < 0 and left == pytest.approx(0.0036, abs=0.002)
+    near, far = x3aim.offset(0.150, 0.0), x3aim.offset(0.250, 0.0)
+    assert far[0] < near[0] < 0                                  # back towards the base, more far out
+    assert near[1] == pytest.approx(far[1]) == pytest.approx(left)   # straight ahead: left is +y
 
 
 def test_the_aim_never_goes_beyond_a_quarter_of_the_objects_width():

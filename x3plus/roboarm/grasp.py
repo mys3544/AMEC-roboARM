@@ -69,7 +69,7 @@ from typing import NamedTuple
 from roboshared import metrics
 
 from roboarm import config as cfg
-from roboarm import detect
+from roboarm import detect, x3aim
 from roboarm import kinematics as kin
 from roboarm.arm import Arm, ArmError
 from roboarm.config import Pose
@@ -209,13 +209,25 @@ def aim_offset(target: detect.Target, base_m: float = cfg.REACH_OFFSET_M) -> flo
     return min(reach_offset(target.x, target.y, base_m), target.width_m / 4)
 
 
-def aim_for(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> detect.Target:
+def aim_for(target: detect.Target, reach_offset_m: float | None = cfg.REACH_OFFSET_M) -> detect.Target:
     """Where to SEND the fingertip so that it actually arrives on the target.
 
     The model lands the tips about cfg.REACH_OFFSET_M short of where it thinks
     they are, along the reach. Aiming beyond the object by that much is what puts
     the fingers either side of it instead of on its near face.
+
+    Grips taught by hand (x3aim, tools/x3_teach.py) replace that guess while there
+    are any and x3aim.ON (the console's "taught aim"): the aim is theirs for this
+    object, `reach_offset_m` (the panel's, 0 by default) only trims it further out
+    (the user, 2026-10-15). None: `target` is aimed already -- the raw model,
+    nothing added twice.
     """
+    if reach_offset_m is None:
+        return target
+    if x3aim.TAUGHT and x3aim.ON:
+        dx, dy = x3aim.offset(target.x, target.y)
+        x, y = outward(target.x + float(dx), target.y + float(dy), reach_offset_m)
+        return replace(target, x=x, y=y)
     x, y = outward(target.x, target.y, aim_offset(target, reach_offset_m))
     return replace(target, x=x, y=y)
 
@@ -324,12 +336,12 @@ def _reach_to(arm: Arm, x: float, y: float, z: float, pitch: float, gripper: int
     return pose
 
 
-def plan(target: detect.Target, reach_offset_m: float = cfg.REACH_OFFSET_M) -> Plan:
+def plan(target: detect.Target, reach_offset_m: float | None = cfg.REACH_OFFSET_M) -> Plan:
     """Work out the hover pose, the grasp pose and the opening -- or raise.
 
     All of it before anything moves, so an unreachable object is a message rather
     than an arm that sets off and stops halfway. The poses aim `reach_offset_m`
-    beyond the object (see aim_for); pass 0 to plan for the raw model.
+    beyond the object (see aim_for); pass None to plan for the raw model.
     """
     target = aim_for(target, reach_offset_m)
     if not target.graspable:
@@ -400,7 +412,7 @@ def pick(arm: Arm, target: detect.Target,
     carry_dps = speeds.get("carry", TRANSIT_DPS)
     seen = target
     target = aim_for(seen, reach_offset_m)   # everything below aims here
-    step = plan(target, reach_offset_m=0.0)  # already offset; do not add it twice
+    step = plan(target, reach_offset_m=None)  # already aimed; do not add it twice
 
     def say(message: str) -> None:
         print(f"  {message}", flush=True)
