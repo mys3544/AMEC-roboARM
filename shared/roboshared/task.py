@@ -186,6 +186,8 @@ class Task:
         state["found"] = [{"kind": o["kind"], "name": name(o) if o["kind"] else None,
                            "x": round(float(o["centre"][0]), 3), "y": round(float(o["centre"][1]), 3),
                            "yaw": round(o["yaw"], 1), "reach": o.get("reach"),
+                           "size": None if o.get("size") is None else round(float(o["size"]), 4),
+                           "top": None if o.get("top") is None else round(float(o["top"]), 4),
                            "taught": o.get("taught"), "sure": o.get("sure")} for o in self.found]   # (the M3's find)
         return state
 
@@ -229,7 +231,8 @@ class Task:
     # --------------------------------------------------------------------------- jobs --
     def jobs(self) -> dict:
         """What start() runs, by name; a robot's body may add its own (the M3's "scan")."""
-        return {"pick_once": self.pick_once, "clean_up": self.clean_up, "home": self.home, "drop": self.drop}
+        return {"pick_once": self.pick_once, "clean_up": self.clean_up, "home": self.home, "drop": self.drop,
+                "look": self.look}
 
     def start(self, job: str, **kwargs) -> dict:
         """Start `job` (one of jobs()) on its own thread; an error if one runs."""
@@ -300,6 +303,15 @@ class Task:
             if not self._stop.is_set():
                 self.drive_back()
                 self.home()
+
+    def look(self) -> None:
+        """The table looked over as a pick's first look does -- round it, the sides too -- and nothing
+        picked: what it found stays in the state (status()["found"]), for the grips taught by hand
+        (x3plus/tools/x3_teach.py); then home."""
+        self.engaged()
+        with self.step("look.wide"):
+            self.wide_look(sides=True)
+        self.home()
 
     def clean_up(self, kind: str | None = None, limit: int = 20, drive: bool = False) -> None:
         """Pick every kit thing in reach, one by one, until none is left in reach (or `limit`);
