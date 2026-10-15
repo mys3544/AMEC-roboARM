@@ -29,11 +29,12 @@ A relative one is anchored as Depth Anything is; a metric one is also scored as 
 from __future__ import annotations
 
 import argparse
-import getpass
 import importlib.util
 import json
-import os
+import subprocess
 import sys
+import tarfile
+import threading
 import time
 from pathlib import Path
 
@@ -68,21 +69,25 @@ _spec.loader.exec_module(monodepth)
 
 
 def fetch(day: str) -> None:
-    import paramiko
-
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(HOST, username="jetson", look_for_keys=False, timeout=15,
-                   password=os.environ.get("ROBOARM_SSH_PASSWORD") or getpass.getpass(f"jetson@{HOST} password: "))
-    sftp = client.open_sftp()
+    """The robot's looks of `day` (a prefix of their stamps) not here yet: over SSH with the laptop's
+    key (on the M3 since 2026-10-15; a password before), the missing files as one tar stream."""
     FRAMES.mkdir(parents=True, exist_ok=True)
-    stems = sorted(n[:-8] for n in sftp.listdir(REMOTE) if n.startswith(day) and n.endswith("_rgb.jpg"))
-    for stem in stems:
-        for suffix in ("_rgb.jpg", "_depth.png", ".json"):
-            if not (FRAMES / (stem + suffix)).exists():
-                sftp.get(f"{REMOTE}/{stem}{suffix}", str(FRAMES / (stem + suffix)))
-    client.close()
-    print(f"{len(stems)} frames -> {FRAMES}")
+    ssh = ["ssh", "-o", "BatchMode=yes", f"jetson@{HOST}"]
+    names = subprocess.run([*ssh, f"ls {REMOTE}"], capture_output=True, text=True, check=True).stdout.splitlines()
+    stems = sorted(n[:-8] for n in names if n.startswith(day) and n.endswith("_rgb.jpg"))
+    there = set(names)
+    wanted = [stem + suffix for stem in stems for suffix in ("_rgb.jpg", "_depth.png", ".json")
+              if stem + suffix in there and not (FRAMES / (stem + suffix)).exists()]
+    if wanted:
+        with subprocess.Popen([*ssh, f"cd {REMOTE} && tar --null -T - -cf -"], stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE) as proc:
+            def send() -> None:   # beside the reading, so neither side waits on a full pipe
+                proc.stdin.write(b"\0".join(n.encode() for n in wanted))
+                proc.stdin.close()
+            threading.Thread(target=send, daemon=True).start()
+            with tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
+                tar.extractall(FRAMES, filter="data")
+    print(f"{len(stems)} frames of {day}, {len(wanted)} files new -> {FRAMES}")
 
 
 def true_height(o: dict) -> float | None:

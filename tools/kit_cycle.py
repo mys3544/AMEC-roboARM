@@ -5,8 +5,8 @@ the training set -> hekate trains it -> the weights and ONNX back here.
 
 Run it from the repo root (the workspace's venv: inside train/ `uv run` would install hekate's CUDA
 torch here). The steps:
-  1. the M3's looks (m3pro/tools/m3_duel.py fetch: every day's; the SSH password from
-     ROBOARM_SSH_PASSWORD, or asked) -- skipped with --no-fetch;
+  1. the M3's looks (m3pro/tools/m3_duel.py fetch: every day's not here yet, over SSH with the
+     laptop's key) -- skipped with --no-fetch;
   2. the set (m3pro/tools/kit_dataset.py -> m3pro/out/kit); with --x3 the X3's looks added to it
      (x3plus/tools/kit_dataset_x3.py: fetched over SSH unless --no-fetch, labelled by projecting
      what the X3 found back into its pictures; on hekate SAM 2 then draws each piece's exact
