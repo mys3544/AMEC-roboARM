@@ -132,3 +132,31 @@ def test_a_camera_that_has_stopped_sending_is_an_error_not_an_old_picture():
     frames.arrived["depth"] -= m3bridge.STALE_S + 1    # the depth stopped coming
     with pytest.raises(ArmError, match="camera has stopped: its newest depth"):
         frames.arrays()
+
+
+def test_a_driver_whose_frames_stop_is_restarted_but_not_while_it_starts():
+    frames, now = m3bridge.Frames(), [100.0]
+    driver = m3bridge.Driver(frames, clock=lambda: now[0])
+    driver.started = 100.0
+    now[0] += m3bridge.STARTUP_S - 1
+    assert driver.stalled() is None                      # starting: no frame yet is fine
+    now[0] += 2
+    assert driver.stalled() == "no colour frame yet"
+    frames.arrived = {"colour": now[0], "depth": now[0] - m3bridge.WATCHDOG_S + 1}
+    assert driver.stalled() is None
+    now[0] += 2                                           # the depth stopped, the colour came on
+    frames.arrived["colour"] = now[0]
+    assert driver.stalled() == "no depth frame for 6 s"
+
+    said, done = [], []
+    driver.stop, driver.start = lambda: done.append("stop"), lambda: done.append("start")
+    watching = threading.Thread(target=driver.watch, args=(said.append,))
+    watching.start()
+    time.sleep(1.5)
+    driver.stalled = lambda: None                         # the new driver's frames come
+    time.sleep(1.2)
+    driver.close()
+    watching.join(timeout=3)
+    assert not watching.is_alive()
+    assert said[0] == "the camera's driver restarted: no depth frame for 6 s"
+    assert done[:2] == ["stop", "start"] and done[-1] == "stop"   # restarted, then stopped by close()

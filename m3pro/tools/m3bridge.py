@@ -13,7 +13,9 @@ with --camera at boot (robot/roboarm-m3bridge.service); tools/m3bridge.sh by han
 
 The arm: roboarm.m3arm.M3Arm, publishing on /arm6_joints (arm_msgs/ArmJoints) to the micro-ROS
 board, the battery from /battery. The camera: /camera/color/image_raw into the MJPEG stream, and
-/camera/depth/image_raw (aligned, 16-bit mm) with /camera/color/camera_info for /rgbd:
+/camera/depth/image_raw (aligned, 16-bit mm) with /camera/color/camera_info for /rgbd. With
+--camera the bridge also watches its driver and restarts it when colour or depth stop coming
+(Driver: the driver goes silent now and then, the process still up):
 
     GET /rgbd  {"stamp", "depth_lag_s", "joints" (believed; null before engage), "K" (3 x 3),
                 "color_jpeg", "depth_png" (base64; the PNG is 16-bit, millimetres)}
@@ -40,7 +42,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import math
+import os
+import signal
 import subprocess
 import sys
 import threading
@@ -63,6 +68,11 @@ HOST, PORT = "0.0.0.0", 8761
 STALE_S = 2.0   # a picture older than this is the camera stopped, not a slow frame (it sends ~15 a second):
                 # on 2026-10-12 its driver stopped mid-afternoon and Find worked on a picture from minutes before
 OUT = Path(__file__).resolve().parents[1] / "out" / "pick"
+DRIVER = ["ros2", "launch", "orbbec_camera", "dabai_dcw2.launch.py", "depth_registration:=true",
+          # what nothing here uses, off: less over the camera's USB 2.0 link and on the CPU
+          "enable_ir:=false", "enable_point_cloud:=false", "enable_colored_point_cloud:=false"]
+WATCHDOG_S = 5.0   # no colour or depth frame for this long: the driver is restarted
+STARTUP_S = 20.0   # but not in a (re)started driver's first seconds, before its first frames
 
 
 class Frames:
@@ -83,7 +93,7 @@ class Frames:
         for what, when in arrived.items():
             if time.monotonic() - when > STALE_S:
                 raise ArmError(f"the camera has stopped: its newest {what} is {time.monotonic() - when:.0f} s old "
-                               "(systemctl --user restart roboarm-m3bridge restarts its driver)")
+                               "(the bridge restarts its driver by itself: try again in half a minute)")
         return color.copy(), depth.copy(), np.asarray(K, float).reshape(3, 3)
 
     def snapshot(self, joints) -> dict:
@@ -99,6 +109,70 @@ class Frames:
             "color_jpeg": base64.b64encode(cv2.imencode(".jpg", color, [cv2.IMWRITE_JPEG_QUALITY, 92])[1]).decode(),
             "depth_png": base64.b64encode(cv2.imencode(".png", depth)[1]).decode(),
         }
+
+
+class Driver:
+    """The DCW2's driver (`ros2 launch`, its own process group), restarted when its frames stop
+    coming: it went silent on 2026-10-13 and twice within half an hour on 2026-10-15 -- colour and
+    depth, the process up, not a word in its log -- and only a restart brought it back."""
+
+    def __init__(self, frames: Frames, command=DRIVER, clock=time.monotonic):
+        self.frames, self.command, self.clock = frames, command, clock
+        self.proc: subprocess.Popen | None = None
+        self.started = 0.0
+        self.lock = threading.Lock()
+        self.closing = threading.Event()
+
+    def start(self) -> None:
+        self.proc = subprocess.Popen(self.command, start_new_session=True)
+        self.started = self.clock()
+
+    def stop(self) -> None:
+        """Its whole group signalled, as Ctrl-C first, then harder: a container left behind would
+        keep the camera from the next one."""
+        if self.proc is None:
+            return
+        for sig, wait_s in ((signal.SIGINT, 10), (signal.SIGTERM, 5), (signal.SIGKILL, 5)):
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(self.proc.pid, sig)
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self.proc.wait(wait_s)
+                break
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(self.proc.pid, signal.SIGKILL)   # what of the group outlived the launch
+        self.proc = None
+
+    def stalled(self) -> str | None:
+        """Why the driver is to be restarted now -- colour or depth not come for WATCHDOG_S -- or
+        None (also in its first STARTUP_S)."""
+        now = self.clock()
+        if now - self.started < STARTUP_S:
+            return None
+        with self.frames.lock:
+            arrived = dict(self.frames.arrived)
+        for what in ("colour", "depth"):
+            when = arrived.get(what)
+            if when is None or now - when > WATCHDOG_S:
+                return f"no {what} frame {'yet' if when is None else f'for {now - when:.0f} s'}"
+        return None
+
+    def watch(self, say) -> None:
+        """Every second until close(): a stalled driver restarted, and `say` told so."""
+        while not self.closing.wait(1.0):
+            why = self.stalled()
+            if why is None:
+                continue
+            with self.lock:
+                if self.closing.is_set():
+                    break
+                say(f"the camera's driver restarted: {why}")
+                self.stop()
+                self.start()
+
+    def close(self) -> None:
+        self.closing.set()
+        with self.lock:
+            self.stop()
 
 
 def make_handler(the_bridge: bridge.Bridge, frames: Frames, picker: m3pick.Picker | None = None):
@@ -289,13 +363,11 @@ def main() -> int:
     import rclpy
     from rclpy.signals import SignalHandlerOptions
 
-    driver = None
-    if args.camera:
-        # in the bridge's own process group: m3bridge.sh stop signals both
-        driver = subprocess.Popen(["ros2", "launch", "orbbec_camera", "dabai_dcw2.launch.py",
-                                   "depth_registration:=true"])
-    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     frames, stream = Frames(), camera.Stream()
+    driver = Driver(frames) if args.camera else None
+    if driver is not None:
+        driver.start()
+    rclpy.init(signal_handler_options=SignalHandlerOptions.NO)
     node = make_node(frames, stream)
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
 
@@ -309,6 +381,8 @@ def main() -> int:
                            drive=lambda dx, dy, v: drive(node, dx, dy, v, lambda: picker.stopping()),
                            battery=lambda: node.volts, odom=lambda: node.odom,
                            goto=lambda x, y, yaw: goto(node, x, y, yaw, stopping=lambda: picker.stopping()))
+    if driver is not None:   # its restarts in the pick log, which the console shows
+        threading.Thread(target=driver.watch, args=(picker.say,), daemon=True).start()
     metrics.REGISTRY.log_path = OUT / "metrics.jsonl"
     OUT.mkdir(parents=True, exist_ok=True)
     server = Server((HOST, PORT), make_handler(the_bridge, frames, picker))
@@ -325,7 +399,7 @@ def main() -> int:
         node.destroy_node()
         rclpy.try_shutdown()
         if driver is not None:
-            driver.terminate()
+            driver.close()
         print("m3bridge stopped", flush=True)
     return 0
 

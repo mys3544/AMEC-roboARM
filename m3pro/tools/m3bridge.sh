@@ -7,8 +7,8 @@
 #   bash tools/m3bridge.sh status
 #   bash tools/m3bridge.sh stop               # the arm holds where it is
 #
-# setsid first on the line: the bridge leads its own process group (the camera driver in it),
-# which stop signals as a whole.
+# setsid first on the line: the bridge leads its own process group, which stop signals as a whole
+# (with --camera the driver has a group of its own, which the bridge stops as it goes).
 cd "$(dirname "$0")/.." || exit 1
 PIDFILE=logs/m3bridge.pid
 ROS="source robot/ros.sh"
