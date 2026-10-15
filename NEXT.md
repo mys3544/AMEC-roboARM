@@ -1,11 +1,12 @@
-# Next -- the list (as of 2026-10-15, afternoon)
+# Next -- the list (as of 2026-10-15, evening)
 
 Stage 1 (PLAN.md, "First show") has four demos: a coloured 3D scan in the console, "teach in 30 s,
 picked out from look-alikes", real vs predicted depth, and the speed table. The scan (also as a
 Gaussian splat) and the speed table (PLAN.md M5) are done; the depth duel has its table and its
 pictures (3 below). Left: the teach from look-alikes -- started 2026-10-15, stopped by the M3's
-camera (0 below), which holds again -- and the kit detector, now trained with the X3's pictures
-too (2 below). The robot work (you) and the laptop/hekate work (me) run side by side.
+camera and then its board (0 below), both fine again -- and the kit detector, now trained with the
+X3's pictures too: twice as good on the X3, worse on the M3 (2 below). The robot work (you) and the
+laptop/hekate work (me) run side by side.
 
 ## 0. The M3's camera -- solved: it was the conversion beside it
 
@@ -27,6 +28,11 @@ word in its log, no USB event in the kernel log. It had been frozen since 2026-1
 - [ ] A separate session makes /health report a frozen camera ("Report a frozen M3 camera in the
       bridge's /health"): merge it -- it touches m3pro/tools/m3bridge.py, as bdbbc83 did.
 - Before robot work: GET http://192.168.73.66:8761/rgbd twice -- the same `stamp` is a frozen camera.
+- **The M3's board went silent at ~12:33** (no node /YB_Node topics: battery, odometry, arm), after
+  a failed Teach had turned the arm towards the left front tyre (see 1). Restarting the micro-ROS
+  agent (`~/start_agent.sh`'s command, in a desktop terminal) and the board's reset button brought
+  back battery and wheels but NOT the arm's /arm6_joints subscription; only switching the robot off
+  and on did (12:55: arm connected, camera fresh). Next time: straight to the power switch.
 
 ## 1. Teach from look-alikes -- you at the robot, me at the console (~30 min left)
 
@@ -34,10 +40,13 @@ The picture cubes (news, fish, cosmetics, apricot) were taught on 2026-10-09 fro
 (5-8 views), so Find does not know their other faces: on 2026-10-12 both news cubes stayed unknown
 (0.64 and 0.61, under the 0.65 bar). No code needed -- Teach again with the same name ADDS views.
 It works on a table: Teach, Find and Pick by name move the arm only (leave "may drive closer" off,
-no Scan). A round takes ~5 s (4 views, the arm only turns).
+no Scan). A round takes ~5 s (4 views, the arm only turns). Teach takes the thing nearest the
+camera: until 2cf84bc (deployed 2026-10-15) that was the left front tyre when the cube stood 20 cm
+out -- "6 cm tall at x 0.130 y +0.119", 0 views, the arm left turned. A failed Teach still does not
+send the arm home: press Home.
 
-- [ ] **news:** 2 of 4 rounds done 2026-10-15 -- 13 views now (5 old + 8; the new ones agree
-      0.95-0.96); the 3rd failed on the camera. Two more, the second news cube for one of them.
+- [ ] **news:** 3 of 4 rounds done 2026-10-15 -- 15 views now (5 old + 4 + 4 + 2; they agree
+      0.95-0.98; the 3rd, with the second news cube 12 cm out, got only 2). One more, 20-25 cm out.
 - [ ] **fish, cosmetics, apricot:** alone ~20-25 cm before the bumper, name in the field, **Teach**;
       turn it a quarter on the spot, **Teach** again with the same name; 4 rounds each (a 5th,
       tipped over, is a bonus).
@@ -64,14 +73,26 @@ never seen that camera or the board.
       900 from 2026-10-06/08 (the user's tagged cubes and blocks are kit pieces too). In the run
       below 680 of 1,085 kept, 261 out on a mask, 144 on an unlabelled piece. The laptop's key is
       on the X3 now.
-- [ ] **The run `n_20261015`** (`kit_cycle.py --synth --x3 --no-fetch`, started ~12:40): compare it
-      with the best so far (mask mAP50 **0.791**; 40 mm cube 0.672) on the M3's val and the X3's
-      val SEPARATELY (the set's val mixes both now), and look at it on the tag board again.
+- [x] **The run `n_20261015`** (`kit_cycle.py --synth --x3`; its mix stage, then finished by hand
+      after kit_cycle stopped on printing -- fixed in 4bf8405), judged by `train/eval_kit.py` on each
+      robot's val and on **an X3 test round held out** (round 5, 71 pictures, x3plus/out/looks_test):
+
+      | mask mAP50 | M3 val (14) | X3 val (71) | X3 test (71) |
+      |---|---|---|---|
+      | `n_cycle` (M3 + synthetic) | **0.791** | 0.302 | 0.246 |
+      | `n_20261015` (+ the X3's) | 0.560 | **0.656** | **0.497** |
+
+      Twice as good on the X3; on the M3 it loses its 40 mm cube (0.672 -> 0.056, three in val)
+      under 15x more X3 pictures. PLAN.md M5 has the per-class numbers.
+- [ ] **Decide:** a model per robot for now (proposed: the X3 `n_20261015`, the M3 `n_cycle`), or
+      one model with the M3's pictures weighted up -- after the M3 frames below.
+- [ ] **Look at `n_20261015` on the tag board** (the X3 test's board pictures): are the false cubes gone?
 - [ ] **M3 frames** with 40 mm cubes and the 30x30x60 block out (~15 looks each) -- still to do.
-- [ ] **Onto the robots** (agreed 2026-10-15): the X3 once the X3 val says it no longer sees cubes in
-      the board -- its vision service takes it as is (ROBOARM_VISION_MODEL, a 640x640 engine built
-      on the robot); the M3 after the M3 frames, as a vision service of its own whose answer the
-      pick logs beside the depth's at every look (the depth stays in charge; the log is the score).
+- [ ] **Onto the robots** (agreed 2026-10-15): the X3 once the board check above is clean -- its
+      vision service takes it as is (ROBOARM_VISION_MODEL in robot.local.env, a 640x640 engine
+      built on the robot by tools/export_engine.py); the M3 after the M3 frames, as a vision service
+      of its own whose answer the pick logs beside the depth's at every look (the depth stays in
+      charge; the log is the score).
 
 ## 3. Me, while the robot work runs (laptop + hekate)
 
@@ -120,4 +141,7 @@ never seen that camera or the board.
   point clouds off, deployed (bdbbc83) -- the stalls were the GGUF conversion beside it; the duel's
   pictures (44eed8b); news taught 2 more rounds; the console on the current code (Splat button); the
   kit detector checked on the X3's pictures, 185 new X3 looks in 4 rounds, the X3 labelling by
-  projection + SAM 2 and `kit_cycle.py --x3` (fbf8639); the training sets go to hekate as one tar.
+  projection + SAM 2 and `kit_cycle.py --x3` (fbf8639); the training sets go to hekate as one tar;
+  the M3's board hang (power cycle); Teach no longer takes the left front tyre (2cf84bc, deployed);
+  an X3 test round held out and the per-robot evaluation (4bf8405): `n_20261015` 0.497 against
+  0.246 on the X3 test, 0.560 against 0.791 on the M3 val.

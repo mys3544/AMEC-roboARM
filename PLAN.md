@@ -666,8 +666,23 @@ What it says so far:
 - **End to end on the M3** (train/robot_e2e.py, its 92 pick looks, Ultralytics' predict): the kit
   detector as an FP16 engine 8.3 ms a picture (p99 9.6: preprocess 0.8, inference 3.2, the masks'
   postprocess 3.5), in PyTorch 32.6 ms -- the masks, not the network, are now the bigger share.
+- **On the X3's camera (2026-10-15) the M3-trained detector is half as good, and the X3's own
+  pictures fix most of it** -- but a model for both is worse on the M3. The X3's looks labelled
+  without hands (x3plus/tools/kit_dataset_x3.py: each piece a survey found projected through the
+  wrist camera's model; train/refine_x3_sam.py: SAM 2 redraws the outlines, and drops pictures
+  where a mask disagrees or the detector sees a piece unlabelled), 680 of 1,085 kept; a fresh
+  round of 71 held out as the X3 test (train/eval_kit.py, mask mAP50):
+
+  | model | M3 val (14) | X3 val (71) | X3 test (71) | X3 test cube30 / cube40 / block |
+  |---|---|---|---|---|
+  | `n_cycle`: M3 + synthetic (the 0.791 above) | **0.791** | 0.302 | 0.246 | 0.333 / 0.002 / 0.403 |
+  | `n_20261015`: + the X3's pictures | 0.560 | **0.656** | **0.497** | 0.589 / 0.452 / 0.449 |
+
+  The M3's loss is mostly its 40 mm cube (0.672 -> 0.056, three in its val) under 15x more X3
+  pictures. Proposed, not yet decided: a model per robot for now -- the X3 `n_20261015`, the M3
+  `n_cycle` until its own 40 mm and block frames are in.
 - Not yet: the kit detector served by a robot's vision service, energy (tegrastats), locked clocks,
-  and a val with tens of 40 mm cubes.
+  and a val with tens of 40 mm cubes on the M3.
 
 ## The research program -- gaps worth a paper, demos worth watching
 
