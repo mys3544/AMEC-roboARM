@@ -9,6 +9,8 @@ from __future__ import annotations
 import threading
 import time
 
+FPS_WINDOW_S = 2.0   # fps counts the frames that came within this long of now
+
 
 class Stream:
     """The newest frame, always available.
@@ -31,7 +33,7 @@ class Stream:
             self._frame = frame
             self._seq += 1
             self._stamps.append(now)
-            self._stamps = [t for t in self._stamps if now - t < 2.0]
+            self._stamps = [t for t in self._stamps if now - t < FPS_WINDOW_S]
             self._cond.notify_all()
 
     def wait(self, seen: int, timeout: float = 1.0):
@@ -46,8 +48,13 @@ class Stream:
 
     @property
     def fps(self) -> float:
+        """Frames a second over the last FPS_WINDOW_S; 0 once none has come for that long. Pruned
+        against now, not the last frame: a driver that stopped publishing kept its last rate
+        here for two days (2026-10-13..15)."""
+        now = time.monotonic()
         with self._cond:
-            if len(self._stamps) < 2:
-                return 0.0
-            span = self._stamps[-1] - self._stamps[0]
-            return (len(self._stamps) - 1) / span if span > 0 else 0.0
+            stamps = [t for t in self._stamps if now - t < FPS_WINDOW_S]
+        if len(stamps) < 2:
+            return 0.0
+        span = stamps[-1] - stamps[0]
+        return (len(stamps) - 1) / span if span > 0 else 0.0
