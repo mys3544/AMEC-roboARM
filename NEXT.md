@@ -96,8 +96,9 @@ never seen that camera or the board.
       restarted: /health says yolo26n_kit_x3.engine, cube30/cube40/block; a live frame through the
       bridge's /vision/detect came back cube40 0.52 with its outline. **Back to YOLOE:** delete
       those lines in robot.local.env, `systemctl --user restart roboarm-vision`.
-- [ ] **A Clean up round on the X3 with it** -- picks as before? The ladder's neural rung now names
-      kit pieces itself; the X3 still names them by size.
+- [x] **A Clean up round on the X3 with it** (13:52-13:55): 11 pieces picked into the box (a 40 mm
+      cube, eight 30 mm, two blocks), 8-11 s each, 2 misses on one cube close in (x 0.10, taken at the
+      third go), the table clear at the end in 2 min 48 s. The X3's battery 11.2 V after: charge it.
 - [ ] **M3 frames** with 40 mm cubes and the 30x30x60 block out (~15 looks each) -- still to do.
 - [ ] **The M3** (agreed 2026-10-15) after its frames, as a vision service of its own whose answer
       the pick logs beside the depth's at every look (the depth stays in charge; the log is the score).
