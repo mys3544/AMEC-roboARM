@@ -750,6 +750,19 @@ and A3: the four cubes then named right live (0.67-0.80), two blocks and the res
 visual prompts on a real-time detector do not reach instance level for same-shape look-alikes;
 the prompt-as-input engine (A3) needs an instance-level stage beside it.
 
+**Views from every side, and the first timed teach, 2026-10-15.** Taught from one side only, both
+news cubes stayed unknown on 2026-10-12 (0.64 and 0.61, the bar 0.65). Teach again with the same
+name adds views: four rounds each, the cube turned a quarter between them (4 views a round), took
+the cubes to 19-23 views (news 19, fish 22, cosmetics 20, apricot 23). Find with the Jetson box,
+the can and both news cubes and the fish among them then named every cube right -- news 0.85 and
+0.80, fish 0.85 -- and the box 0.76; the can stayed unknown (0.47), lying and mostly out of the
+picture (taught standing, from a scan). **Teach to first pick** on a thing the robot had never seen
+(a yellow cylinder, ~3 cm): Teach 10 s (every Teach that day 10.0-10.5 s: the wide look, 4 views,
+DINOv2, home), then Pick by name: found at 0.95, the next-best name 0.58 behind; picked and put
+down 29 s after it was found -- 9 s of that a search for the drop-off box that was not there, 19 s
+the pick. About 50 s of robot time from Teach to the piece put down; the demo's "teach in 30 s"
+holds for the teach itself.
+
 **D -- A picker that teaches a VLA: how it works.** (After A since v2.4, the user's "maybe";
 RESEARCH.md P1 has the competing 2026 work and the design changes it forces, e.g. an overhead
 teacher camera.)

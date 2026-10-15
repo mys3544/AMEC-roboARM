@@ -3,10 +3,10 @@
 Stage 1 (PLAN.md, "First show") has four demos: a coloured 3D scan in the console, "teach in 30 s,
 picked out from look-alikes", real vs predicted depth, and the speed table. The scan (also as a
 Gaussian splat) and the speed table (PLAN.md M5) are done; the depth duel has its table and its
-pictures (3 below). Left: the teach from look-alikes -- started 2026-10-15, stopped by the M3's
-camera and then its board (0 below), both fine again -- and the kit detector, now trained with the
-X3's pictures too: twice as good on the X3, worse on the M3 (2 below). The robot work (you) and the
-laptop/hekate work (me) run side by side.
+pictures (3 below); the teach from look-alikes is done too (1 below: every cube named, Teach 10 s,
+Teach to the piece put down ~50 s). Left for stage 1: the kit detector -- trained with the X3's
+pictures too, twice as good on the X3, worse on the M3 (2 below) -- and the close look's depth
+(3). The robot work (you) and the laptop/hekate work (me) run side by side.
 
 ## 0. The M3's camera -- solved: it was the conversion beside it
 
@@ -32,29 +32,26 @@ word in its log, no USB event in the kernel log. It had been frozen since 2026-1
   a failed Teach had turned the arm towards the left front tyre (see 1). Restarting the micro-ROS
   agent (`~/start_agent.sh`'s command, in a desktop terminal) and the board's reset button brought
   back battery and wheels but NOT the arm's /arm6_joints subscription; only switching the robot off
-  and on did (12:55: arm connected, camera fresh). Next time: straight to the power switch.
+  and on did (12:55: arm connected, camera fresh). Next time: st## 1. Teach from look-alikes -- done 2026-10-15
 
-## 1. Teach from look-alikes -- you at the robot, me at the console (~30 min left)
-
-The picture cubes (news, fish, cosmetics, apricot) were taught on 2026-10-09 from one side only
-(5-8 views), so Find does not know their other faces: on 2026-10-12 both news cubes stayed unknown
-(0.64 and 0.61, under the 0.65 bar). No code needed -- Teach again with the same name ADDS views.
 It works on a table: Teach, Find and Pick by name move the arm only (leave "may drive closer" off,
-no Scan). A round takes ~5 s (4 views, the arm only turns). Teach takes the thing nearest the
-camera: until 2cf84bc (deployed 2026-10-15) that was the left front tyre when the cube stood 20 cm
-out -- "6 cm tall at x 0.130 y +0.119", 0 views, the arm left turned. A failed Teach still does not
-send the arm home: press Home.
+no Scan). Teach takes the thing nearest the camera: until 2cf84bc (deployed 2026-10-15) that was
+the left front tyre when the cube stood 20 cm out -- "6 cm tall at x 0.130 y +0.119", 0 views, the
+arm left turned. A failed Teach still does not send the arm home: press Home.
 
-- [ ] **news:** 3 of 4 rounds done 2026-10-15 -- 15 views now (5 old + 4 + 4 + 2; they agree
-      0.95-0.98; the 3rd, with the second news cube 12 cm out, got only 2). One more, 20-25 cm out.
-- [ ] **fish, cosmetics, apricot:** alone ~20-25 cm before the bumper, name in the field, **Teach**;
-      turn it a quarter on the spot, **Teach** again with the same name; 4 rounds each (a 5th,
-      tipped over, is a bonus).
-- [ ] **Find** with the box, the can, both news cubes and the fish together: all named?
-- [ ] **The headline number:** a new thing (one never taught) -- Teach, then Pick it by name; I time
-      Teach -> first pick from the log. The demo says "teach in 30 s".
-- [ ] If a cube is still unknown: I look at its scores and views (out/teach/NAME/) and we decide
-      (more views, a lower bar, or a scan-teach with Scan + its name).
+- [x] **Every side taught:** 4 rounds per cube, turned a quarter between (Teach with the same name
+      adds views) -- news 19 views, fish 22, cosmetics 20, apricot 23 (from 5-8 on one side).
+- [x] **Find** with the Jetson box, the can, both news cubes and the fish: every cube named right
+      (news 0.85 and 0.80 -- unknown at 0.64/0.61 on 2026-10-12 -- fish 0.85), the box 0.76; the can
+      unknown (0.47), lying and mostly out of the picture.
+- [x] **The headline number** (PLAN.md track A): a yellow cylinder never seen before -- Teach 10 s
+      (every Teach 10.0-10.5 s), Pick by name found it at 0.95 (the next name 0.58 behind), picked
+      and put down 29 s later; ~50 s of robot time in all.
+- [ ] **Faster for the demo:** skip the drop-off box's search when there is none (9 s of the 29);
+      Find's closer look at far unknowns (the tape at the paper's edge) costs a few seconds more.
+- [ ] Optional: the can standing and whole in the picture -- named? (taught standing, from a scan)
+
+each with Scan + its name).
 
 ## 2. The kit detector -- the X3's pictures in, then onto the robots
 
@@ -144,4 +141,5 @@ never seen that camera or the board.
   projection + SAM 2 and `kit_cycle.py --x3` (fbf8639); the training sets go to hekate as one tar;
   the M3's board hang (power cycle); Teach no longer takes the left front tyre (2cf84bc, deployed);
   an X3 test round held out and the per-robot evaluation (4bf8405): `n_20261015` 0.497 against
-  0.246 on the X3 test, 0.560 against 0.791 on the M3 val.
+  0.246 on the X3 test, 0.560 against 0.791 on the M3 val. Teach finished: every side of the four
+  cubes, Find names them all, a new thing taught in 10 s and picked by name ~50 s after.
