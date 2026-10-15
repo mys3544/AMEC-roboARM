@@ -99,7 +99,13 @@ never seen that camera or the board.
 - [x] **A Clean up round on the X3 with it** (13:52-13:55): 11 pieces picked into the box (a 40 mm
       cube, eight 30 mm, two blocks), 8-11 s each, 2 misses on one cube close in (x 0.10, taken at the
       third go), the table clear at the end in 2 min 48 s. The X3's battery 11.2 V after: charge it.
-- [ ] **M3 frames** with 40 mm cubes and the 30x30x60 block out (~15 looks each) -- still to do.
+- [x] **M3 frames** (2026-10-15, 5 clean-up rounds): 60 new looks -- 40 mm cubes seen 33 times,
+      blocks lying 34, standing a few more. The M3 set: 117 train / 26 val pictures (40 mm cubes
+      70 / 8, from 16 / 3). The yellow cylinder's pick looks set aside (m3pro/out/duel/frames_not_kit:
+      its depth names it a 30 mm cube). Fetched by key now (`m3_duel.py fetch`, c558563).
+- [ ] **The run `n_20261015b`** (M3's new frames + X3 + synthetic, started ~14:15): judge it with
+      `train/eval_kit.py` against `n_cycle` and `n_20261015` on the NEW M3 val (26) -- the old 0.791
+      was on 14 pictures -- and on the X3 test; if it holds both, one model for both robots.
 - [ ] **The M3** (agreed 2026-10-15) after its frames, as a vision service of its own whose answer
       the pick logs beside the depth's at every look (the depth stays in charge; the log is the score).
 
@@ -120,6 +126,12 @@ never seen that camera or the board.
       coming out ~0.7 cm too tall and its stop-5/6 reading ~6 cm off.
 
 ## 4. If time is left
+
+- [ ] **The X3's reach far out** (the user, 2026-10-15): the arm's calibration is less exact for
+      things far from the base -- a grip lands a little off and at a slant, which a cube survives and
+      the yellow cylinder (round, not a kit piece) slips out of: the X3's "missed twice" at x 0.19
+      y +0.11. Measure the reach error out at the rim (the touch probe of 2026-09-21, a few points
+      at 0.18-0.23 m) and refit the reach correction there.
 
 - [ ] **Splat ghost:** from high up a see-through copy of the floor tape floats over the box -- the
       scan only looks from low down. Try a second, higher look at each stop (+~1 min a scan).
@@ -154,4 +166,8 @@ never seen that camera or the board.
   the M3's board hang (power cycle); Teach no longer takes the left front tyre (2cf84bc, deployed);
   an X3 test round held out and the per-robot evaluation (4bf8405): `n_20261015` 0.497 against
   0.246 on the X3 test, 0.560 against 0.791 on the M3 val. Teach finished: every side of the four
-  cubes, Find names them all, a new thing taught in 10 s and picked by name ~50 s after.
+  cubes, Find names them all, a new thing taught in 10 s and picked by name ~50 s after. The X3 serves
+  the kit detector (11 picked in its first clean-up); 60 M3 frames with 40 mm cubes and blocks; a
+  thing no plan reaches is planned once a job (9183510: on the M3 plan 6.4 s a pick with one such
+  block on the table, 0.4 s without), deployed on both robots -- the X3's shared code brought up
+  from 2026-10-08 with it (7 picked, 2 out of reach, the cylinder missed twice).
