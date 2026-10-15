@@ -5,6 +5,7 @@ stop reaching a move under way."""
 import base64
 import json
 import pathlib
+import re
 import sys
 import threading
 import time
@@ -132,3 +133,42 @@ def test_a_camera_that_has_stopped_sending_is_an_error_not_an_old_picture():
     frames.arrived["depth"] -= m3bridge.STALE_S + 1    # the depth stopped coming
     with pytest.raises(ArmError, match="camera has stopped: its newest depth"):
         frames.arrays()
+
+
+def test_health_says_the_camera_has_stopped_without_a_job_looking(monkeypatch):
+    """2026-10-15: the DCW2's driver had sent nothing for two days and /health still said 22 fps --
+    only a job's arrays() noticed. Now /health gives the newest colour's and depth's age, an error
+    once either is older than STALE_S, and the stream's fps falls to 0 when frames stop."""
+    monkeypatch.setattr(camera, "FPS_WINDOW_S", 0.3)   # the fps window, short for the test
+    frames, stream = m3bridge.Frames(), camera.Stream()
+    the_bridge = bridge.Bridge(lambda: None, lambda: stream)
+    the_bridge.stream()   # as the console's live view opens it
+    server = m3bridge.Server(("127.0.0.1", 0), m3bridge.make_handler(the_bridge, frames))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        camera_now = lambda: ask(f"{base}/health")[1]["camera"]
+        cam = camera_now()
+        assert cam["colour_age_s"] is None and cam["depth_age_s"] is None
+        assert cam["error"] == "no colour or depth from the camera yet"
+
+        colour = np.zeros((480, 640, 3), np.uint8)
+        for _ in range(6):   # the camera sending, as the ROS node feeds the frames and the stream
+            with frames.lock:
+                frames.arrived = {"colour": time.monotonic(), "depth": time.monotonic()}
+            stream.publish(colour)
+            time.sleep(0.02)
+        status, health = ask(f"{base}/health")
+        cam = health["camera"]
+        assert status == 200 and health["ok"] and cam["open"] and cam["fps"] > 10 and cam["error"] is None
+        assert cam["colour_age_s"] < 1 and cam["depth_age_s"] < 1
+
+        time.sleep(0.35)   # the driver stops: nothing more comes, past the fps window...
+        with frames.lock:   # ...nor for STALE_S and more
+            frames.arrived = {what: when - m3bridge.STALE_S - 3 for what, when in frames.arrived.items()}
+        cam = camera_now()
+        assert cam["open"] and cam["fps"] == 0   # not the last rate, held
+        assert cam["colour_age_s"] > m3bridge.STALE_S + 3 and cam["depth_age_s"] > m3bridge.STALE_S + 3
+        assert re.match(r"the camera has stopped: its newest colour is \d+ s old \(systemctl", cam["error"])
+    finally:
+        server.shutdown()

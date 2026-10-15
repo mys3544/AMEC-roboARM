@@ -320,6 +320,10 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     this.look.alt = `${robot.name}: the last look`;
     this.look.onclick = () => $('.view', this.el).classList.toggle('swapped');
     $('.view', this.el).append(this.look);
+    this.camerr = document.createElement('span');   // over the picture: a stopped camera's stays up, frozen
+    this.camerr.className = 'camerr';
+    $('.view', this.el).append(this.camerr);
+    this.camera = null;   // the bridge's /health camera: {open, fps, error}, the M3's with colour_age_s, depth_age_s
     this.looks = null;
     this.since = 0;
     this.stream();
@@ -499,9 +503,14 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
     }
   }
 
-  async follow() {   // the robot's narrated steps, and where the time went, while the card is open
+  async follow() {   // the robot's narrated steps, where the time went, and its camera, while the card is open
     let tick = 0;
     while (!this.closed) {
+      try {
+        this.camera = (await call(this.robot, 'health')).camera;
+      } catch {
+        this.camera = null;   // offline: the facts say so
+      }
       try {
         if (!this.settingsLoaded) this.showSettings((await call(this.robot, 'pick/settings')).settings);
         const { lines } = await call(this.robot, `pick/log?since=${this.since}`);
@@ -534,7 +543,9 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
   }
 
   show() {
-    const s = this.robot.state;
+    const s = this.robot.state, cam = this.camera;
+    this.camerr.textContent = cam?.error ?? '';
+    $('.view', this.el).classList.toggle('stale', Boolean(cam?.error));
     if (!s) {
       this.offline();
       return;
@@ -567,6 +578,7 @@ class ArmCard extends Card {   // an arm's pick, run on the robot behind /pick/*
       `job      ${s.busy ? `${s.job.replace('_', ' ')} -- ${s.step}` : 'none'}     picked ${s.picked}, missed ${s.missed}`,
       `battery  ${s.battery_v == null ? '-' : `${s.battery_v.toFixed(2)} V`}` +
         `${s.battery_v != null && s.battery_v < low ? `   LOW: under ${low} V -- charge it before the arm stops` : ''}`,
+      `camera   ${!cam ? '-' : cam.error || `${cam.fps} fps`}`,
       `last     ${last ? `${last.picked ? 'picked' : 'MISSED'} the ${last.kind} in ${last.seconds} s` +
         ` (approach ${last.pitch} deg, fingers along ${last.yaw_deg} deg from the ${last.yaw_from} look, J5 ${last.j5})` : '-'}`,
       `in view  ${seen.length ? seen.join('; ') : 'no cube or block'}`,
