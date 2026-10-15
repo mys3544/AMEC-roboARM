@@ -96,6 +96,9 @@ def main() -> int:
     ap.add_argument("--x3", action="store_true", help="the X3's looks in the set too")
     ap.add_argument("--no-fetch", action="store_true", help="use the looks already fetched")
     a = ap.parse_args()
+    # hekate's output (Ultralytics' progress bars) printed into a log: cp1252 cannot write it, and the
+    # run stopped after its first training (2026-10-15)
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     name = a.name or f"{a.size}_{time.strftime('%Y%m%d')}"
     m3 = ROOT / "m3pro"
 

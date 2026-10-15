@@ -90,9 +90,11 @@ def main() -> int:
     ap.add_argument("--set", type=Path, default=Path("datasets") / "kit")
     ap.add_argument("--model", default="sam2.1_b.pt")
     ap.add_argument("--checker", type=Path, default=CHECKER)
+    ap.add_argument("--no-checker", action="store_true",
+                    help="no second look (a test set: the checker would keep the pictures it gets right)")
     ap.add_argument("--draw", type=int, default=0)
     a = ap.parse_args()
-    model, checker = SAM(a.model), YOLO(a.checker)
+    model, checker = SAM(a.model), None if a.no_checker else YOLO(a.checker)
     check = a.set / "x3_sam_check"
     check.mkdir(exist_ok=True)
     kept = disagreed = missed = drawn = 0
@@ -102,7 +104,7 @@ def main() -> int:
         h, w = image.shape[:2]
         found = pieces(label, w, h)
         refined, masks = refine(model, image, found) if found else ([], [])
-        missing = unlabelled(checker, image, refined) if refined is not None else []
+        missing = unlabelled(checker, image, refined) if refined is not None and checker is not None else []
         if drawn < a.draw and (found or missing):
             shown = image.copy()
             for (_c, poly), mask in zip(found, masks, strict=False):

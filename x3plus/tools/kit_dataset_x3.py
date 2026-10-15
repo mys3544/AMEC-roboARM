@@ -20,6 +20,10 @@ cut by the picture's edge, or missed by that look's own ladder (2026-10-15: one 
 left most pieces in the box, the tagged ones and those at the edge unlabelled, i.e. taught as
 background). A survey that saw no piece -- the tag board on its own -- gives pictures with
 nothing to find. `--draw N` keeps N labelled pictures in out/kit_x3_check/ to look at first.
+
+A test set no training sees: move a session's looks from out/looks/ to out/looks_test/ (fetch
+does not bring them back), then `build --looks out/looks_test --into DIR --val-every 1`, DIR a
+set's layout with a kit.yaml, and train/eval_kit.py --test DIR on hekate.
 """
 
 from __future__ import annotations
@@ -46,6 +50,7 @@ from roboarm import lens
 
 ROOT = Path(__file__).resolve().parents[1]
 LOOKS = ROOT / "out" / "looks"
+HELD_OUT = ROOT / "out" / "looks_test"   # looks moved here are never trained on: the test set
 INTO = ROOT.parent / "m3pro" / "out" / "kit"
 NAMES = ["cube30", "cube40", "block"]   # the M3's set's classes (m3pro/tools/kit_dataset.py)
 HOST, REMOTE = "jetson@192.168.73.210", "roboarm/out/pick/looks"
@@ -162,7 +167,7 @@ def groups(stems: list[str], gap_s: float) -> list[list[str]]:
     return out
 
 
-def build(into: Path, val_every: int, draw: int) -> None:
+def build(into: Path, val_every: int, draw: int, looks: Path = LOOKS) -> None:
     if not (into / "kit.yaml").exists():
         raise SystemExit(f"no set at {into}: m3pro/tools/kit_dataset.py writes it first")
     fit = json.loads((ROOT / "data" / "cameras" / cfg.WRIST_CAMERA / "lens_on_arm.json").read_text())
@@ -170,18 +175,18 @@ def build(into: Path, val_every: int, draw: int) -> None:
     if draw:
         shutil.rmtree(check, ignore_errors=True)
         check.mkdir(parents=True)
-    stems = sorted(p.stem for p in LOOKS.glob("*.json") if (LOOKS / f"{p.stem}.jpg").exists())
+    stems = sorted(p.stem for p in looks.glob("*.json") if (looks / f"{p.stem}.jpg").exists())
     counts = {"train": [0, 0, [0] * len(NAMES)], "val": [0, 0, [0] * len(NAMES)]}
     left_out, kept = 0, []
     for i, scene in enumerate(groups(stems, SCENE_GAP_S)):
         split = "val" if i % val_every == val_every - 1 else "train"
         for survey in groups(scene, SURVEY_GAP_S):
-            records = {stem: json.loads((LOOKS / f"{stem}.json").read_text()) for stem in survey}
+            records = {stem: json.loads((looks / f"{stem}.json").read_text()) for stem in survey}
             left_out += sum(r.get("K") is None for r in records.values())
             records = {stem: r for stem, r in records.items() if r.get("K") is not None}
             seen = survey_pieces(list(records.values()))
             for stem, record in records.items():
-                write(into, split, stem, record, labelled(record, seen, fit), counts, kept)
+                write(into, split, looks / f"{stem}.jpg", record, labelled(record, seen, fit), counts, kept)
     for split, (n, empty, per) in counts.items():
         print(f"X3 {split}: {n} pictures ({empty} with no kit piece), "
               + ", ".join(f"{name} {k}" for name, k in zip(NAMES, per)))
@@ -191,7 +196,7 @@ def build(into: Path, val_every: int, draw: int) -> None:
         chosen = [g[int(i)] for g, n in ((full, draw - draw // 3), (empty, draw // 3)) if g
                   for i in np.linspace(0, len(g) - 1, min(n, len(g)))]
         for stem, pieces in chosen:
-            image = cv2.imread(str(LOOKS / f"{stem}.jpg"))
+            image = cv2.imread(str(looks / f"{stem}.jpg"))
             for c, poly in pieces:
                 cv2.polylines(image, [poly.astype(np.int32)], True, (0, 255, 255), 2)
                 cv2.putText(image, NAMES[c], tuple(int(v) for v in poly.min(axis=0)), cv2.FONT_HERSHEY_SIMPLEX,
@@ -200,11 +205,12 @@ def build(into: Path, val_every: int, draw: int) -> None:
         print(f"{len(chosen)} drawn in {check}")
 
 
-def write(into: Path, split: str, stem: str, record: dict, pieces: list, counts: dict, kept: list) -> None:
+def write(into: Path, split: str, picture: Path, record: dict, pieces: list, counts: dict, kept: list) -> None:
     """One look and its labels into the set, counted."""
+    stem = picture.stem
     w, h = record["size"]
     lines = [f"{c} " + " ".join(f"{x / w:.5f} {y / h:.5f}" for x, y in poly) for c, poly in pieces]
-    shutil.copy(LOOKS / f"{stem}.jpg", into / "images" / split / f"x3_{stem}.jpg")
+    shutil.copy(picture, into / "images" / split / f"x3_{stem}.jpg")
     (into / "labels" / split / f"x3_{stem}.txt").write_text("".join(f"{line}\n" for line in lines))
     counts[split][0] += 1
     counts[split][1] += 0 if lines else 1
@@ -221,18 +227,19 @@ def main() -> None:
     b.add_argument("--into", type=Path, default=INTO)
     b.add_argument("--val-every", type=int, default=5)
     b.add_argument("--draw", type=int, default=0)
+    b.add_argument("--looks", type=Path, default=LOOKS, help=f"the looks to label (the test set: {HELD_OUT})")
     a = ap.parse_args()
     if a.cmd == "fetch":
         fetch()
     else:
-        build(a.into, a.val_every, a.draw)
+        build(a.into, a.val_every, a.draw, a.looks)
 
 
 def fetch() -> None:
     """The X3's looks newer than the newest here, as one tar stream over SSH (scp -r of its first
     1,800 small files over WiFi took ~8 min, 2026-10-15)."""
     LOOKS.mkdir(parents=True, exist_ok=True)
-    newest = max((p.name for p in LOOKS.iterdir()), default="")
+    newest = max((p.name for folder in (LOOKS, HELD_OUT) if folder.exists() for p in folder.iterdir()), default="")
     with subprocess.Popen(["ssh", "-o", "BatchMode=yes", HOST,
                            f"cd {REMOTE} && ls | awk -v s='{newest}' '$0 > s' | tar cf - -T -"],
                           stdout=subprocess.PIPE) as proc, tarfile.open(fileobj=proc.stdout, mode="r|") as tar:
