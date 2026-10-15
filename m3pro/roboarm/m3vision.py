@@ -159,7 +159,21 @@ def objects(depth_mm: np.ndarray, K, camera: np.ndarray, cell: float = 0.004,
                       "yaw": float(long_deg + 90) % 180 if lying else float(angle) % 90,
                       "period": 180 if lying else 90, "whole": whole, "points": len(members),
                       "outline_px": hull.tolist()})
+    found = [o for o in found if not on_body(o["centre"])]
     return sorted(found, key=lambda o: float(np.linalg.norm(o["centre"][:2] - camera[:2, 3])))
+
+
+# The robot's own front: the bumper's face at x 0.124 (m3kinematics.CHASSIS) and the front wheels'
+# tyres a little past it, across the chassis' width (CHASSIS_Y). 2026-10-15: 6 cm of the left tyre,
+# seen at x 0.130 y +0.119, was "the nearest thing" Teach chose over a cube 20 cm out. A 30 mm cube
+# against the bumper stands with its centre at 0.139.
+BODY_FRONT_X = 0.136
+BODY_HALF_Y = 0.135
+
+
+def on_body(centre) -> bool:
+    """Whether a thing found standing at `centre` (base, m) is the robot's own front."""
+    return centre[0] < BODY_FRONT_X and abs(centre[1]) < BODY_HALF_Y
 
 
 def find_marker(image: np.ndarray, K, camera: np.ndarray, family: str, ident: int,

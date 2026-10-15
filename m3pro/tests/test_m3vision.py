@@ -79,6 +79,15 @@ def test_a_cube_on_the_floor_is_found_where_it_stands_and_named_by_its_height():
     assert m3vision.objects(render(cam), K, cam) == []       # a bare floor: nothing
 
 
+def test_the_robots_own_front_wheel_is_no_thing_but_a_cube_before_the_bumper_is():
+    cam = camera(0.33, 52, 0.0)
+    cam[0, 3] = 0.0   # further back than the others: the floor just past the bumper in view
+    tyre = render(cam, cube=(0.130, 0.115, 0.0, 0.02, 0.06))   # 2 cm of it, 6 cm tall, by the left wheel
+    assert m3vision.objects(tyre, K, cam) == []
+    found = m3vision.objects(render(cam, cube=(0.145, 0.0)), K, cam)   # 2 cm out from the bumper
+    assert len(found) == 1 and found[0]["size"] == 0.030
+
+
 def test_something_as_tall_as_a_cube_but_longer_is_not_one():
     cam = camera(0.33, 52, 1.0)
     depth = render(cam, cube=(0.42, -0.03))
