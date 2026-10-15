@@ -83,13 +83,24 @@ never seen that camera or the board.
       under 15x more X3 pictures. PLAN.md M5 has the per-class numbers.
 - [ ] **Decide:** a model per robot for now (proposed: the X3 `n_20261015`, the M3 `n_cycle`), or
       one model with the M3's pictures weighted up -- after the M3 frames below.
-- [ ] **Look at `n_20261015` on the tag board** (the X3 test's board pictures): are the false cubes gone?
+- [x] **`n_20261015` on the tag board** (the morning's 25 check pictures, never trained on, through
+      the X3 service's own detector.py): not one false cube on the board any more (the old model had
+      7-9 finds on the busiest); the red and yellow cubes cube40, the blue one a block. A few weak
+      ones left off the board -- a post-it, something on the keyboard, empty paper (0.38-0.49);
+      none kit-sized, so the X3's ranging drops them. Picture: x3plus/out/kit_detector_on_x3_new.jpg.
+- [x] **The X3 serves it** (2026-10-15 evening): `yolo26n_kit_x3.pt` (= n_20261015's best.pt) in
+      ~/roboarm/models/kit/ on the X3, its 640x640 FP16 engine built there (~7 min,
+      `.venv-ml/bin/python tools/export_engine.py --model models/kit/yolo26n_kit_x3.pt --imgsz 640`);
+      `ROBOARM_VISION_MODEL=/home/jetson/roboarm/models/kit/yolo26n_kit_x3.pt` in
+      ~/roboarm/robot.local.env (empty before: the default was YOLOE-26s-pf); roboarm-vision
+      restarted: /health says yolo26n_kit_x3.engine, cube30/cube40/block; a live frame through the
+      bridge's /vision/detect came back cube40 0.52 with its outline. **Back to YOLOE:** delete
+      those lines in robot.local.env, `systemctl --user restart roboarm-vision`.
+- [ ] **A Clean up round on the X3 with it** -- picks as before? The ladder's neural rung now names
+      kit pieces itself; the X3 still names them by size.
 - [ ] **M3 frames** with 40 mm cubes and the 30x30x60 block out (~15 looks each) -- still to do.
-- [ ] **Onto the robots** (agreed 2026-10-15): the X3 once the board check above is clean -- its
-      vision service takes it as is (ROBOARM_VISION_MODEL in robot.local.env, a 640x640 engine
-      built on the robot by tools/export_engine.py); the M3 after the M3 frames, as a vision service
-      of its own whose answer the pick logs beside the depth's at every look (the depth stays in
-      charge; the log is the score).
+- [ ] **The M3** (agreed 2026-10-15) after its frames, as a vision service of its own whose answer
+      the pick logs beside the depth's at every look (the depth stays in charge; the log is the score).
 
 ## 3. Me, while the robot work runs (laptop + hekate)
 
