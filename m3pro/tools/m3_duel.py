@@ -5,7 +5,7 @@ fitted on the floor the arm's pose predicts). The pictures are the pick's own lo
 with the kit's outlines since 2026-10-09 (m3pick.look: *_rgb.jpg, *_depth.png, *.json).
 
     python tools/m3_duel.py fetch [DAY]      # the robot's out/pick/DAY_*  (today) -> out/duel/frames/
-    python tools/m3_duel.py run [--panels 6] # -> out/duel/results.md, out/duel/panel_*.jpg
+    python tools/m3_duel.py run [--panels 6] [--versus da2l]   # -> out/duel/results.md, out/duel/panel_*.jpg
 
 Two anchors, so the network's share of the error is told from the arm model's: "arm" -- the floor
 where the arm model puts it (what the X3, with no depth camera, has); "floor" -- where the DCW2's
@@ -140,7 +140,7 @@ def extra_columns(kinds: dict[str, str]) -> list[tuple[str, str]]:
     return columns
 
 
-def run(panels: int) -> None:
+def run(panels: int, versus: str | None = None) -> None:
     import onnxruntime
 
     session = onnxruntime.InferenceSession(str(MODEL), providers=["CPUExecutionProvider"])
@@ -148,7 +148,9 @@ def run(panels: int) -> None:
         if YOLO_MODEL.exists() else None
     kinds = extras()
     rows, floors, spent, spent_yolo = [], [], [], []
-    shown = 0
+    shown = {"wide": 0, "close": 0}
+    for old in OUT.glob("panel_*.jpg") if panels else ():   # this run's panels only
+        old.unlink()
     for meta_path in sorted(FRAMES.glob("*.json")):
         meta = json.loads(meta_path.read_text())
         stem = meta_path.stem
@@ -204,9 +206,10 @@ def run(panels: int) -> None:
             & (np.abs(real) < 0.005)
         floors.append({"look": look, "dcw2": float(np.nanstd(real[flat]))} |
                       {n: (None if hm is None else float(np.nanstd(hm[flat]))) for n, hm in maps.items()})
-        if shown < panels and rows and rows[-1]["frame"] == stem and maps["arm"] is not None:
-            write_panel(OUT / f"panel_{shown}_{stem}.jpg", bgr, real, maps, meta, stem)
-            shown += 1
+        if shown[look] < (panels + 1) // 2 and rows and rows[-1]["frame"] == stem and maps["arm"] is not None \
+                and (versus is None or maps.get(f"{versus}_arm") is not None):   # half wide looks, half close
+            write_panel(OUT / f"panel_{look}_{shown[look]}_{stem}.jpg", bgr, real, maps, meta, versus)
+            shown[look] += 1
     times = [f"Depth Anything V2 Small {1000 * np.median(spent):.0f} ms (this laptop's CPU, onnxruntime)"]
     if spent_yolo:
         times.append(f"YOLO26n-depth {1000 * np.median(spent_yolo):.0f} ms (the same)")
@@ -223,11 +226,15 @@ def colour(hm: np.ndarray, top: float = 0.065) -> np.ndarray:
     return out
 
 
-def write_panel(path: Path, bgr, real, maps, meta, stem) -> None:
-    """colour | the DCW2's heights | Depth Anything's, anchored on the arm's floor | on the DCW2's floor;
-    0 (blue) to 65 mm (red), each kit piece's height written on it."""
-    tiles = [bgr.copy(), colour(real), colour(maps["arm"]), colour(maps["floor"]) if maps["floor"] is not None else colour(real * np.nan)]
-    titles = ["colour", "DCW2 (stereo)", "Depth Anything, arm's floor", "Depth Anything, DCW2's floor"]
+def write_panel(path: Path, bgr, real, maps, meta, versus: str | None = None) -> None:
+    """colour | the DCW2's heights | Depth Anything V2 Small's on the arm's floor (what the robots run)
+    | `versus`'s on the arm's floor (a big contestant from hekate) -- without one, Depth Anything on
+    the DCW2's floor; 0 (blue) to 65 mm (red), each kit piece's height written on it."""
+    last = (f"{versus}_arm", f"{EXTRA_LABELS.get(versus, versus)}, arm's floor") if versus \
+        else ("floor", "Depth Anything, DCW2's floor")
+    shown = [real, maps["arm"], maps.get(last[0])]
+    tiles = [bgr.copy()] + [colour(real * np.nan if hm is None else hm) for hm in shown]
+    titles = ["colour", "DCW2 (stereo)", "Depth Anything V2 Small, arm's floor", last[1]]
     for o in meta["found"]:
         truth = true_height(o)
         if truth is None or len(o["outline_px"]) < 3:
@@ -237,7 +244,7 @@ def write_panel(path: Path, bgr, real, maps, meta, stem) -> None:
         if not kit_piece(o, bgr, mask.astype(bool)):
             continue
         u, v = np.asarray(o["outline_px"]).mean(axis=0).astype(int)
-        for tile, hm in zip(tiles[1:], (real, maps["arm"], maps["floor"]), strict=True):
+        for tile, hm in zip(tiles[1:], shown, strict=True):
             if hm is None:
                 continue
             text = f"{1000 * np.nanpercentile(hm[mask.astype(bool)], 90):.0f}"
@@ -292,12 +299,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("fetch").add_argument("day", nargs="?", default=time.strftime("%Y%m%d"))
-    sub.add_parser("run").add_argument("--panels", type=int, default=6)
+    run_parser = sub.add_parser("run")
+    run_parser.add_argument("--panels", type=int, default=6, help="pictures to draw, half wide looks, half close")
+    run_parser.add_argument("--versus", default=None, metavar="MODEL",
+                            help="the panels' last tile: this big contestant (out/duel/extra/MODEL, e.g. da2l)")
     args = parser.parse_args()
     if args.cmd == "fetch":
         fetch(args.day)
     else:
-        run(args.panels)
+        run(args.panels, args.versus)
     return 0
 
 
