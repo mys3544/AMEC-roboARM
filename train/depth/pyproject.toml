@@ -1,0 +1,24 @@
+# The depth duel's big contestants (PLAN.md S1) on hekate: monocular depth networks too big for the
+# robots, run on the M3's saved looks. Its own uv project beside train/'s, not part of it, so the kit
+# training's venv stays as it is. Copied to hekate's `Sim Arm 2026\train\depth` with this lock.
+[project]
+name = "roboarm-depth"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "torch>=2.8",
+    "torchvision>=0.23",   # Depth Pro's fast image processor
+    "transformers>=4.56",
+    "pillow",
+    "numpy",
+]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+
+[[tool.uv.index]]
+# CUDA 12.8 wheels: the first with Blackwell (the 5090, compute 12.0)
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
