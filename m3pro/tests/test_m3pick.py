@@ -184,6 +184,22 @@ def test_clean_up_takes_every_one_in_reach():
     assert picker.state["error"] is None and world.pose == HOME
 
 
+def test_a_thing_no_plan_reaches_is_planned_once_a_job_not_before_every_pick(monkeypatch):
+    # nearest first, so the one with no grip comes up first before each of the other two
+    world = World([(0.16, -0.03, 0, 0.03, 0.03), (0.21, 0.05, 10, 0.03, 0.03), (0.22, 0.10, 40, 0.03, 0.03)])
+    tried = []
+    plan = m3pick.Picker.plan
+
+    def no_grip_on_the_right(self, thing, around):
+        tried.append(float(thing["centre"][1]))
+        return None if thing["centre"][1] < 0 else plan(self, thing, around)
+
+    monkeypatch.setattr(m3pick.Picker, "plan", no_grip_on_the_right)
+    picker = run(world, "clean_up")
+    assert picker.state["picked"] == 2 and len(world.boxes) == 1   # the other two, it left
+    assert sum(y < 0 for y in tried) == 1, tried                   # (2026-10-15: before every pick)
+
+
 def test_stop_stops_between_moves():
     world = World([(0.21, 0.03, 0, 0.03, 0.03)], move_s=0.2)
     picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0)

@@ -46,6 +46,7 @@ from roboshared import box as boxes
 from roboshared import metrics
 
 MATCH_M = 0.03   # the close look's thing is the wide look's when within this
+SAME_SPOT_M, SAME_TURN_DEG = 0.01, 8.0   # a thing no plan reached is the same while this near and turned
 BOX_TRIES, BOX_AGAIN_S = 3, 0.4   # looks for the box's marker from one place, and the pause between them
 PART_M = 0.06    # a thing one look saw cut by the picture's edge is another look's whole one within this
                  # (a kit thing's length): from the side looks a lying block cut short read as a cube
@@ -137,6 +138,7 @@ class Task:
         self.box_dir = self.BOX_LOOKS[0] if self.BOX_LOOKS else 0   # J1 it was last seen at: looked for there first
         self.line_drops = 0                     # let go on the line out on the right this job (no box)
         self.skip: list[np.ndarray] = []        # spots this job has given up (pick's `skip`): looked past
+        self.unplannable: list[dict] = []       # things this job found no plan for, the base where it is
         self.offset = np.zeros(2)   # m the base has driven since the job began (forward, left): the drop-off
                                     # box stays where it was, so the base goes back before a drop
         self.cfg = {key: spec[5] for key, spec in self.SETTINGS.items()}
@@ -289,6 +291,7 @@ class Task:
         """One pick and the drop-off, then home; `drive`: the base may drive up to it."""
         self.may_drive = drive and self.drive is not None
         self.offset = np.zeros(2)
+        self.unplannable = []
         self.engaged()
         self.box_look()
         try:
@@ -304,6 +307,7 @@ class Task:
         is given up. `drive`: the base may drive up to what is out of reach."""
         self.may_drive = drive and self.drive is not None
         self.offset = np.zeros(2)
+        self.unplannable = []
         self.engaged()
         self.box_look()
         found, misses, skip = None, [], []
@@ -351,10 +355,12 @@ class Task:
             refused = []   # in reach, no plan: the arm would come too near something, or the fingers too low
             with metrics.span("plan"):
                 for o in self.order([o for o in kit if o["reach"]], at):
-                    planned = self.plan(o, found)
+                    planned = None if self.unplanned_before(o) else self.plan(o, found)
                     if planned:
                         target = o
                         break
+                    if not self.unplanned_before(o):
+                        self.unplannable.append(o)
                     o["reach"] = False
                     refused.append(o)
             if target is not None:
@@ -521,6 +527,19 @@ class Task:
             self.say(f"no drop-off box: marker {boxes.BOX_MARKER[1]} not seen all round -- dropping on the line out on the right")
         return self.box
 
+    def unplanned_before(self, o: dict) -> bool:
+        """Whether `o` is a thing this job found no plan for, lying as it did then: planned again,
+        it comes to nothing again -- and a plan that comes to nothing tries every approach (2026-10-15:
+        a lying block out of the grips' reach planned anew before every pick of a clean-up, 6-15 s each,
+        a third of the job)."""
+        period = o.get("period", 180)
+        for was in self.unplannable:
+            turn = abs((o.get("yaw", 0.0) - was.get("yaw", 0.0) + period / 2) % period - period / 2)
+            apart = float(np.linalg.norm(np.asarray(o["centre"][:2], float) - np.asarray(was["centre"][:2], float)))
+            if was["kind"] == o["kind"] and turn <= SAME_TURN_DEG and apart <= SAME_SPOT_M:
+                return True
+        return False
+
     def given_up(self, o: dict) -> bool:
         """`o` lies at a spot this job has given up (refused, or missed twice): left where it is."""
         return any(np.linalg.norm(np.asarray(o["centre"][:2], float) - spot) <= MATCH_M for spot in self.skip)
@@ -563,6 +582,7 @@ class Task:
         went = self.drive(dx, dy, self.cfg["drive_cm_s"] / 100)
         went = np.asarray(went if went is not None else (dx, dy), float)
         self.offset = self.offset + went
+        self.unplannable = []   # everything lies elsewhere from the base now
         time.sleep(self.cfg["driven_s"])
         return went
 
