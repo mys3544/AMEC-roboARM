@@ -29,13 +29,20 @@ MODELS = {   # name: (Hugging Face id, what it gives)
     "da2l": ("depth-anything/Depth-Anything-V2-Large-hf", "disparity"),
     "da2l_metric": ("depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf", "depth"),
     "depthpro": ("apple/DepthPro-hf", "depth"),
+    # Depth Anything 3 (depth_anything_3, not in transformers: the X3's ml-requirements pin), one picture
+    # at a time; its depth is relative, saved as 1/depth -- anchored to the floor as DA V2 is (2026-10-16)
+    "da3l": ("depth-anything/DA3-LARGE", "disparity"),
+    "da3mono": ("depth-anything/DA3MONO-LARGE", "disparity"),
 }
 
 
 def load(name: str, device: str):
+    repo, _kind = MODELS[name]
+    if name.startswith("da3"):
+        from depth_anything_3.api import DepthAnything3
+        return None, DepthAnything3.from_pretrained(repo).to(device).eval()
     from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
-    repo, _kind = MODELS[name]
     processor = AutoImageProcessor.from_pretrained(repo, use_fast=True)
     model = AutoModelForDepthEstimation.from_pretrained(repo).to(device).eval()
     return processor, model
@@ -43,6 +50,11 @@ def load(name: str, device: str):
 
 @torch.inference_mode()
 def predict(name: str, processor, model, image: Image.Image, fx: float, device: str) -> np.ndarray:
+    if name.startswith("da3"):   # its 504 px picture's depth, back to the look's size, as 1/depth
+        depth = torch.from_numpy(model.inference([np.asarray(image)], process_res=504).depth[0]).float()
+        depth = torch.nn.functional.interpolate(depth[None, None], size=(image.height, image.width),
+                                                mode="bilinear", align_corners=False)[0, 0]
+        return (1.0 / depth.clamp(min=1e-6)).numpy()
     inputs = processor(images=image, return_tensors="pt").to(device)
     outputs = model(**inputs)
     post = processor.post_process_depth_estimation(outputs, target_sizes=[(image.height, image.width)])[0]
