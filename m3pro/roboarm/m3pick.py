@@ -68,7 +68,7 @@ from roboshared.task import (  # noqa: F401
     refusable,
 )
 
-from roboarm import m3aim, m3arm, m3kinematics, m3scan, m3teach, m3vision
+from roboarm import m3aim, m3arm, m3kinematics, m3kit, m3scan, m3teach, m3vision
 
 LOOK = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90}   # the wide look: the floor from the bumper (12 cm) to 45 cm
                                              # ahead, +-17 cm aside at the near edge; a 40 mm top there is
@@ -732,6 +732,10 @@ class Picker(Task):
             found = m3vision.objects(depth, K, camera, floor=(normal, height))
             m3vision.refine_turns(image, K, camera, found)   # the turn from the colour edges, where sure
         aimed(found, self.AXIS, self.cfg["trim_out_mm"], self.cfg["trim_left_mm"])
+        with metrics.span("kit detector"):   # its second opinion, logged only (m3kit)
+            detections = m3kit.ask(image)
+        if detections is not None:
+            self.say(f"{tag} look, " + m3kit.line(m3kit.compare(found, detections)))
         base = np.asarray(self.AXIS)
         for o in found:   # cheap, and hopeful: the pick plans the one it takes in full
             radius = float(np.hypot(*(o["centre"][:2] - base)))
@@ -755,7 +759,8 @@ class Picker(Task):
                 "found": [{"kind": o["kind"], "size": o["size"], "length": o["length"], "top": o["top"],
                            "centre": [float(c) for c in o["seen"]], "aimed": [float(c) for c in o["centre"]],
                            "yaw": o["yaw"], "whole": o["whole"],
-                           "outline_px": o["outline_px"]} for o in found]}))
+                           "outline_px": o["outline_px"]} for o in found],
+                "detector": detections}))   # the kit detector's answer (m3kit), None with no service
         return camera, found
 
     def view(self):

@@ -12,6 +12,8 @@ framework.
     POST /raised   same body, same reply shape, from the depth model: the
                    outlines of what stands up on the table (vision_service.depth).
                    503 when no depth engine is built; the client then skips it.
+    POST /depth    same body; the depth model's map itself, as .npy float16 at the
+                   engine's size (depth.encode_map), the model's time in X-Model-Ms.
 
 The model is loaded once at startup, not per request, so a bad ROBOARM_VISION_MODEL
 fails the container immediately rather than on the first pick attempt.
@@ -26,6 +28,12 @@ from urllib.parse import parse_qs, urlparse
 
 from vision_service.depth import Depth
 from vision_service.detector import Detector
+
+PORT = 8760
+# Only the robot itself asks (the pick, over 127.0.0.1); ROBOARM_VISION_HOST=0.0.0.0 opens it up.
+HOST = os.environ.get("ROBOARM_VISION_HOST", "127.0.0.1")
+# A vision container with no CUDA refuses to start; False runs on the CPU anyway.
+REQUIRE_CUDA = True
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -54,6 +62,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         url = urlparse(self.path)
         options = {}
+        if url.path == "/depth":
+            self._depth()
+            return
         if url.path == "/detect":
             model = self.detector
         elif url.path == "/raised":
@@ -75,26 +86,39 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
 
 
+    def _depth(self) -> None:
+        if self.depth is None:
+            self._json({"error": "no depth engine is built -- see vision_service/depth.py"}, 503)
+            return
+        body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
+        try:
+            data, model_ms = self.depth.raw(body)
+        except Exception as exc:  # noqa: BLE001 -- the client must hear about it
+            self._json({"error": f"{type(exc).__name__}: {exc}"}, 400 if isinstance(exc, ValueError) else 500)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Model-Ms", str(model_ms))
+        self.end_headers()
+        self.wfile.write(data)
+
+
 def main() -> None:
     detector = Detector.from_env()  # load + warmup now; a bad model is a boot failure
-    # CUDA is injected by CDI at `docker run`, so this is the first point it can
-    # be checked. Fail here rather than serve slow CPU inference that surprises
-    # someone mid-demo. ROBOARM_VISION_REQUIRE_CUDA=0 opts into CPU on purpose.
-    if not detector.cuda and os.environ.get("ROBOARM_VISION_REQUIRE_CUDA", "1") != "0":
+    # Fail here rather than serve slow CPU inference that surprises someone
+    # mid-demo. REQUIRE_CUDA = False opts into CPU on purpose.
+    if not detector.cuda and REQUIRE_CUDA:
         raise RuntimeError(
-            "the vision container has no CUDA -- the GPU was not passed through. "
-            "Check `devices: [nvidia.com/gpu=all]` in compose.yaml and that the "
-            "host has a CDI spec (`nvidia-ctk cdi generate`). Set "
-            "ROBOARM_VISION_REQUIRE_CUDA=0 to run on CPU anyway."
+            "the vision service has no CUDA -- run it from the venv that sees JetPack's "
+            "torch (~/roboarm/.venv-ml, tools/ml_env.sh). Set REQUIRE_CUDA = False in "
+            "vision_service/serve.py to run on CPU anyway."
         )
     depth = Depth.from_env() if detector.cuda else None   # the engine is CUDA-only
     handler = type("BoundHandler", (Handler,), {"detector": detector, "depth": depth})
-    # Binds all interfaces INSIDE the container; compose publishes it to
-    # 127.0.0.1 only, and on the compose network `core` reaches it as `vision`.
-    port = int(os.environ.get("ROBOARM_VISION_PORT", "8760"))
-    server = ThreadingHTTPServer(("0.0.0.0", port), handler)
+    server = ThreadingHTTPServer((HOST, PORT), handler)
     server.daemon_threads = True
-    print(f"roboarm vision: {detector.name} on port {port}, cuda={detector.cuda}", flush=True)
+    print(f"roboarm vision: {detector.name} on {HOST}:{PORT}, cuda={detector.cuda}", flush=True)
     server.serve_forever()
 
 

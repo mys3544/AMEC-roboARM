@@ -9,7 +9,7 @@ Configuration is entirely from the environment, so the container needs no config
 file mounted:
 
     ROBOARM_VISION_MODEL     path to weights, or a name Ultralytics can fetch.
-                             Default /app/models/yoloe-26s-seg-pf.pt, the
+                             Default models/yoloe-26s-seg-pf.pt, the
                              prompt-free YOLOE built on YOLO26 (2026-09-14). A name
                              containing "yoloe" is loaded with the YOLOE loader; a
                              plain "yolo26n-seg.pt" is the fixed 80-class COCO
@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import io
 import os
+import pathlib
 import time
 
-DEFAULT_MODEL = "/app/models/yoloe-26s-seg-pf.pt"
+DEFAULT_MODEL = str(pathlib.Path(__file__).resolve().parents[1] / "models" / "yoloe-26s-seg-pf.pt")
 
 
 def extract_detections(boxes, names, masks=None) -> list[dict]:
@@ -157,10 +158,7 @@ def _resolve_model(path: str) -> str:
 def _load_model(path: str):
     # YOLOE weights need the YOLOE loader; anything else is a plain YOLO.
     if "yoloe" in os.path.basename(path).lower():
-        try:
-            from ultralytics import YOLOE as Loader
-        except ImportError:
-            from ultralytics import YOLO as Loader
+        from ultralytics import YOLOE as Loader
     else:
         from ultralytics import YOLO as Loader
     try:
@@ -168,7 +166,7 @@ def _load_model(path: str):
     except Exception as exc:  # Ultralytics raises a variety of errors here
         raise RuntimeError(
             f"could not load the detection model '{path}': {exc}. Put the weights "
-            f"in ./models (mounted at /app/models), or set ROBOARM_VISION_MODEL to "
+            f"in ./models, or set ROBOARM_VISION_MODEL to "
             f"a name Ultralytics can download while the robot has WiFi."
         ) from exc
 

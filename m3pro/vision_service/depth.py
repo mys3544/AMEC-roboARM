@@ -16,8 +16,7 @@ Orin, output matches the CPU model to 0.1 %). No engine, no rung: /raised
 answers 503 and the client skips it. One engine per wrist camera, at that
 camera's aspect: the Sonix's 640x480 is 4:3 (518x686), the C930e's 848x480 is
 16:9 (518x910, 2026-09-24). A frame of another shape is stretched to fit.
-
-    ROBOARM_DEPTH_ENGINE   path to the engine; default by ROBOARM_CAMERA, see ENGINES
+ROBOARM_CAMERA picks the engine, see ENGINES.
 
 `raised_regions()` is pure numpy + OpenCV so the core environment can test it.
 """
@@ -25,14 +24,17 @@ camera's aspect: the Sonix's 640x480 is 4:3 (518x686), the C930e's 848x480 is
 from __future__ import annotations
 
 import base64
+import io
 import os
+import pathlib
 import time
 
 import cv2
 import numpy as np
 
-ENGINES = {"sonix": "/app/models/da2s_518x686.fp16.engine",
-           "c930e": "/app/models/da2s_518x910.fp16.engine"}
+MODELS = pathlib.Path(__file__).resolve().parents[1] / "models"   # ~/roboarm/models on the robot
+ENGINES = {"sonix": str(MODELS / "da2s_518x686.fp16.engine"),
+           "c930e": str(MODELS / "da2s_518x910.fp16.engine")}
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)
 STD = np.array([0.229, 0.224, 0.225], np.float32)
 
@@ -132,6 +134,19 @@ def preprocess(bgr: np.ndarray, size: tuple[int, int]) -> np.ndarray:
     return np.ascontiguousarray(x.transpose(2, 0, 1)[None])
 
 
+def encode_map(disp: np.ndarray) -> bytes:
+    """The relative depth as .npy bytes, float16: what POST /depth answers. The engine is FP16,
+    so nothing is lost, and the 518 x 910 map is 0.9 MB."""
+    buffer = io.BytesIO()
+    np.save(buffer, disp.astype(np.float16), allow_pickle=False)
+    return buffer.getvalue()
+
+
+def decode_map(data: bytes) -> np.ndarray:
+    """encode_map's bytes -> the map, float32."""
+    return np.load(io.BytesIO(data), allow_pickle=False).astype(np.float32)
+
+
 class Depth:
     """The engine, loaded once. `infer(jpeg)` answers in the /detect wire format."""
 
@@ -159,7 +174,7 @@ class Depth:
     @classmethod
     def from_env(cls) -> Depth | None:
         camera = os.environ.get("ROBOARM_CAMERA", "c930e")
-        path = os.environ.get("ROBOARM_DEPTH_ENGINE", ENGINES.get(camera, ENGINES["c930e"]))
+        path = ENGINES.get(camera, ENGINES["c930e"])
         if not os.path.exists(path):
             print(f"vision: no depth engine at {path}; the depth rung is off", flush=True)
             return None
@@ -174,6 +189,16 @@ class Depth:
             out = self._out.clone()
         self._stream.synchronize()
         return out.cpu().numpy().reshape(self.height, self.width)
+
+    def raw(self, jpeg: bytes) -> tuple[bytes, float]:
+        """POST /depth: the relative inverse depth itself (encode_map), for measuring -- depth
+        anchored to the floor, x3plus/PLAN.md X2.3 -- and the model's milliseconds."""
+        frame = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
+        if frame is None:
+            raise ValueError("the body is not a decodable JPEG")
+        started = time.perf_counter()
+        disp = self.depth_map(frame)
+        return encode_map(disp), round(1000 * (time.perf_counter() - started), 1)
 
     def infer(self, jpeg: bytes, want_map: bool = False) -> dict:
         """The raised regions; with `want_map` also "map", the relative depth as

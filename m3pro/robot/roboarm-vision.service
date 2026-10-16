@@ -1,0 +1,19 @@
+# The M3 Pro's kit detector (PLAN.md M5): YOLO26n-seg on 127.0.0.1:8760, the X3's vision service
+# (vision_service/, the same code) with the model both robots serve since 2026-10-16. m3kit asks it
+# at every look for a second opinion beside the depth's, which stays in charge.
+# A systemd user unit, installed by robot/setup.sh; `journalctl --user -u roboarm-vision -f`.
+[Unit]
+Description=RoboARM M3 Pro kit detector (127.0.0.1:8760)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/roboarm
+Environment=PYTHONUNBUFFERED=1
+Environment=ROBOARM_VISION_MODEL=%h/roboarm/models/kit/yolo26n_kit.pt
+# .venv-ml sees JetPack's CUDA torch and TensorRT (tools/ml_env.sh); the .engine beside the .pt is used
+ExecStart=%h/roboarm/.venv-ml/bin/python -m vision_service.serve
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
