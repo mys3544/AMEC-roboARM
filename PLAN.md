@@ -844,6 +844,32 @@ better?" with numbers, and gives the neural localizer a proper evaluation.
   fit says its scale is pinned and the look is no steeper (16 deg from straight down, the wide 20)
   -- the cause is open. Unlike the X3's views, its median height is right (30 for 30): it
   scatters rather than flattens. Picture panels: `m3pro/out/duel/panel_*.jpg`.
+  **The cause, the big models and the fix, 2026-10-13 to 10-16** (height error, median / p90 mm,
+  share named within 7 mm; arm model's floor):
+
+  | | wide | close (~20 cm) | ms a picture |
+  |---|---|---|---|
+  | DCW2 stereo | 0.5 / 0.8 | -- | in the camera |
+  | DA V2 Small, the old fit | 5.0 / 11.8, 71 % | 15.5 / 32.9, 19 % | 26 (X3, TensorRT FP16) |
+  | DA V2 Small, the fit fixed | 4.2 / 10.3, 72 % | 11.7 / 26.3, 34 % | 26 |
+  | DA V2 Large, the old fit | 4.8 / 8.9, 78 % | 9.6 / 25.5, 33 % | 72 (hekate's 5090) |
+  | **DA V2 Large, the fit fixed** | **3.5 / 7.2, 88 %** | **5.2 / 17.5, 61 %** | 72 |
+  | DA3 Large (one view) | 8.4 / 14.4, 38 % | 13.4 / 21.8, 23 % | 350 (laptop 2070 S) |
+  | DA3 Mono | 14.3 / 30.3, 19 % | 16.1 / 28.2, 17 % | 354 |
+
+  (The 2026-10-09 looks; on 2026-10-15's, never tuned on, DA V2 Large close 8.0 -> 6.9 mm, 43 -> 52 %.)
+  - The close look's failure was half the floor fit (`m3pro/tools/duel_floorfit.py`): a third of
+    the floor the arm's pose predicts there is no floor -- the drop-off box, tape, in 4 of 31 the
+    gripper's own finger before the lens, then the scale 4-9x off -- and the robust fit kept 98 % of
+    it (those outliers grow its sigma); the quadratic warp made every look worse. x3plus/roboarm/
+    monodepth.anchor now: no warp, and up to 3 fits more without what reads over 10 mm raised.
+  - The other half is the network's own relief: anchored on the DCW2's true floor, the best any
+    anchor can do, DA V2 Small still errs 7.5-10 mm close -- it cannot make the 7 mm bar there; DA V2
+    Large just does. The metric models (Depth Pro, DA V2 Metric Indoor) read 2-4x too far at 20-30 cm;
+    DA3, one view at a time, is worse than DA V2 even on the true floor (made for several views).
+  - For the demo: the DCW2 reads a 30 mm cube to half a millimetre; a single colour picture, at best
+    (DA V2 Large), to 3.5 mm from 30 cm and 5-7 mm from 20 cm -- enough to name the kit's pieces
+    most of the time, never the millimetre a grip wants. The X3's own (Small) needs its parallax.
 - S2 physical checks vs VLM judges for grasp and stacking success (a five-cube tower; someone knocks
   the top cube off; the robot notices and rebuilds). VLM judges lean towards "success" (FailBench,
   Sep 2026: 0.77 balanced accuracy at best); depth height change and gripper read-back are free. The

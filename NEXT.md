@@ -153,7 +153,12 @@ never seen that camera or the board.
       a piece); it stopped on 3 pieces out of reach (28 cm out, 41 cm aside, one at the right lidar).
 - [ ] **The M3's own detector, live:** in that round it still missed the 40 mm cube in most looks
       (once cube40 0.57) -- its better val numbers (6 cube40s in val) did not show; the cube is one, so
-      its pictures stay few: more looks of it, wood up and blue up, before the next fine-tune.
+      its pictures stay few. 2026-10-16: 8 looks of it (`/pick/look`, nothing picked: near, far, left,
+      right, wood up and blue up) -- the depth named it in all 8, the detector in 6 (once missed far
+      right, once a 30 mm cube 0.82); fine-tuned again with them as `lap_20261016b_m3`.
+- [x] **The look job on the M3** (2026-10-16): it failed at once ("Picker.look() missing 'tag'") -- the
+      shared job was named look(), as the M3's own looks are, and the M3's won. Now look_over() (the
+      job is still "look"); a test on the M3's side; deployed on the M3.
 
 ## 3. Me, while the robot work runs (laptop + hekate)
 
@@ -185,7 +190,7 @@ never seen that camera or the board.
       3.5-5.6. Worse with the DCW2's own floor too: its relief, not the fit (vs the DCW2: DA V2 Large
       correlates 0.957, DA3 Large 0.879, DA3 Mono 0.948). Untried: its depth anchored as depth (Z = s x + t),
       several views at once (it is made for that; the X3's engines take 3). DA V2 Large stays the best.
-- [ ] The duel's summary in PLAN.md S1.
+- [x] The duel's summary in PLAN.md S1 (2026-10-16): the table, the cause, what it means for the demo.
 - [x] **The laptop's GPU** (2026-10-16): the root env has onnxruntime-gpu (CUDA 12 from nvidia-*
       wheels, `m3_duel.onnx_session`), the RTX 2070 Super runs DA V2 Small in 52 ms against the CPU's
       741 -- the duel's maps in seconds, not the hour of 2026-10-15. The test suites run no model:
