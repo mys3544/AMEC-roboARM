@@ -233,7 +233,7 @@ class Task:
     def jobs(self) -> dict:
         """What start() runs, by name; a robot's body may add its own (the M3's "scan")."""
         return {"pick_once": self.pick_once, "clean_up": self.clean_up, "home": self.home, "drop": self.drop,
-                "look": self.look}
+                "look": self.look_over}
 
     def start(self, job: str, **kwargs) -> dict:
         """Start `job` (one of jobs()) on its own thread; an error if one runs."""
@@ -305,10 +305,11 @@ class Task:
                 self.drive_back()
                 self.home()
 
-    def look(self) -> None:
-        """The table looked over as a pick's first look does -- round it, the sides too -- and nothing
-        picked: what it found stays in the state (status()["found"]), for the grips taught by hand
-        (x3plus/tools/x3_teach.py); then home."""
+    def look_over(self) -> None:
+        """The "look" job (not look(): the M3's body takes its looks by that name -- 2026-10-16 the job
+        called that with no tag and failed). The table looked over as a pick's first look does --
+        round it, the sides too -- and nothing picked: what it found stays in the state
+        (status()["found"]), for the grips taught by hand (x3plus/tools/x3_teach.py); then home."""
         self.engaged()
         with self.step("look.wide"):
             self.wide_look(sides=True)

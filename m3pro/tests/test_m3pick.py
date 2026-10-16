@@ -184,6 +184,17 @@ def test_clean_up_takes_every_one_in_reach():
     assert picker.state["error"] is None and world.pose == HOME
 
 
+def test_the_look_job_looks_and_picks_nothing():
+    """/pick/look on the M3: the shared job was named look(), as the M3's own looks are -- 2026-10-16
+    it called that one with no tag and failed before the arm moved."""
+    world = World([(0.21, 0.05, 10, 0.03, 0.03)])
+    picker = run(world, "look")
+    assert picker.state["error"] is None and picker.state["picked"] == 0 and len(world.boxes) == 1
+    kit = [o for o in picker.status()["found"] if o["kind"]]
+    assert len(kit) == 1 and abs(kit[0]["x"] - 0.21) < 0.015 and kit[0]["top"]
+    assert world.pose == HOME
+
+
 def test_a_thing_no_plan_reaches_is_planned_once_a_job_not_before_every_pick(monkeypatch):
     # nearest first, so the one with no grip comes up first before each of the other two
     world = World([(0.16, -0.03, 0, 0.03, 0.03), (0.21, 0.05, 10, 0.03, 0.03), (0.22, 0.10, 40, 0.03, 0.03)])
