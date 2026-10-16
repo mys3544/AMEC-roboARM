@@ -139,8 +139,6 @@ never seen that camera or the board.
       (its 40 mm cube 0.51 -> 0.77; only 6 in val), the X3 keeps `n_20261015b` (the new shared one
       is no better there). The laptop trains in `C:\Users\Mys\.roboarm\train-gpu` (torch 2.11 +
       cu128, ultralytics 8.4.175 -- train/'s pins, outside the repo).
-- [ ] **A Clean up round with the M3's own model:** does it see the 40 mm cube now, wood up and blue
-      up? (Its numbers on round 3's looks prove nothing: those looks were in its training set.)
 - [x] **The box read wrong** (2026-10-16, why rounds 1-2 stopped early): the marker pose is fine (IPPE's
       other solution always 5 px worse), but the box look's camera was levelled by whatever plane the
       depth saw most of -- at J1 135 the room's floor and chairs past the table's edge are in view -- and
@@ -149,8 +147,13 @@ never seen that camera or the board.
       Now: a levelled camera more than 3 cm or 5 deg off the arm model's is not trusted (m3pick.level_trusted;
       usual 12 mm, 1.7 deg); the box is the mean of the job's readings of it, moved only past 3 cm / 8 deg
       (roboshared box.merged); every box look kept as out/pick/boxview_* (picture, depth, both cameras).
-      NOT deployed yet (the M3 busy): M3 roboarm/m3pick.py + roboshared box.py, task.py; the X3 the
-      roboshared two.
+      Deployed 2026-10-16 on the M3 (with roboshared serve.py: the look job came along) and the X3
+      (box.py, task.py). **Checked on the M3:** a clean-up, 5 picked, 0 missed, 5 drops into the box
+      and not one "moved"; 4 of its 8 box looks fell back to the arm model's camera (all while holding
+      a piece); it stopped on 3 pieces out of reach (28 cm out, 41 cm aside, one at the right lidar).
+- [ ] **The M3's own detector, live:** in that round it still missed the 40 mm cube in most looks
+      (once cube40 0.57) -- its better val numbers (6 cube40s in val) did not show; the cube is one, so
+      its pictures stay few: more looks of it, wood up and blue up, before the next fine-tune.
 
 ## 3. Me, while the robot work runs (laptop + hekate)
 
