@@ -32,8 +32,22 @@ def test_the_box_is_the_same_box_on_any_floor():
     for spot in boxes.box_spots(on_m3):
         assert boxes.inside(on_m3, spot)
     assert all(abs(c[2] - (boxes.BOX_INSIDE[2] - 0.19)) < 1e-12 for c in boxes.box_corners(on_x3, floor_z=-0.19))
-    moved = {**on_m3, "centre": on_m3["centre"] + [0.02, 0.0]}
+    moved = {**on_m3, "centre": on_m3["centre"] + [0.04, 0.0]}
     assert boxes.same_box(on_m3, on_m3) and not boxes.same_box(moved, on_m3)
+
+
+def test_a_box_standing_still_is_the_mean_of_its_readings():
+    """2026-10-16: the M3's readings of a box standing still scattered +-1.5 cm and +-3 deg, and each
+    drop was aimed by the last one, "moved" nearly every time. Within 3 cm and 8 deg it is the same box,
+    and the job aims by the mean."""
+    readings = [boxes.box_from_marker(np.array([0.30 + dx, dy, 0.10]), marker_axes(turn, lean_deg=20.0))
+                for dx, dy, turn in ((0.012, -0.008, 183.0), (-0.010, 0.006, 177.0), (0.001, 0.002, 180.5))]
+    assert all(boxes.same_box(r, readings[0]) for r in readings)
+    mean = boxes.merged(readings)
+    assert np.allclose(mean["centre"], np.mean([r["centre"] for r in readings], axis=0))
+    unwrapped = [readings[0]["turn"] + (r["turn"] - readings[0]["turn"] + 180) % 360 - 180 for r in readings]
+    assert abs((mean["turn"] - np.mean(unwrapped) + 180) % 360 - 180) < 0.05   # the mean, round the +-180 seam
+    assert np.allclose(mean["into"], readings[0]["into"], atol=0.06) and abs(mean["along"] @ mean["into"]) < 1e-12
 
 
 def thing(x, y, kind="cube", size=0.03):

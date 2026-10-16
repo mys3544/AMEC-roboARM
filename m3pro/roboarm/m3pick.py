@@ -359,6 +359,10 @@ def plan_grasp(centre: np.ndarray, top: float | None = None, prefer: tuple[float
 # The drop-off box (roboshared.box): where the M3 looks for it and how it carries to it.
                          # (2026-10-05: a drop 2.5 cm from it, and the box was hit and turned)
 SIDE_LOOK = {1: 180, 2: 95, 3: 30, 4: 0, 5: 90}   # the look at the box: lid, marker and inside in view
+LEVEL_OFF_M, LEVEL_OFF_DEG = 0.03, 5.0   # levelled by the floor the camera moves off the arm model by 12 mm
+# and 1.7 deg (2026-10-15/16, 112 looks; p90 16 mm, 3.3 deg): more is another plane taken for the floor --
+# 2026-10-16 a box look at J1 135, the room's floor and chairs past the table's edge in view, put the box
+# 10 cm off and out of reach (the arm model's camera: where it stood) and the clean-up stopped
 # The looks either side of LOOK (2026-10-05, the user's: every cube in reach across the front -- LOOK sees
 # J1 ~40-140 deg at reach), in a shape that turns freely, J1 0-180, where LOOK's is allowed at J1 89-91
 # only (its hand at the bumper's limit): the box look, the right one, the left one and LOOK are one turn
@@ -526,6 +530,13 @@ def look_at(here: dict, pre: dict, thing: dict, K) -> dict | None:
                 and m3arm.glide_problem(pose, [pre]) is None:
             return pose
     return None
+
+
+def level_trusted(camera: np.ndarray, model: np.ndarray) -> bool:
+    """Whether a camera levelled by the floor its depth found (m3vision.level) is near enough the arm
+    model's to be the floor indeed: LEVEL_OFF_M in height, LEVEL_OFF_DEG turned."""
+    turned = math.degrees(float(np.linalg.norm(cv2.Rodrigues(camera[:3, :3] @ model[:3, :3].T)[0])))
+    return abs(float(camera[2, 3] - model[2, 3])) <= LEVEL_OFF_M and turned <= LEVEL_OFF_DEG
 
 
 def view_way(here: dict, view: dict, below: float) -> list[list[dict]]:
@@ -765,14 +776,25 @@ class Picker(Task):
 
     def view(self):
         """The picture from where the arm is, the camera levelled by the depth's floor when there is
-        one in it (else the arm model's): (image, K, camera, (depth, floor normal, floor height))."""
+        one in it and it is the floor (level_trusted), else the arm model's: (image, K, camera, (depth,
+        floor normal, floor height)). The box's looks, kept in `out` as boxview_* to look at again."""
         image, depth, K, pose = self.snapshot()
         model = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
         try:
             normal, height, _ = m3vision.floor_plane(depth, K)
             camera = m3vision.level(model, normal, height, m3kinematics.FLOOR)
+            if not level_trusted(camera, model):
+                raise ValueError("the plane found is no floor the arm could be over")
         except ValueError:
             camera, normal, height = model, None, None
+        if self.out is not None:
+            self.out.mkdir(parents=True, exist_ok=True)
+            stem = f"boxview_{time.strftime('%Y%m%d_%H%M%S')}"
+            cv2.imwrite(str(self.out / f"{stem}_rgb.jpg"), image, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            cv2.imwrite(str(self.out / f"{stem}_depth.png"), depth)
+            (self.out / f"{stem}.json").write_text(json.dumps({
+                "pose": {str(j): v for j, v in pose.items()}, "K": np.asarray(K).tolist(),
+                "model": model.tolist(), "camera": np.asarray(camera).tolist(), "levelled": normal is not None}))
         return image, K, camera, (depth, normal, height)
 
     def things_in_view(self, image, K, camera, extra) -> list[dict]:

@@ -135,6 +135,7 @@ class Task:
         self.may_drive = False      # per job: what the caller allowed
         self.box: dict | None = None   # the drop-off box this job (box_look), and where it has let go into it
         self.box_drops: list[np.ndarray] = []   # in the box's own terms (in_box): they move with it
+        self.box_seen: list[dict] = []          # this job's readings of the box where it stands (boxes.merged)
         self.box_dir = self.BOX_LOOKS[0] if self.BOX_LOOKS else 0   # J1 it was last seen at: looked for there first
         self.line_drops = 0                     # let go on the line out on the right this job (no box)
         self.skip: list[np.ndarray] = []        # spots this job has given up (pick's `skip`): looked past
@@ -454,11 +455,13 @@ class Task:
                 again = self.box_search(holding=True, tried=self.box_dir)
             into = None
             if again is not None:
-                if boxes.same_box(again, self.box):
-                    self.box = {**again, "items": self.box.get("items", [])}
+                if boxes.same_box(again, self.box):   # standing still: the mean of the job's looks at it
+                    self.box_seen = [*(self.box_seen or [self.box]), again]
+                    self.box = {**boxes.merged(self.box_seen), "items": self.box.get("items", [])}
                 else:
-                    self.box = again
-                    self.say("the box has moved: aimed at where it is now")
+                    self.box, self.box_seen = again, [again]
+                    self.say(f"the box has moved: now at x {again['centre'][0]:.3f} y {again['centre'][1]:+.3f},"
+                             f" turned {again['turn']:.0f} deg -- aimed at where it is now")
                 into = self.box_way(self.here())
             if into is None:
                 self.put_back(back)
@@ -535,6 +538,7 @@ class Task:
         """At a job's start: the drop-off box, wherever it is in the arm's reach -- or None, and the
         drops go on the line out on the right."""
         self.box, self.box_drops, self.line_drops = self.box_search(), [], 0
+        self.box_seen = [] if self.box is None else [self.box]
         if self.box is None:
             self.say(f"no drop-off box: marker {boxes.BOX_MARKER[1]} not seen all round -- dropping on the line out on the right")
         return self.box

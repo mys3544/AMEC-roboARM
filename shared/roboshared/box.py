@@ -22,7 +22,9 @@ BOX_MARGIN = 0.025
 BOX_LID_MARGIN = 0.045   # m from the lid's side: what is let go comes straight down past the standing lid
                          # (2026-10-05: a drop 2.5 cm from it, and the box was hit and turned)
 BOX_DROP_OVER = 0.04
-BOX_MOVED_M, BOX_TURNED_DEG = 0.015, 5.0   # seen again further or turned more than this: it was moved
+BOX_MOVED_M, BOX_TURNED_DEG = 0.03, 8.0    # seen again further or turned more than this: it was moved
+# (2026-10-16: the M3's readings of a box standing still scatter +-1.5 cm and +-3 deg -- the marker is
+# ~110 px, the hinge 8 cm under it; 1.5 cm and 5 deg called it moved before nearly every drop)
 BOX_WALL = 0.01   # m the walls are thick: what keeps clear of the box keeps clear of them too
 
 
@@ -99,6 +101,18 @@ def same_box(seen: dict, known: dict) -> bool:
     """`seen` is where `known` was: not moved further than BOX_MOVED_M nor turned more than BOX_TURNED_DEG."""
     return float(np.linalg.norm(seen["centre"] - known["centre"])) < BOX_MOVED_M \
         and abs((seen["turn"] - known["turn"] + 180) % 360 - 180) < BOX_TURNED_DEG
+
+
+def merged(readings: list[dict]) -> dict:
+    """One box from readings of it standing still (same_box): their mean centre and turn -- each
+    drop aimed by the mean of the job's looks, not by the last one's scatter."""
+    turn = math.atan2(np.mean([math.sin(math.radians(r["turn"])) for r in readings]),
+                      np.mean([math.cos(math.radians(r["turn"])) for r in readings]))
+    along = np.array([math.cos(turn), math.sin(turn)])
+    last = readings[-1]
+    side = 1.0 if along[0] * last["into"][1] - along[1] * last["into"][0] > 0 else -1.0   # into: along turned 90 deg
+    return {**last, "centre": np.mean([r["centre"] for r in readings], axis=0), "along": along,
+            "into": side * np.array([-along[1], along[0]]), "turn": math.degrees(turn)}
 
 
 def outline(box: dict, grow: float = BOX_WALL) -> list[np.ndarray]:

@@ -403,6 +403,22 @@ def test_into_the_box_its_marker_puts_it_clear_of_the_walls_and_spread_out():
     assert min(gaps) > 0.03   # not a tower: spread over the inside
 
 
+def test_a_floor_that_turns_the_camera_far_off_the_arm_model_is_no_floor():
+    """2026-10-16: a box look at J1 135 levelled by another plane (the room's floor past the table's
+    edge in view) put the box 10 cm off; the arm model's camera put it where it stood."""
+    pose = {**m3pick.SIDE_LOOK, 1: 135}
+    model = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
+
+    def turned(deg, dz):
+        out = np.array(model)
+        out[:3, :3] = m3pick.cv2.Rodrigues(np.array([math.radians(deg), 0.0, 0.0]))[0] @ model[:3, :3]
+        out[2, 3] += dz
+        return out
+    assert m3pick.level_trusted(turned(1.7, -0.012), model)     # the usual: 12 mm lower, 1.7 deg
+    assert not m3pick.level_trusted(turned(12.0, -0.012), model)
+    assert not m3pick.level_trusted(turned(1.0, -0.06), model)
+
+
 def test_the_box_from_its_marker():
     lean = math.radians(21)
     face = np.array([0.0, math.cos(lean), math.sin(lean)])   # towards the robot (+y), leaning back
