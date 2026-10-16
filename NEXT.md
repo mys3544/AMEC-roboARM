@@ -127,12 +127,13 @@ never seen that camera or the board.
 
 ## 4. If time is left
 
-- [ ] **The X3's reach far out** (the user, 2026-10-15): the arm's calibration is less exact for
-      things far from the base -- a grip lands a little off and at a slant, which a cube survives and
-      the yellow cylinder (round, not a kit piece) slips out of: the X3's "missed twice" at x 0.19
-      y +0.11. Measure the reach error out at the rim (the touch probe of 2026-09-21, a few points
-      at 0.18-0.23 m) and refit the reach correction there.
-
+- [x] **The X3's reach far out** (2026-10-15, 74e398f): taught by hand as on the M3 --
+      `x3plus/tools/x3_teach.py` (keys steer the open fingers over a piece, Enter saves), nine grips:
+      the X3 reaches FURTHER than its model, 1 mm at 14.5 cm, 11-14 mm at 25 cm, a few mm left.
+      roboarm/x3aim.py aims back by a line in the reach (8.7 mm rms against 12.5 raw); the console's
+      "taught aim" setting: 1 on (now), 0 the old way. First clean-up with it: 11 picked, 0 missed.
+      More grips taught LOW (fingers beside the piece, ~10-15 mm up) would sharpen it: most of the
+      nine were saved 40-49 mm up, where the arm bends otherwise. Beyond ~25 cm nothing reaches.
 - [ ] **Splat ghost:** from high up a see-through copy of the floor tape floats over the box -- the
       scan only looks from low down. Try a second, higher look at each stop (+~1 min a scan).
 - [ ] **Your lab objects** (2026-10-09 list): the 3 electrical-tape rolls (measure their outside

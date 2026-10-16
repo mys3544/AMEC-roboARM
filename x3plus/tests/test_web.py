@@ -122,6 +122,20 @@ def test_settled_gives_up_when_the_camera_is_dead():
         stream.settled(settle_s=0.05)
 
 
+def test_fps_falls_to_zero_when_frames_stop_coming(monkeypatch):
+    """2026-10-15: the M3's copy of Stream held its last rate for two days after its driver
+    stopped publishing -- the stamps were pruned only when a frame came. A read that blocks
+    rather than fails would do the same here: no error, and the panel and /health say 30 fps."""
+    monkeypatch.setattr(camera, "FPS_WINDOW_S", 0.3)   # the fps window, short for the test
+    stream = camera.Stream(device=-1)
+    for _ in range(6):
+        stream.publish(np.zeros((2, 2, 3), np.uint8))
+        time.sleep(0.02)
+    assert stream.fps > 10
+    time.sleep(0.35)   # the camera stops: nothing more comes, past the window
+    assert stream.fps == 0   # not the last rate, held
+
+
 # ---------------------------------------------------------- state & mode ---
 def test_state_describes_the_connected_arm_and_camera(url):
     s = get(url, "/api/state")

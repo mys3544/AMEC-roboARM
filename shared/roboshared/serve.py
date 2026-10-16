@@ -4,6 +4,7 @@ x3plus/tools/x3bridge.py) -- what the console's arm card drives and watches:
     POST /pick/start    {"kind": "cube"|"block"|null, "at": [x, y]|null, "drive": bool}   one pick, then home
     POST /pick/cleanup  {"kind": ..., "drive": bool}   every kit thing in reach, one by one
     POST /pick/home     POST /pick/stop (the arm holds where it is, at once)
+    POST /pick/look     the table looked over, nothing picked: GET /pick/state's "found" says what is there
     POST /pick/scan     {"radius": m, "stops": n, "height": m, "width": m, "name": str}   the M3 only:
                         drive round the thing ahead, the camera on it, and keep the views
                         (m3pro/roboarm/m3scan.py); given a name, learn the thing as it from them
@@ -110,6 +111,8 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
         answer = picker.start("clean_up", kind=kind, drive=bool(params.get("drive")))
     elif url.path == "/pick/home":
         answer = picker.start("home")
+    elif url.path == "/pick/look":
+        answer = picker.start("look")
     elif url.path == "/pick/scan" and "scan" in picker.jobs():
         sizes = {k: float(params[k]) for k in ("radius", "stops", "height", "width") if params.get(k) is not None}
         name = str(params.get("name") or "").strip()

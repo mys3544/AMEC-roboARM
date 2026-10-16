@@ -85,6 +85,10 @@ kbd { border: 1px solid #4a5263; border-radius: 4px; padding: 0 4px; font-size: 
 .view.swapped > img:first-child { position: absolute; top: 8px; right: 8px; width: 34%; z-index: 1;
                                   border: 2px solid #fff; border-radius: 4px; }
 .view.swapped .look { position: static; width: 100%; border: 0; box-shadow: none; cursor: zoom-out; }
+.view .camerr { position: absolute; top: 8px; left: 8px; right: calc(34% + 16px); z-index: 2;   /* left of the last look */
+                padding: 4px 8px; border-radius: 4px; background: var(--stop); color: #fff; font-size: 12px; font-weight: 600; }
+.view .camerr:empty { display: none; }
+.view.stale > img:first-child { opacity: 0.45; }   /* the camera's last picture, not a live one */
 .arm { display: grid; gap: 10px; }
 .timing { border-collapse: collapse; font: 12px/1.5 ui-monospace, Consolas, monospace; width: 100%; max-width: 420px; }
 .timing th { text-align: left; color: var(--muted); font-weight: 600; }

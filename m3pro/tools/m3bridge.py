@@ -20,6 +20,10 @@ board, the battery from /battery. The camera: /camera/color/image_raw into the M
     GET /rgbd  {"stamp", "depth_lag_s", "joints" (believed; null before engage), "K" (3 x 3),
                 "color_jpeg", "depth_png" (base64; the PNG is 16-bit, millimetres)}
 
+/health's camera also has "colour_age_s" and "depth_age_s", how old the newest of each is (null
+before the first), and its "error" says when either is older than STALE_S: a driver that has
+stopped publishing shows there, and on the console's arm card, without a job having to look.
+
 And the pick itself (roboarm.m3pick.Picker), here beside the arm and the camera so no picture
 crosses the network -- what the console's M3 arm card drives and watches:
 
@@ -85,16 +89,39 @@ class Frames:
 
     def arrays(self):
         """(colour BGR, depth mm, K 3 x 3) as they are now, copies; an ArmError while one is missing,
-        or when the camera has stopped sending (the newest older than STALE_S)."""
+        or when the camera has stopped sending (stopped())."""
         with self.lock:
-            color, depth, K, arrived = self.color, self.depth, self.K, dict(self.arrived)
+            color, depth, K = self.color, self.depth, self.K
         if color is None or depth is None or K is None:
             raise ArmError("no picture from the camera yet: was the bridge started with --camera?")
-        for what, when in arrived.items():
-            if time.monotonic() - when > STALE_S:
-                raise ArmError(f"the camera has stopped: its newest {what} is {time.monotonic() - when:.0f} s old "
-                               "(the bridge restarts its driver by itself: try again in half a minute)")
+        stopped = self.stopped()
+        if stopped:
+            raise ArmError(stopped)
         return color.copy(), depth.copy(), np.asarray(K, float).reshape(3, 3)
+
+    def ages(self) -> dict:
+        """Seconds since the newest colour and depth came, by kind; None for one not come yet."""
+        now = time.monotonic()
+        with self.lock:
+            return {what: now - self.arrived[what] if what in self.arrived else None for what in ("colour", "depth")}
+
+    def stopped(self) -> str | None:
+        """Why the camera counts as stopped -- its newest colour or depth older than STALE_S -- else None."""
+        for what, age in self.ages().items():
+            if age is not None and age > STALE_S:
+                return (f"the camera has stopped: its newest {what} is {age:.0f} s old "
+                        "(the bridge restarts its driver by itself: try again in half a minute)")
+        return None
+
+    def health(self) -> dict:
+        """/health's word on the camera: colour_age_s, depth_age_s (None before the first) and an error
+        when it has stopped or nothing has come yet -- seen without starting a job (on 2026-10-15 the
+        driver had sent nothing for two days while /health said 22 fps)."""
+        ages = self.ages()
+        missing = [what for what, age in ages.items() if age is None]
+        error = self.stopped() or (f"no {' or '.join(missing)} from the camera yet" if missing else None)
+        return {**{f"{what}_age_s": None if age is None else round(age, 1) for what, age in ages.items()},
+                "error": error}
 
     def snapshot(self, joints) -> dict:
         with self.lock:
@@ -187,7 +214,13 @@ def make_handler(the_bridge: bridge.Bridge, frames: Frames, picker: m3pick.Picke
         def do_GET(self) -> None:
             if serve.handle(self, picker, the_bridge.interrupt, "GET"):
                 return
-            if urlparse(self.path).path == "/rgbd":
+            path = urlparse(self.path).path
+            if path == "/health":   # the bridge's, the camera's error its frames' when they have one
+                reply, seen = the_bridge.health(), frames.health()
+                reply["camera"].update(seen, error=seen["error"] or reply["camera"]["error"])
+                send_json(self, reply)
+                return
+            if path == "/rgbd":
                 arm = the_bridge.arm
                 try:
                     joints = arm.read() if arm is not None else None
