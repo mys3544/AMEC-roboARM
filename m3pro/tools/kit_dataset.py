@@ -7,8 +7,10 @@ Ultralytics segmentation set -- three classes, colour comes from HSV -- to be tr
     python tools/kit_dataset.py [--frames out/duel/frames] [--out out/kit] [--val-every 5]
 
 What the depth could not name (tape rolls, the box, the remote, table edges) stays unlabelled, i.e.
-background. The box views ("wide J1 160") are left out: the pieces lying in the box are not outlined
-there, and unlabelled they would be taught as background. Looks a minute or more apart are separate
+background -- and so does what it named but is no kit piece (not_kit(): the black drop-off box's
+walls and lid, and the yellow cylinder: 123 of the 694 labels of 2026-10-09/15/16). The box views
+("wide J1 160") are left out: the pieces lying in the box are not outlined there, and unlabelled
+they would be taught as background. Looks a minute or more apart are separate
 scenes; every --val-every'th scene goes to val, so a pick's wide and close looks never straddle the split.
 """
 
@@ -20,6 +22,8 @@ import shutil
 import time
 from pathlib import Path
 
+import cv2
+import numpy as np
 from roboshared.kit import KIT
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,11 +43,27 @@ def kit_class(o: dict) -> int | None:
     return None
 
 
-def label_lines(meta: dict, w: int = 640, h: int = 480) -> list[str]:
+def not_kit(outline_px, hsv: np.ndarray) -> bool:
+    """A thing the depth named a kit piece that is none, by its colours inside its outline: the black
+    drop-off box's wall or lid (dark, hardly a coloured or a bright pixel -- where the navy cubes, the
+    tag cubes and pieces in its shadow keep theirs) or the yellow cylinder (the M3's kit has no yellow
+    piece). Checked on the contact sheets of every such label, 2026-10-16."""
+    inside = np.zeros(hsv.shape[:2], np.uint8)
+    cv2.fillPoly(inside, [np.asarray(outline_px, np.int32)], 1)
+    h, s, v = (hsv[..., i][inside.astype(bool)].astype(float) for i in range(3))
+    if not len(v):
+        return False
+    if np.median(v) <= 70:
+        return np.mean((s > 90) & (v > 40)) < 0.10 and np.mean(v > 150) < 0.15
+    return 18 <= np.median(h) <= 35 and np.median(s) >= 120
+
+
+def label_lines(meta: dict, w: int = 640, h: int = 480, bgr: np.ndarray | None = None) -> list[str]:
+    hsv = None if bgr is None else cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     lines = []
     for o in meta["found"]:
         c = kit_class(o)
-        if c is None or len(o["outline_px"]) < 3:
+        if c is None or len(o["outline_px"]) < 3 or (hsv is not None and not_kit(o["outline_px"], hsv)):
             continue
         xy = " ".join(f"{min(max(x / w, 0), 1):.5f} {min(max(y / h, 0), 1):.5f}" for x, y in o["outline_px"])
         lines.append(f"{c} {xy}")
@@ -81,7 +101,8 @@ def main() -> None:
         for sub in ("images", "labels"):
             (a.out / sub / split).mkdir(parents=True, exist_ok=True)
         for stem in scene:
-            lines = label_lines(json.loads((a.frames / f"{stem}.json").read_text()))
+            lines = label_lines(json.loads((a.frames / f"{stem}.json").read_text()),
+                                bgr=cv2.imread(str(a.frames / f"{stem}_rgb.jpg")))
             shutil.copy(a.frames / f"{stem}_rgb.jpg", a.out / "images" / split / f"{stem}.jpg")
             (a.out / "labels" / split / f"{stem}.txt").write_text("".join(f"{line}\n" for line in lines))
             counts[split][0] += 1
