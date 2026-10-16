@@ -10,8 +10,15 @@ exclude = ["train"]
 # Tests and lint for all three, run from each folder: `uv run python -m pytest -q`.
 dev = ["pytest>=8", "ruff>=0.6"]
 # The laptop's half of the robot tools (*/tools/sync_robot.py, m3pro/tools/arena_map.py): SSH;
-# m3pro/tools/m3_scan.py's fusion (Open3D) and m3_duel.py's Depth Anything (onnxruntime).
-laptop = ["paramiko>=3.4", "open3d>=0.19; sys_platform == 'win32'", "onnxruntime>=1.20"]
+# m3pro/tools/m3_scan.py's fusion (Open3D) and m3_duel.py's Depth Anything (onnxruntime) -- on the
+# laptop's RTX 2070 Super through CUDA (2026-10-16: a CPU run of the duel took over an hour); its
+# CUDA and cuDNN come as nvidia-* wheels, no CUDA install needed (m3_duel.onnx_session).
+laptop = [
+    "paramiko>=3.4",
+    "open3d>=0.19; sys_platform == 'win32'",
+    "onnxruntime-gpu[cuda,cudnn]>=1.22,<1.31; sys_platform == 'win32'",
+    "onnxruntime>=1.20; sys_platform != 'win32'",
+]
 
 [tool.uv]
 default-groups = ["dev", "laptop"]

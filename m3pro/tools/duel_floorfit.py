@@ -321,8 +321,7 @@ def one_frame(job) -> tuple[list, list]:
     for model in models:
         if model == "da2s":
             if _session is None and not (CACHE / "da2s" / f"{stem}.npy").exists():
-                import onnxruntime
-                _session = onnxruntime.InferenceSession(str(duel.MODEL), providers=["CPUExecutionProvider"])
+                _session = duel.onnx_session(duel.MODEL)
             disp = da2s_disp(stem, bgr, _session)
         else:
             disp = extra_disp(data, model, stem, (w, h))
@@ -354,6 +353,11 @@ def one_frame(job) -> tuple[list, list]:
 def run(data: Path, day: str, models: list[str], variants: list[str], per_frame: bool, workers: int,
         camera: str = "arm") -> None:
     jobs = [(data, m, models, variants, camera) for m in sorted((data / "frames").glob(f"{day}*.json"))]
+    missing = [m.stem for _, m, *_ in jobs if not (CACHE / "da2s" / f"{m.stem}.npy").exists()]
+    if "da2s" in models and missing:   # the maps first, here on the GPU -- not a session a worker
+        session = duel.onnx_session(duel.MODEL)
+        for stem in missing:
+            da2s_disp(stem, cv2.imread(str(data / "frames" / f"{stem}_rgb.jpg")), session)
     rows, diag = [], []
     with Pool(workers) as pool:
         for r, d in pool.imap(one_frame, jobs):

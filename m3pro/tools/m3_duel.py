@@ -14,7 +14,8 @@ where the arm model puts it (what the X3, with no depth camera, has); "floor" --
 own floor plane puts it (the camera levelled, an upper bound). For every kit piece in a picture: its
 height from each (the 90th percentile over its outline, as x3plus's parallax reads it) against the
 kit's true height; and the floor's flatness away from the pieces. Depth Anything runs on the
-laptop's CPU (onnxruntime, the X3's ONNX export: 0.6 s; 26 ms as the X3's TensorRT engine).
+laptop's GPU since 2026-10-16 (onnxruntime-gpu, the X3's ONNX export; its CPU took 0.6 s; 26 ms as
+the X3's TensorRT engine).
 
 A second contestant since 2026-10-12, when there is its ONNX (PLAN.md M5 model 8; exported on hekate
 to train/runs/extra/): YOLO26n-depth, 3.8 ms as an engine on either robot. Its log-depth head reads
@@ -147,12 +148,29 @@ def extra_columns(kinds: dict[str, str]) -> list[tuple[str, str]]:
     return columns
 
 
-def run(panels: int, versus: str | None = None) -> None:
+def onnx_session(path: Path):
+    """An onnxruntime session on the laptop's GPU (CUDA, from the nvidia-* wheels the root
+    pyproject brings) when onnxruntime-gpu has one, else on the CPU."""
+    import os
+
     import onnxruntime
 
-    session = onnxruntime.InferenceSession(str(MODEL), providers=["CPUExecutionProvider"])
-    yolo = onnxruntime.InferenceSession(str(YOLO_MODEL), providers=["CPUExecutionProvider"]) \
-        if YOLO_MODEL.exists() else None
+    providers = ["CPUExecutionProvider"]
+    if "CUDAExecutionProvider" in onnxruntime.get_available_providers():
+        # the CUDA and cuDNN DLLs from site-packages/nvidia -- and on PATH, as cuDNN 9 loads its own
+        # sub-libraries (cudnn_engines_*64_9.dll) later by name, which preload_dlls() does not cover
+        import nvidia
+        bins = [str(b) for root in nvidia.__path__ for b in Path(root).glob("*/bin")]
+        os.environ["PATH"] = os.pathsep.join([*bins, os.environ.get("PATH", "")])
+        onnxruntime.preload_dlls()
+        providers.insert(0, "CUDAExecutionProvider")
+    return onnxruntime.InferenceSession(str(path), providers=providers)
+
+
+def run(panels: int, versus: str | None = None) -> None:
+    session = onnx_session(MODEL)
+    yolo = onnx_session(YOLO_MODEL) if YOLO_MODEL.exists() else None
+    where = "this laptop's GPU" if "CUDAExecutionProvider" in session.get_providers() else "this laptop's CPU"
     kinds = extras()
     rows, floors, spent, spent_yolo = [], [], [], []
     shown = {"wide": 0, "close": 0}
@@ -217,7 +235,7 @@ def run(panels: int, versus: str | None = None) -> None:
                 and (versus is None or maps.get(f"{versus}_arm") is not None):   # half wide looks, half close
             write_panel(OUT / f"panel_{look}_{shown[look]}_{stem}.jpg", bgr, real, maps, meta, versus)
             shown[look] += 1
-    times = [f"Depth Anything V2 Small {1000 * np.median(spent):.0f} ms (this laptop's CPU, onnxruntime)"]
+    times = [f"Depth Anything V2 Small {1000 * np.median(spent):.0f} ms ({where}, onnxruntime)"]
     if spent_yolo:
         times.append(f"YOLO26n-depth {1000 * np.median(spent_yolo):.0f} ms (the same)")
     for model in kinds:
