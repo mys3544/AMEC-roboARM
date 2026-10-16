@@ -117,8 +117,40 @@ never seen that camera or the board.
       yolo26n_kit.* now *_20261012.*). `roboarm/m3kit.py` asks it at every look (~55 ms) and the pick
       logs "wide look, kit detector: agrees on n of m; depth X, detector Y 0.55; only it saw ...";
       the look's .json keeps its answer ("detector"). The depth stays in charge.
-- [ ] **Read its score:** a few Clean up rounds on the M3, then count the "kit detector:" lines --
-      where it and the depth disagree, which one was right (the look's pictures are kept).
+- [x] **Its score, 3 Clean up rounds** (2026-10-16; 2, 2 and 10 picked -- rounds 1-2 ended on a full
+      box): the detector is right where the depth fails (crumpled paper and the box's rim read as
+      cubes, a cube cut by the picture's edge, the standing red block) and wrong on the one 40 mm
+      cube (blue on one face, bare wood on the rest: wood up it is not seen at all, blue up it is a
+      block) and the tag cube (a block). Both call the yellow cylinder a 30 mm cube. Round 3's two
+      "40 mm cube" picks cannot both be it -- the depth read another piece 40 mm tall (the tag cube?).
+      Pictures: the looks' .json keep both answers.
+- [x] **The M3's labels cleaned** (`m3pro/tools/kit_dataset.py` not_kit()): 123 of its 694 depth
+      labels were the black box's wall or lid named a cube, or the yellow cylinder -- now background.
+- [x] **One model or one per robot?** (2026-10-16, trained on the laptop's GPU -- hekate was busy
+      with edge-vlm -- as fine-tunes of `n_20261015b`, 40 epochs on the cleaned labels):
+
+      | mask mAP50 | M3 val (36) | X3 val (71) | X3 test (71) |
+      |---|---|---|---|
+      | `n_20261015b` | 0.649 | **0.666** | 0.475 |
+      | `lap_20261016_shared` (M3 + X3) | 0.756 | 0.629 | **0.495** |
+      | `lap_20261016_m3` (M3 only) | **0.820** | 0.473 | 0.255 |
+
+      A shared base, fine-tuned per robot where that robot gains: the M3 serves `lap_20261016_m3`
+      (its 40 mm cube 0.51 -> 0.77; only 6 in val), the X3 keeps `n_20261015b` (the new shared one
+      is no better there). The laptop trains in `C:\Users\Mys\.roboarm\train-gpu` (torch 2.11 +
+      cu128, ultralytics 8.4.175 -- train/'s pins, outside the repo).
+- [ ] **A Clean up round with the M3's own model:** does it see the 40 mm cube now, wood up and blue
+      up? (Its numbers on round 3's looks prove nothing: those looks were in its training set.)
+- [x] **The box read wrong** (2026-10-16, why rounds 1-2 stopped early): the marker pose is fine (IPPE's
+      other solution always 5 px worse), but the box look's camera was levelled by whatever plane the
+      depth saw most of -- at J1 135 the room's floor and chairs past the table's edge are in view -- and
+      put the box 10 cm off, out of reach (the arm model's camera: where it stood). And a box standing
+      still reads +-1.5 cm and +-3 deg: "the box has moved" (1.5 cm, 5 deg) before nearly every drop.
+      Now: a levelled camera more than 3 cm or 5 deg off the arm model's is not trusted (m3pick.level_trusted;
+      usual 12 mm, 1.7 deg); the box is the mean of the job's readings of it, moved only past 3 cm / 8 deg
+      (roboshared box.merged); every box look kept as out/pick/boxview_* (picture, depth, both cameras).
+      NOT deployed yet (the M3 busy): M3 roboarm/m3pick.py + roboshared box.py, task.py; the X3 the
+      roboshared two.
 
 ## 3. Me, while the robot work runs (laptop + hekate)
 
@@ -144,7 +176,13 @@ never seen that camera or the board.
       The rest is the network: anchored on the DCW2's own floor (the best any anchor can do) DA Small
       close stays ~9-10 mm, so DA Small will not make 7 mm close; Large just does. monodepth.anchor
       is the duel's only (the X3's live depth rung finds raised regions by edges): no robot changed.
-- [ ] DA3 (not tried in the duel yet); then the duel's summary in PLAN.md S1.
+- [x] **DA3 in the duel** (2026-10-16, on the laptop's GPU, ~350 ms a picture; `train/depth/predict_depth.py
+      --models da3l,da3mono`, one picture each, 1/depth anchored as DA V2's disparity): clearly worse --
+      close 13.4 / 16.8 mm (DA3 Large, 10-09 / 10-15) against DA V2 Large's 5.2 / 6.9; wide 8.4 against
+      3.5-5.6. Worse with the DCW2's own floor too: its relief, not the fit (vs the DCW2: DA V2 Large
+      correlates 0.957, DA3 Large 0.879, DA3 Mono 0.948). Untried: its depth anchored as depth (Z = s x + t),
+      several views at once (it is made for that; the X3's engines take 3). DA V2 Large stays the best.
+- [ ] The duel's summary in PLAN.md S1.
 - [x] **The laptop's GPU** (2026-10-16): the root env has onnxruntime-gpu (CUDA 12 from nvidia-*
       wheels, `m3_duel.onnx_session`), the RTX 2070 Super runs DA V2 Small in 52 ms against the CPU's
       741 -- the duel's maps in seconds, not the hour of 2026-10-15. The test suites run no model:
