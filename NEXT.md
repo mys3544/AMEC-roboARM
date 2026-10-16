@@ -1,4 +1,35 @@
-# Next -- the list (as of 2026-10-16)
+# Next -- the list (as of 2026-10-16, Friday evening)
+
+## Next week (from Monday 2026-10-19): the M3's detector and the 40 mm cube
+
+The one 40 mm cube (bare wood on five faces, blue on one -- user, 2026-10-16) is the kit detector's
+blind spot on the M3: wood up it is missed, blue up it is called a block. The live rounds: missed in
+most close looks; 8 wide looks of it: found 6 times. Fine-tuning on 8 more wide looks gained nothing
+(`lap_20261016b_m3` 0.795 vs 0.802 on the M3 val, cube40 0.68 vs 0.69) -- the M3 keeps
+`lap_20261016_m3`. The likely cause: **the synthetic set never had a wooden cube** --
+train/synth/kit_synth.py paints every piece one jittered colour (COLOURS), so the 40 mm cube was
+always a plain coloured block.
+
+- [ ] **Synthetic pictures with the real 40 mm cube** -- a wood texture on five faces, blue on one
+      (photograph the faces for the texture), the yellow cylinder as a distractor with no label; more
+      close looks (~20 cm) like the pick's. Then the real + synthetic mix again and a fine-tune.
+      **Needs an Isaac Sim server:** hekate's GPU was taken all day 2026-10-16 by edge-vlm's
+      judge_codalm (29 of 32 GB). **The user is trying to get another server with Isaac Sim for next
+      week** -- remember to ask about it on Monday. On a new server: Isaac Sim 6.0, the streaming
+      instance + its Python server (tools/isaac_exec.py talks to it), train/synth/kit_synth.py sent
+      in, `await generate(N)`, synth_to_yolo.py; or run kit_synth.py headless there.
+- [ ] **Real pictures of it from the clean-ups** (no server needed): a few Clean up rounds with the
+      40 mm cube on the table, turned between rounds, wood and blue up -- each round keeps its wide and
+      close looks, labelled by the depth (kit_dataset.py, the box and the cylinder now left out).
+      Then on the laptop's GPU (~6 min): `C:\Users\Mys\.roboarm\train-gpu\Scripts\python.exe
+      train/train_kit.py --data <set>/kit.yaml --model train/runs/kit/n_20261015b/weights/best.pt
+      --epochs 40 --name ...`, then train/eval_kit.py on the M3 val; build the engine on the M3 only
+      if it gains (models/kit/yolo26n_kit.pt, `.venv-ml/bin/python tools/export_engine.py`, ~7 min).
+- [ ] Judge it LIVE, not only on val: a clean-up, the "kit detector:" lines -- does it see the cube
+      wood up, in close looks?
+- [ ] The look job's fix (look_over) is on the M3 only -- the X3 runs 0f47deb's task.py (the box fix),
+      whose look job works there (the X3's body has no look()); bring it along with the next X3 deploy.
+
 
 Stage 1 (PLAN.md, "First show") has four demos: a coloured 3D scan in the console, "teach in 30 s,
 picked out from look-alikes", real vs predicted depth, and the speed table. The scan (also as a
