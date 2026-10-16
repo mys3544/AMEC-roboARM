@@ -1,12 +1,13 @@
-# Next -- the list (as of 2026-10-15, evening)
+# Next -- the list (as of 2026-10-16)
 
 Stage 1 (PLAN.md, "First show") has four demos: a coloured 3D scan in the console, "teach in 30 s,
 picked out from look-alikes", real vs predicted depth, and the speed table. The scan (also as a
 Gaussian splat) and the speed table (PLAN.md M5) are done; the depth duel has its table and its
 pictures (3 below); the teach from look-alikes is done too (1 below: every cube named, Teach 10 s,
-Teach to the piece put down ~50 s). Left for stage 1: the kit detector -- trained with the X3's
-pictures too, twice as good on the X3, worse on the M3 (2 below) -- and the close look's depth
-(3). The robot work (you) and the laptop/hekate work (me) run side by side.
+Teach to the piece put down ~50 s). The kit detector is one model on both robots since 2026-10-16
+(2 below: the X3 picks with it, the M3 logs it beside its depth -- its score still to read), and the
+close look's depth fit is fixed as far as the networks allow (3). The robot work (you) and the
+laptop/hekate work (me) run side by side.
 
 ## 0. The M3's camera -- solved: it was the conversion beside it
 
@@ -25,14 +26,17 @@ word in its log, no USB event in the kernel log. It had been frozen since 2026-1
   idle. The script builds on the robot on purpose (K-quants differ between x86 and ARM): run such
   jobs while the camera is not needed, e.g. overnight. (Copying model files onto the M3 -- the
   edge-vlm relay, hekate -> laptop -> M3 by `scp -3`, until ~12:27 -- did not stop it.)
-- [ ] A separate session makes /health report a frozen camera ("Report a frozen M3 camera in the
-      bridge's /health"): merge it -- it touches m3pro/tools/m3bridge.py, as bdbbc83 did.
-- Before robot work: GET http://192.168.73.66:8761/rgbd twice -- the same `stamp` is a frozen camera.
+- [x] **/health reports a frozen camera** (merged 746ab04 + 18a976b, deployed on both robots
+      2026-10-16): the M3's newest colour and depth age and an error once either is older than
+      STALE_S, on the console's arm card too; on both robots the stream's fps falls to 0 when frames
+      stop (it held the last rate).
 - **The M3's board went silent at ~12:33** (no node /YB_Node topics: battery, odometry, arm), after
   a failed Teach had turned the arm towards the left front tyre (see 1). Restarting the micro-ROS
   agent (`~/start_agent.sh`'s command, in a desktop terminal) and the board's reset button brought
   back battery and wheels but NOT the arm's /arm6_joints subscription; only switching the robot off
-  and on did (12:55: arm connected, camera fresh). Next time: st## 1. Teach from look-alikes -- done 2026-10-15
+  and on did (12:55: arm connected, camera fresh). Next time: straight to the power switch.
+
+## 1. Teach from look-alikes -- done 2026-10-15
 
 It works on a table: Teach, Find and Pick by name move the arm only (leave "may drive closer" off,
 no Scan). Teach takes the thing nearest the camera: until 2cf84bc (deployed 2026-10-15) that was
@@ -51,7 +55,6 @@ arm left turned. A failed Teach still does not send the arm home: press Home.
       Find's closer look at far unknowns (the tape at the paper's edge) costs a few seconds more.
 - [ ] Optional: the can standing and whole in the picture -- named? (taught standing, from a scan)
 
-each with Scan + its name).
 
 ## 2. The kit detector -- the X3's pictures in, then onto the robots
 
@@ -81,8 +84,7 @@ never seen that camera or the board.
 
       Twice as good on the X3; on the M3 it loses its 40 mm cube (0.672 -> 0.056, three in val)
       under 15x more X3 pictures. PLAN.md M5 has the per-class numbers.
-- [ ] **Decide:** a model per robot for now (proposed: the X3 `n_20261015`, the M3 `n_cycle`), or
-      one model with the M3's pictures weighted up -- after the M3 frames below.
+- [x] **Decided** (2026-10-16): one model for both robots, `n_20261015b` (below).
 - [x] **`n_20261015` on the tag board** (the morning's 25 check pictures, never trained on, through
       the X3 service's own detector.py): not one false cube on the board any more (the old model had
       7-9 finds on the busiest); the red and yellow cubes cube40, the blue one a block. A few weak
@@ -103,11 +105,20 @@ never seen that camera or the board.
       blocks lying 34, standing a few more. The M3 set: 117 train / 26 val pictures (40 mm cubes
       70 / 8, from 16 / 3). The yellow cylinder's pick looks set aside (m3pro/out/duel/frames_not_kit:
       its depth names it a 30 mm cube). Fetched by key now (`m3_duel.py fetch`, c558563).
-- [ ] **The run `n_20261015b`** (M3's new frames + X3 + synthetic, started ~14:15): judge it with
-      `train/eval_kit.py` against `n_cycle` and `n_20261015` on the NEW M3 val (26) -- the old 0.791
-      was on 14 pictures -- and on the X3 test; if it holds both, one model for both robots.
-- [ ] **The M3** (agreed 2026-10-15) after its frames, as a vision service of its own whose answer
-      the pick logs beside the depth's at every look (the depth stays in charge; the log is the score).
+- [x] **The run `n_20261015b`** (M3's new frames + X3 + synthetic): mask mAP50 on the NEW M3 val
+      (26 pictures) 0.634 (`n_20261015` 0.563; its 40 mm cube 0.11 -> 0.28), X3 val 0.666, X3 test
+      0.471 (0.497) -- the X3's the same within the noise, the M3's best: one model for both.
+- [x] **The X3 serves `n_20261015b`** (2026-10-16): ~/roboarm/models/kit/yolo26n_kit.pt and its FP16
+      engine (built there, 7 min), robot.local.env points at it (robot.local.env.20261016 is the
+      file before; `yolo26n_kit_x3.*` kept): /health yolo26n_kit.engine, a live frame -> cube30, block.
+- [x] **The M3 serves it as a second opinion** (2026-10-16): its own `roboarm-vision` user unit
+      (m3pro/robot/roboarm-vision.service, .venv-ml, 127.0.0.1:8760, the X3's vision_service code
+      brought into m3pro/), the same yolo26n_kit.pt + an engine built on the M3 (its older
+      yolo26n_kit.* now *_20261012.*). `roboarm/m3kit.py` asks it at every look (~55 ms) and the pick
+      logs "wide look, kit detector: agrees on n of m; depth X, detector Y 0.55; only it saw ...";
+      the look's .json keeps its answer ("detector"). The depth stays in charge.
+- [ ] **Read its score:** a few Clean up rounds on the M3, then count the "kit detector:" lines --
+      where it and the depth disagree, which one was right (the look's pictures are kept).
 
 ## 3. Me, while the robot work runs (laptop + hekate)
 
@@ -117,10 +128,27 @@ never seen that camera or the board.
       Pro, DA V2 Metric Indoor) read 2-4x too far at 20-30 cm.
 - [x] **The duel's pictures** (2026-10-15): `m3_duel.py run --panels 16 --versus da2l` -> colour |
       DCW2 | DA V2 Small | DA V2 Large in m3pro/out/duel/; for the demo panel_wide_5 and panel_close_0.
-- [ ] **Why the close look fails:** in the pictures both networks fail alike where a large thing (the
-      black box, the tape rolls) fills the close view -- the floor fit, not only the network. Try the
-      fit on floor pixels away from large raised things; DA3 (not tried yet); then the duel's summary
-      in PLAN.md S1.
+- [x] **Why the close look fails** (2026-10-15/16, d14f9d0, `m3pro/tools/duel_floorfit.py`): about
+      half was the floor fit. A third of a close look's predicted floor is no floor (the black box,
+      tape, in 4 of 31 the gripper's finger before the lens -- `a` then 4-9x off) and the fit kept 98 %
+      of it; the quadratic warp made every look worse. `monodepth.anchor` now: no warp, and up to 3
+      fits more without what reads over 10 mm. Height error, median / p90, named within 7 mm:
+
+      | | DA V2 Small close | DA V2 Large close | DA V2 Large wide |
+      |---|---|---|---|
+      | 2026-10-09 (tuned on), before | 15.5 / 32.9, 19 % | 9.6 / 25.5, 33 % | 4.8 / 8.9, 78 % |
+      | 2026-10-09, after | 11.7 / 26.3, 34 % | 5.2 / 17.5, 61 % | 3.5 / 7.2, 88 % |
+      | 2026-10-15 (held out), before | 13.2 / 33.7, 32 % | 8.0 / 18.5, 43 % | 5.5 / 13.1, 68 % |
+      | 2026-10-15, after | 10.9 / 32.7, 38 % | 6.9 / 19.0, 52 % | 5.6 / 10.8, 71 % |
+
+      The rest is the network: anchored on the DCW2's own floor (the best any anchor can do) DA Small
+      close stays ~9-10 mm, so DA Small will not make 7 mm close; Large just does. monodepth.anchor
+      is the duel's only (the X3's live depth rung finds raised regions by edges): no robot changed.
+- [ ] DA3 (not tried in the duel yet); then the duel's summary in PLAN.md S1.
+- [x] **The laptop's GPU** (2026-10-16): the root env has onnxruntime-gpu (CUDA 12 from nvidia-*
+      wheels, `m3_duel.onnx_session`), the RTX 2070 Super runs DA V2 Small in 52 ms against the CPU's
+      741 -- the duel's maps in seconds, not the hour of 2026-10-15. The test suites run no model:
+      the GPU does not touch them.
 - [ ] **The scan's cloud from the splat's cameras:** the splat now corrects each camera (median 3-6 mm,
       up to 17 mm on the can; `splat_poses.json` beside each scan). Fusing with those may fix the box
       coming out ~0.7 cm too tall and its stop-5/6 reading ~6 cm off.
@@ -154,7 +182,7 @@ never seen that camera or the board.
   mission).
 - RESEARCH.md's open choices: quick-win venues, contacting the two Slovak groups, the overhead webcam.
 
-## Done on 2026-10-13 and 2026-10-15
+## Done on 2026-10-13, 2026-10-15 and 2026-10-16
 
 - **2026-10-13**, only hekate's jobs over lunch (the robot part waited): the depth duel's big models
   (f5d5e2b); YOLO26s + synthetic again, a repeat of 2026-10-12; `kit_cycle.py` reads hekate's output
@@ -172,3 +200,7 @@ never seen that camera or the board.
   thing no plan reaches is planned once a job (9183510: on the M3 plan 6.4 s a pick with one such
   block on the table, 0.4 s without), deployed on both robots -- the X3's shared code brought up
   from 2026-10-08 with it (7 picked, 2 out of reach, the cylinder missed twice).
+- **2026-10-16:** the frozen-camera /health merged (746ab04, 18a976b) and deployed on both robots; the
+  floor fit without the warp and with refits (d14f9d0), checked on the held-out 2026-10-15 looks with
+  DA V2 Large maps from hekate; the laptop's GPU in the root env (onnxruntime-gpu); `n_20261015b` on
+  both robots -- the X3 picks with it, the M3 logs it beside its depth.
