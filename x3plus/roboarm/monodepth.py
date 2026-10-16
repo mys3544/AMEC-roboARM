@@ -12,7 +12,8 @@ AFFINE in the normalised picture coordinates (x, y): 1/Z = alpha x + beta y + ga
 to the picture, alpha = beta = 0, and a cannot be found at all -- the global fit then gave
 70-120 mm for 20-40 mm cubes. An oblique look tilts the floor (the M3 looks at it from 12 to
 45 cm ahead) and a is pinned. For the same reason the correction for the map's low "hills" may
-not have linear terms -- they would absorb the slopes and a with them -- so it is quadratic only.
+not have linear terms -- they would absorb the slopes and a with them -- so it is quadratic only;
+and since the M3's duel (2026-10-15) it is off unless asked for: it made every look worse there.
 
 Everything here is plain numpy on the engine's grid; vision_service/depth.py makes the map.
 """
@@ -28,6 +29,11 @@ FIT_ROUNDS = 6
 MIN_FLOOR_PX = 500
 NEAR_M, FAR_M = 0.05, 2.0   # floor distances taken into the fit
 SCALE_SD_GOOD = 0.03    # a pinned to 3 %: a 30 mm step at 25 cm is then good to ~1 mm
+REFITS = 3              # anchor(): fits again without what the last fit read as raised ...
+RAISED_M = 0.010        # ... this far over the floor (5 mm takes the network's floor bumps out too,
+                        #     20 mm leaves more of the big things in: both worse in the duel)
+RAISED_SKIRT = 0.023    # ... and this far round it, a share of the map's width (15 px of 640) ...
+RAISED_MAX = 0.5        # ... while that leaves at least half the floor the pose predicts
 
 
 def rays(K, dist, frame_size: tuple[int, int], grid_size: tuple[int, int]) -> np.ndarray:
@@ -117,11 +123,35 @@ def heights(z: np.ndarray, ray_cam: np.ndarray, R: np.ndarray, c: np.ndarray, fl
 
 
 def anchor(disp: np.ndarray, frame_size: tuple[int, int], K, dist, R: np.ndarray, c: np.ndarray,
-           floor_z: float, exclude: np.ndarray | None = None, warp: bool = True) -> dict:
-    """The whole step: the fit, metric depth and heights on disp's grid, and the rays used."""
+           floor_z: float, exclude: np.ndarray | None = None, warp: bool = False,
+           refits: int = REFITS) -> dict:
+    """The whole step: the fit, metric depth and heights on disp's grid, and the rays used.
+
+    The fit is made again `refits` times without what the last one read as raised (over RAISED_M)
+    or could not read, and a skirt round it -- unless that would leave out more than RAISED_MAX of
+    the floor the pose predicts, when the last fit stands if it is the right way up (a cluttered
+    desk ran away: the fit chased the last strip of floor). A third of a close look's predicted
+    floor is no floor (the M3's duel, 2026-10-15, m3pro/tools/duel_floorfit.py): the drop-off
+    box, tape rolls, the gripper's own finger a few cm from the lens -- more than the Huber fit
+    sheds on its own, its sigma grows with them; the gripper made a 4-9x too big, cubes read 0 mm.
+    No warp by default: alone it cost on every look and both networks there (DA V2 Large median
+    error close 9.6 -> 5.7 mm without it, wide 4.8 -> 3.7)."""
     ray_cam = rays(K, dist, frame_size, disp.shape[::-1])
     inv_floor = floor_inverse_depth(ray_cam, R, c, floor_z)
     fit = fit_floor(disp, inv_floor, ray_cam, exclude, warp)
     z = metric_depth(disp, fit, ray_cam)
-    return {**fit, "z": z, "height": heights(z, ray_cam, R, c, floor_z), "rays": ray_cam,
+    height = heights(z, ray_cam, R, c, floor_z)
+    skirt = np.ones((2 * round(RAISED_SKIRT * disp.shape[1]) + 1,) * 2, np.uint8)
+    predicted = (inv_floor > 1 / FAR_M) & (inv_floor < 1 / NEAR_M) & np.isfinite(disp)
+    for _ in range(refits):
+        raised = cv2.dilate((~np.isfinite(height) | (height > RAISED_M)).astype(np.uint8), skirt).astype(bool)
+        if fit["scale"] > 0 and (raised & predicted).sum() > RAISED_MAX * predicted.sum():
+            break               # (an upside-down fit, a < 0, is no fit to keep: on regardless)
+        try:
+            fit = fit_floor(disp, inv_floor, ray_cam, raised if exclude is None else raised | exclude, warp)
+        except ValueError:      # too little floor left: the last fit stands
+            break
+        z = metric_depth(disp, fit, ray_cam)
+        height = heights(z, ray_cam, R, c, floor_z)
+    return {**fit, "z": z, "height": height, "rays": ray_cam,
             "floor_z_expected": np.where(inv_floor > 0, 1 / np.maximum(inv_floor, 1e-9), np.nan)}

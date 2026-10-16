@@ -1,8 +1,10 @@
 """The depth duel (PLAN.md S1, stage 1 -- the user's choice: the same picture, the M3 only): the
 M3's stereo depth (the DCW2) against Depth Anything V2 Small on the very same colour picture,
-anchored to the floor as the X3 has to (x3plus/roboarm/monodepth.py: d = a/Z + b + a quadratic warp,
-fitted on the floor the arm's pose predicts). The pictures are the pick's own looks, kept clean
-with the kit's outlines since 2026-10-09 (m3pick.look: *_rgb.jpg, *_depth.png, *.json).
+anchored to the floor as the X3 has to (x3plus/roboarm/monodepth.py: d = a/Z + b, fitted on the
+floor the arm's pose predicts, then again without what that fit reads as raised -- since 2026-10-15,
+when the quadratic warp went and the refits came: tools/duel_floorfit.py). The pictures are the
+pick's own looks, kept clean with the kit's outlines since 2026-10-09 (m3pick.look: *_rgb.jpg,
+*_depth.png, *.json).
 
     python tools/m3_duel.py fetch [DAY]      # the robot's out/pick/DAY_*  (today) -> out/duel/frames/
     python tools/m3_duel.py run [--panels 6] [--versus da2l]   # -> out/duel/results.md, out/duel/panel_*.jpg

@@ -59,7 +59,7 @@ def top_height(result, R, c, box) -> float:
 def test_an_oblique_look_pins_the_scale_and_the_kit_heights_come_out():
     R, c = looking(down_deg=40, height=0.28)
     z = scene_depth(R, c, [CUBE30, CUBE40, BLOCK])
-    result = monodepth.anchor(disparity(z), FRAME, K, NO_DIST, R, c, floor_z=0.0)
+    result = monodepth.anchor(disparity(z), FRAME, K, NO_DIST, R, c, floor_z=0.0, warp=True)
     assert result["pinned"], result["scale_sd"]
     assert abs(result["scale"] - 3.7) < 0.1
     for box in (CUBE30, CUBE40, BLOCK):
@@ -80,5 +80,21 @@ def test_without_the_warp_term_the_hills_bend_the_floor():
     R, c = looking(down_deg=40, height=0.28)
     z = scene_depth(R, c, [CUBE40])
     plain = monodepth.anchor(disparity(z), FRAME, K, NO_DIST, R, c, floor_z=0.0, warp=False)
-    warped = monodepth.anchor(disparity(z), FRAME, K, NO_DIST, R, c, floor_z=0.0)
+    warped = monodepth.anchor(disparity(z), FRAME, K, NO_DIST, R, c, floor_z=0.0, warp=True)
     assert warped["sigma"] < plain["sigma"] / 2
+
+
+def test_a_big_thing_in_view_does_not_drag_the_scale():
+    """2026-10-15, the M3's close looks: a box over a third of the floor the pose predicts, or the
+    gripper's finger a few cm from the lens, and the robust fit alone took it in (its sigma grows
+    with it): the cube came out 32 mm, or a negative. The refits leave it out."""
+    R, c = looking(down_deg=40, height=0.28)
+    box = (0.15, 0.60, -0.40, 0.0, 0.12)        # 12 cm tall, 30 % of the floor in view
+    finger = (0.10, 0.20, -0.30, 0.30, 0.24)    # 4 cm under the lens, across the near edge
+    for big in (box, finger):
+        d = disparity(scene_depth(R, c, [big, CUBE40]), warp=(0, 0, 0))
+        once = monodepth.anchor(d, FRAME, K, NO_DIST, R, c, floor_z=0.0, refits=0)
+        assert abs(top_height(once, R, c, CUBE40) - 0.040) > 0.005, big   # the failure, reproduced
+        result = monodepth.anchor(d, FRAME, K, NO_DIST, R, c, floor_z=0.0)
+        assert abs(result["scale"] - 3.7) < 0.1, big
+        assert abs(top_height(result, R, c, CUBE40) - 0.040) < 0.003, big
