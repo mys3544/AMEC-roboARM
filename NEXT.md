@@ -1,4 +1,34 @@
-# Next -- the list (as of 2026-10-16, Friday evening)
+# Next -- the list (as of 2026-10-19, Monday)
+
+## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
+
+The user's three for these two days (asked 2026-10-19):
+
+- [ ] **A new UI for the app** (the console: console/index.html, console.js, console.css, served by
+      console/serve.py on :8099). Ask first: what is wrong with today's (a card per robot, the 3D
+      view, the timing card), who looks at it at the event (us driving, or visitors watching a
+      screen), one page or a demo mode -- then a sketch before any code.
+- [ ] **Voice commands with an LLM** that picks from predefined functions: sort the pieces (by colour
+      or kind, into the box or to drop spots), pick the named thing, clean up, look, home, stop.
+      Today console/voice.py is Parakeet TDT 0.6B on the laptop's CPU and a small grammar ("no
+      language model: that comes later"). To decide: which LLM and where -- a small local one (the
+      laptop's GPU has CUDA now) or the Claude API with tool use, which the event's network decides
+      (a hotspot may be slow or metered); Slovak and English; the functions over the robots' jobs
+      (/pick/cleanup, /pick/named, /pick/look, home, stop) plus new ones (sort = a clean-up with a
+      kind/colour filter and a drop spot per kind). RESEARCH.md S3 (Parakeet -> small LLM vs
+      speech-native) is the study behind it.
+- [ ] **The robots on a phone hotspot** -- the event is out of the lab: no IISLab-AMEC, no hekate,
+      no Dionysos. What changes:
+      - every robot address: 192.168.73.66 / .210 are written into console/robots.json and ~15
+        tools (`grep -r 192.168.73`) -> one place to set them (an env variable or a
+        robots.local.json), or the hotspot handing the robots fixed addresses;
+      - the robots must join the hotspot (a WiFi profile on each; on 2026-09-21/22 the X3 ran on one
+        as 172.20.78.81 -- the grown reach offset overshot there, offset 0 picked);
+      - nothing on the day may need the internet or the GPU servers: the kit detector, the depth
+        and the DINOv2 teach run on the robots, the voice on the laptop -- an LLM needs the
+        internet or a local model;
+      - test on Wednesday: both robots and the laptop on the hotspot, the console, a clean-up on
+        each, Teach and Find on the M3, /health; note the latency. Charge both batteries.
 
 ## Next week (from Monday 2026-10-19): the M3's detector and the 40 mm cube
 
