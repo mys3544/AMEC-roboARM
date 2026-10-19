@@ -2,7 +2,17 @@
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
-The user's three for these two days (asked 2026-10-19):
+The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning:
+
+- [ ] **Tuesday morning: the M3's detectors judged fairly, on looks no model has seen** (the user,
+      2026-10-19). 2 Clean up rounds on the M3 with the 40 mm cube on the table, turned between them
+      (wood up, a painted side up); the M3 keeps serving `lap_20261016_m3` (nothing deployed). Then
+      on the laptop: those rounds' wide and close looks through all three -- `lap_20261016_m3`,
+      `dio_20261019_mix`, `dio_20261019_m3` (weights in Dionysos's roboarm-train\runs\kit\, fetch
+      them) -- counting, per model and look, how often it finds the 40 mm cube where the depth does
+      (and the other pieces: kit_dataset.py's cleaned depth labels as the truth). **Keep these looks
+      out of training: the M3's fixed test set** (as the X3's x3plus/out/looks_test), so every
+      comparison from now on is fair. Deploy a new model on the M3 only if it wins there.
 
 - [ ] **A new UI for the app** (the console: console/index.html, console.js, console.css, served by
       console/serve.py on :8099). Ask first: what is wrong with today's (a card per robot, the 3D
@@ -50,15 +60,25 @@ always a plain coloured block.
       of the 40 mm cubes, 60 % of them wood up; the yellow cylinder about, unlabelled. Runs on
       Isaac Sim 5.0 too (a USD sun) and headless over SSH (`train/synth/run_standalone.py`). Each
       picture after 30 dropped renders: the previous picture's pieces showed through as ghosts.
-- [ ] **Synthetic pictures with the real 40 mm cube** -- 2,000 rendering on Dionysos (4 x 500,
-      synth_raw3/part1-4). Then: synth_to_yolo.py per part, the mix (M3 real + synthetic) and a
-      fine-tune of n_20261015b on the laptop's GPU, then on the M3's real pictures only; judged on
-      the M3 val and LIVE.
-      **Needs an Isaac Sim server:** hekate's GPU was taken all day 2026-10-16 by edge-vlm's
-      judge_codalm (29 of 32 GB). **The user is trying to get another server with Isaac Sim for next
-      week** -- remember to ask about it on Monday. On a new server: Isaac Sim 6.0, the streaming
-      instance + its Python server (tools/isaac_exec.py talks to it), train/synth/kit_synth.py sent
-      in, `await generate(N)`, synth_to_yolo.py; or run kit_synth.py headless there.
+- [x] **Synthetic pictures with the real 40 mm cube, two rounds** (2026-10-19, Dionysos):
+      1. 2,000 of the arena mat with the painted cube -> real + synthetic, then real only, on the
+         laptop's GPU: M3 val 0.762 / 0.790 (cube40 0.635 / 0.650) against the served
+         `lap_20261016_m3`'s 0.802 (0.693). Why it did not help: **the M3 works on a table, not the
+         mat** -- white paper printed faintly with a tag board on a grey desk, its 30 mm cubes white
+         picture cubes (the picture beside a real look: scratchpad, sent to the user).
+      2. kit_synth.py now renders the lab table in 60 % of the frames (textures/paper.png, tape,
+         a power strip, cables, brighter light) and the lab's own pieces in 80 % (the four picture
+         cubes -- 15 pictures and 5 tags cut from the user's photos -- the red block with a tag on
+         its end and the blue one; 72ee213). 2,000 more, then trained ON DIONYSOS (20 min for both
+         stages): `dio_20261019_mix` 0.784 (cube40 0.672), `dio_20261019_m3` 0.759 (0.643) against
+         0.802 (0.693).
+      **The M3 val cannot decide this:** 40 pictures, the 40 mm cube in 8, and the served model saw
+      part of them in training (the scene split moved as frames came in). Hence Tuesday morning's
+      test above.
+- [x] **Dionysos trains too** (2026-10-19): C:\Users\Hercules\roboarm-train\.venv (torch 2.11 +
+      cu128, ultralytics 8.4.175 -- the laptop's pins) sees the A4500 over SSH; train_kit.py,
+      eval_kit.py, synth/synth_to_yolo.py and the M3 set (datasets\m3b) there; the whole cycle
+      (render, labels, mix, two fine-tunes, comparison) runs there, only weights come back.
 - [ ] **Real pictures of it from the clean-ups** (no server needed): a few Clean up rounds with the
       40 mm cube on the table, turned between rounds, wood and blue up -- each round keeps its wide and
       close looks, labelled by the depth (kit_dataset.py, the box and the cylinder now left out).
