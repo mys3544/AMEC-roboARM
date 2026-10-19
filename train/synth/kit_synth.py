@@ -14,15 +14,25 @@ things that are not the kit (tape rolls, cans, boxes, balls: no label), the ligh
 round. Written by Replicator's BasicWriter (rgb + instance segmentation)
 to OUT; train/synth/synth_to_yolo.py turns that into the real set's labels. Why: the real set has 19
 pictures of the 40 mm cube in all (2026-10-12), and synthetic pieces cost nothing.
+
+Since 2026-10-19 most 40 mm cubes are the lab's own one (the user's photos): bare end grain on two
+opposite faces (textures/wood_*.png, cut from the photos), its four sides painted yellow, green, red
+and blue -- the M3's detector missed it wood up and called it a block side up, having only ever seen
+one-colour cubes here; and the yellow cylinder, which both robots' depth names a 30 mm cube, stands
+about unlabelled. Each picture is rendered over RT_SUBFRAMES passes: in one, the last frame's pieces
+showed through as ghosts (Isaac Sim 5.0 on Dionysos).
 """
 
 import math
 import os
 
+import carb
 import numpy as np
+import omni.kit.app
+import omni.kit.commands
 import omni.replicator.core as rep
 import omni.usd
-from pxr import Gf, UsdGeom
+from pxr import Gf, Sdf, UsdGeom, UsdLux, UsdShade
 
 OUT = os.path.join(os.path.expanduser("~"), "Desktop", "Sim Arm 2026", "train", "datasets", "synth_raw")
 W, H, FX = 640, 480, 480.8           # the M3's colour camera (m3pro: K, 2026-10-12)
@@ -43,10 +53,76 @@ DOME, SUN = (60.0, 250.0), (0.0, 600.0)   # light: 300-1500 and 0-3000 washed th
 # a piece's size in the picture is what tells the two apart.
 LOOKS = (("wide", 0.279, 69.5), ("close", 0.21, 85.0))
 WIDE_SHARE = 0.6
+# its folder: this file's, or hekate's copy when isaac_exec.py runs the file's text in the sim (no __file__)
+HERE = (os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals()
+        else os.path.join(os.path.expanduser("~"), "Desktop", "Sim Arm 2026", "train", "synth"))
+WOOD = [os.path.join(HERE, "textures", f"wood_{x}.png") for x in "ab"]
+SIDES = [(0.80, 0.60, 0.26), (0.15, 0.45, 0.22), (0.85, 0.26, 0.30), (0.12, 0.42, 0.62)]   # round it: +x +y -x -y
+PAINTED_SHARE = 0.7   # of the 40 mm cubes the lab's painted one; the rest one colour (the X3's tagged cubes)
+WOOD_UP = 0.6         # it lies wood up mostly; else a painted side up
+UPS = [(0, 0), (180, 0)], [(0, -90), (0, 90), (90, 0), (-90, 0)]   # X, Y turns: wood up / a side up
+RT_SUBFRAMES = 8
+FLUSH_UPDATES = 30   # frames rendered and dropped after the pieces move: the history goes with them
+# A cube of side 1, a face each: (normal, u, v) -- +z and -z the wood, then +x +y -x -y the sides
+FACES = [((0, 0, 1), (1, 0, 0), (0, 1, 0)), ((0, 0, -1), (1, 0, 0), (0, -1, 0)),
+         ((1, 0, 0), (0, 1, 0), (0, 0, 1)), ((0, 1, 0), (-1, 0, 0), (0, 0, 1)),
+         ((-1, 0, 0), (0, -1, 0), (0, 0, 1)), ((0, -1, 0), (1, 0, 0), (0, 0, 1))]
 
 
 def _colour(prim, rgb):
     UsdGeom.Gprim(prim).CreateDisplayColorAttr().Set([Gf.Vec3f(*[float(c) for c in rgb])])
+
+
+def _material(stage, name, texture=None, colour=None):
+    """An OmniPBR material at /World/Looks/name: (the material, its shader)."""
+    path = f"/World/Looks/{name}"
+    omni.kit.commands.execute("CreateMdlMaterialPrim", mtl_url="OmniPBR.mdl", mtl_name="OmniPBR", mtl_path=path)
+    shader = UsdShade.Shader(stage.GetPrimAtPath(f"{path}/Shader"))
+    if texture is not None:
+        shader.CreateInput("diffuse_texture", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath(texture))
+    shader.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*(colour or (1, 1, 1))))
+    shader.CreateInput("diffuse_tint", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(1, 1, 1))
+    shader.CreateInput("reflection_roughness_constant", Sdf.ValueTypeNames.Float).Set(0.8)
+    return UsdShade.Material(stage.GetPrimAtPath(path)), shader
+
+
+def _painted_cube(stage, name, materials):
+    """The lab's 40 mm cube as a mesh of side 1 (scaled when placed), each face bound to its material."""
+    mesh = UsdGeom.Mesh.Define(stage, f"/World/{name}")
+    points, normals, st = [], [], []
+    for n, u, v in FACES:
+        n, u, v = np.array(n, float), np.array(u, float), np.array(v, float)
+        for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):   # counter-clockwise seen from outside
+            points.append(Gf.Vec3f(*(0.5 * (n + su * u + sv * v))))
+            normals.append(Gf.Vec3f(*n))
+            st.append(Gf.Vec2f((su + 1) / 2, (sv + 1) / 2))
+    mesh.CreatePointsAttr(points)
+    mesh.CreateFaceVertexCountsAttr([4] * 6)
+    mesh.CreateFaceVertexIndicesAttr(list(range(24)))
+    mesh.CreateNormalsAttr(normals)
+    mesh.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
+    mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+    UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray,
+                                            UsdGeom.Tokens.faceVarying).Set(st)
+    for i, material in enumerate(materials):
+        subset = UsdGeom.Subset.CreateGeomSubset(mesh, f"face{i}", UsdGeom.Tokens.face, [i],
+                                                 familyName=UsdShade.Tokens.materialBind)
+        UsdShade.MaterialBindingAPI.Apply(subset.GetPrim()).Bind(material)
+    prim = mesh.GetPrim()
+    rep.functional.modify.semantics(prim, {"class": "cube40"})
+    rep.functional.modify.pose(prim, position_value=FAR)
+    return prim
+
+
+def _distant_light(stage, intensity):
+    """The sun: Replicator's own on Isaac Sim 6.0 (hekate); 5.0's functional API has none (Dionysos,
+    2026-10-19), so a plain USD one there."""
+    create = getattr(rep.functional.create, "distant_light", None)
+    if create is not None:
+        return create(intensity=intensity, parent="/World", name="Sun")
+    light = UsdLux.DistantLight.Define(stage, "/World/Sun")
+    light.CreateIntensityAttr(intensity)
+    return light.GetPrim()
 
 
 def _setup():
@@ -55,15 +131,18 @@ def _setup():
     UsdGeom.SetStageMetersPerUnit(stage, 1.0)
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
     rep.orchestrator.set_capture_on_play(False)
+    # FXAA keeps no history: DLSS's left the last picture's pieces in as ghosts (Isaac Sim 5.0, 2026-10-19)
+    carb.settings.get_settings().set_int("/rtx/post/aa/op", 2)
     rep.functional.create.xform(name="World")
     scene = {"dome": rep.functional.create.dome_light(intensity=800, parent="/World", name="Dome"),
-             "sun": rep.functional.create.distant_light(intensity=2000, parent="/World", name="Sun"),
+             "sun": _distant_light(stage, 2000),
              "floor": rep.functional.create.plane(scale=(4, 4, 1), parent="/World", name="Floor"),
              "lines": [rep.functional.create.cube(position=FAR, parent="/World", name=f"Line{i}") for i in range(4)],
              "kit": {k: [rep.functional.create.cube(position=FAR, parent="/World", name=f"{k}_{i}",
                                                     semantics={"class": k}) for i in range(n)]
                      for k, n in POOL.items()},
-             "others": [rep.functional.create.cylinder(position=FAR, parent="/World", name=f"Roll{i}") for i in range(2)]
+             "others": [rep.functional.create.cylinder(position=FAR, parent="/World", name="YellowCyl")]
+             + [rep.functional.create.cylinder(position=FAR, parent="/World", name=f"Roll{i}") for i in range(2)]
              + [rep.functional.create.cylinder(position=FAR, parent="/World", name="Can")]
              + [rep.functional.create.cube(position=FAR, parent="/World", name=f"Box{i}") for i in range(2)]
              + [rep.functional.create.sphere(position=FAR, parent="/World", name="Ball")]}
@@ -74,6 +153,11 @@ def _setup():
     camera.GetVerticalApertureAttr().Set(APERTURE * H / W)
     camera.GetClippingRangeAttr().Set(Gf.Vec2f(0.01, 100.0))
     scene["cam"] = cam
+    woods = [_material(stage, f"Wood{i}", texture=t) for i, t in enumerate(WOOD)]
+    scene["sides"] = [_material(stage, f"Side{i}", colour=c) for i, c in enumerate(SIDES)]
+    scene["woods"] = woods
+    scene["painted"] = [_painted_cube(stage, f"cube40p_{i}", [woods[i % 2][0], woods[(i + 1) % 2][0]]
+                                      + [m for m, _ in scene["sides"]]) for i in range(3)]
     return scene
 
 
@@ -99,10 +183,23 @@ def _frame(scene, rng):
             _colour(line, LINES[rng.integers(len(LINES))])
         else:
             rep.functional.modify.pose(line, position_value=FAR)
+    for (_, shader), colour in zip(scene["sides"], SIDES):   # paint and wood under this frame's light
+        shader.GetInput("diffuse_color_constant").Set(Gf.Vec3f(*np.clip(np.array(colour) * rng.uniform(0.8, 1.15), 0, 1)))
+    for _, shader in scene["woods"]:
+        shader.GetInput("diffuse_tint").Set(Gf.Vec3f(*np.clip(rng.uniform(0.85, 1.12) + rng.normal(0, 0.03, 3), 0, 1.2)))
     used = {k: 0 for k in KIT}
+    painted = 0
     kinds = [CHOICE[rng.integers(len(CHOICE))] for _ in range(int(rng.integers(1, 7)))]
     spots = _place(rng, len(kinds) + 3, 0.16)
     for kind, spot in zip(kinds, spots):
+        if kind == "cube40" and painted < len(scene["painted"]) and rng.random() < PAINTED_SHARE:
+            prim = scene["painted"][painted]
+            painted += 1
+            ups = UPS[0] if rng.random() < WOOD_UP else UPS[1]
+            rx, ry = ups[int(rng.integers(len(ups)))]
+            rep.functional.modify.pose(prim, position_value=(*spot, 0.02), rotation_value=(rx, ry, rng.uniform(0, 360)),
+                                       rotation_order="XYZ", scale_value=(0.04, 0.04, 0.04))
+            continue
         prim = scene["kit"][kind][used[kind]] if used[kind] < POOL[kind] else None
         if prim is None:
             continue
@@ -116,11 +213,15 @@ def _frame(scene, rng):
     for kind, prims in scene["kit"].items():
         for prim in prims[used[kind]:]:
             rep.functional.modify.pose(prim, position_value=FAR)
+    for prim in scene["painted"][painted:]:
+        rep.functional.modify.pose(prim, position_value=FAR)
     extra = spots[len(kinds):][: int(rng.integers(0, 4))]
     for i, prim in enumerate(scene["others"]):
         if i < len(extra) and rng.random() < 0.7:
             name = prim.GetName() if hasattr(prim, "GetName") else str(prim)
-            if "Roll" in name:
+            if "YellowCyl" in name:   # the lab's yellow cylinder: no kit piece, read as a 30 mm cube
+                size = (0.034, 0.034, 0.033)
+            elif "Roll" in name:
                 size = (0.065, 0.065, rng.uniform(0.015, 0.02))
             elif "Can" in name:
                 size = (0.066, 0.066, rng.uniform(0.10, 0.17))
@@ -130,7 +231,8 @@ def _frame(scene, rng):
                 size = (0.05, 0.05, 0.05)
             rep.functional.modify.pose(prim, position_value=(*extra[i] * 1.6, size[2] / 2),
                                        rotation_value=(0, 0, rng.uniform(0, 360)), scale_value=size)
-            _colour(prim, rng.uniform(0.05, 0.95, 3))
+            _colour(prim, np.clip(np.array((0.92, 0.76, 0.10)) * rng.uniform(0.85, 1.1), 0, 1) if "YellowCyl" in name
+                    else rng.uniform(0.05, 0.95, 3))
         else:
             rep.functional.modify.pose(prim, position_value=FAR)
     _, height, down = LOOKS[int(rng.random() >= WIDE_SHARE)]
@@ -157,7 +259,9 @@ async def generate(n, seed=0, out=OUT):
     writer.attach(rp)
     for _ in range(n):
         _frame(scene, rng)
-        await rep.orchestrator.step_async()
+        for _ in range(FLUSH_UPDATES):   # 2026-10-19: the last picture's pieces showed through as ghosts
+            await omni.kit.app.get_app().next_update_async()
+        await rep.orchestrator.step_async(rt_subframes=RT_SUBFRAMES)
     await rep.orchestrator.wait_until_complete_async()
     writer.detach()
     rp.destroy()
