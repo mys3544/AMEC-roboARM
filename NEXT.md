@@ -2,17 +2,28 @@
 
 ## Next week (from Monday 2026-10-19): the M3's detector and the 40 mm cube
 
-The one 40 mm cube (bare wood on five faces, blue on one -- user, 2026-10-16) is the kit detector's
-blind spot on the M3: wood up it is missed, blue up it is called a block. The live rounds: missed in
+The one 40 mm cube is the kit detector's blind spot on the M3: wood up it is missed, side up it is
+called a block. **What it is** (the user's photos, 2026-10-19): bare end-grain wood on TWO opposite
+faces, its four sides painted yellow, green, red and blue (in that order round it) -- not "wood with one
+blue face" as noted on 2026-10-16. The live rounds: missed in
 most close looks; 8 wide looks of it: found 6 times. Fine-tuning on 8 more wide looks gained nothing
 (`lap_20261016b_m3` 0.795 vs 0.802 on the M3 val, cube40 0.68 vs 0.69) -- the M3 keeps
 `lap_20261016_m3`. The likely cause: **the synthetic set never had a wooden cube** --
 train/synth/kit_synth.py paints every piece one jittered colour (COLOURS), so the 40 mm cube was
 always a plain coloured block.
 
-- [ ] **Synthetic pictures with the real 40 mm cube** -- a wood texture on five faces, blue on one
-      (photograph the faces for the texture), the yellow cylinder as a distractor with no label; more
-      close looks (~20 cm) like the pick's. Then the real + synthetic mix again and a fine-tune.
+- [x] **Dionysos, the second GPU server** (2026-10-19): `ssh Hercules@147.232.40.154` (key; the user
+      installed OpenSSH and widened its firewall rule to every profile), RTX A4500 20 GB, Isaac Sim
+      5.0.0; a shared lab PC -- never touch the other users' processes.
+- [x] **kit_synth.py renders the lab's cube** (2026-10-19): a mesh with a material per face -- the
+      wood from the user's photos (train/synth/textures/wood_a/b.png), the four painted sides -- 70 %
+      of the 40 mm cubes, 60 % of them wood up; the yellow cylinder about, unlabelled. Runs on
+      Isaac Sim 5.0 too (a USD sun) and headless over SSH (`train/synth/run_standalone.py`). Each
+      picture after 30 dropped renders: the previous picture's pieces showed through as ghosts.
+- [ ] **Synthetic pictures with the real 40 mm cube** -- 2,000 rendering on Dionysos (4 x 500,
+      synth_raw3/part1-4). Then: synth_to_yolo.py per part, the mix (M3 real + synthetic) and a
+      fine-tune of n_20261015b on the laptop's GPU, then on the M3's real pictures only; judged on
+      the M3 val and LIVE.
       **Needs an Isaac Sim server:** hekate's GPU was taken all day 2026-10-16 by edge-vlm's
       judge_codalm (29 of 32 GB). **The user is trying to get another server with Isaac Sim for next
       week** -- remember to ask about it on Monday. On a new server: Isaac Sim 6.0, the streaming
