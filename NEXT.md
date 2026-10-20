@@ -81,6 +81,43 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
   - Batteries: the M3 refuses under 10.5 V (the page warns under 10.8), the X3 under 10.0 (warns
     under 10.5) -- charge between showings.
 
+## After the event (from Monday 2026-10-26): a VLA taught in Isaac Sim -- the M3 first, then the X3
+
+The user (2026-10-20): "VLA in Isaac Sim -- can we simulate an expert there and train from it?" Yes:
+PLAN.md's track D (a picker that teaches a VLA, RESEARCH.md P1), with the teacher in the simulator.
+There the expert knows every piece's true pose, so it needs no detector or depth: perfect demos,
+automatic resets, thousands of episodes a night, and DAgger for free (from any state the student
+reaches, the expert's next move). **The M3 first** (Yahboom's URDF matches it), **the X3 too**, after.
+
+- [ ] **The M3's arm in Isaac Sim** (~1 week): Yahboom's URDF (yahboom_M3Pro_description/urdf/
+      M3Pro.urdf, which m3pro/roboarm/m3kinematics.py follows, with the hand-eye calibration's
+      corrections) -> USD by the URDF importer; the base fixed (table-top only), the arm's joints and
+      the gripper as drives held to the servos' speeds; the DCW2 at m3pro/data/m3_handeye.json's pose
+      (colour, depth too); the table and the lab's pieces from train/synth/kit_synth.py. **First check
+      the grip physics** (friction, finger contact): a 30 mm cube gripped must lift, carry and drop --
+      the hard part.
+- [ ] **The expert:** m3pick's own plan (IK, approach, grip, drop into the box) fed the simulator's
+      true poses instead of the depth's; for DAgger, its next action from any state.
+- [ ] **Recorder and resets:** a LeRobotDataset per episode (the wrist image, the joints, the action =
+      joint targets at 10-30 Hz, the instruction -- "zober modrú kocku" and in English); the pieces
+      scattered anew after each; 1-5k episodes on Dionysos (Isaac Sim 5.0) or hekate (6.0, back that
+      week).
+- [ ] **Train and judge in the simulator:** SmolVLA or X-VLA through LeRobot (SmolVLA fits Dionysos's
+      A4500 20 GB; pi0.5 with LoRA only on the 5090); success rate, unseen scenes, "the blue one", a
+      cube moved mid-reach (what detect-then-move cannot do).
+- [ ] **On the real M3:** a few dozen real episodes from the classical picker to fine-tune; the policy
+      served from the laptop or the 5090 (LeRobot's async inference), a watchdog holding the arm when
+      action chunks stop. Check first: the M3 reports the joints it was sent, not measured ones
+      (why PLAN.md D chose the X3) -- fine for the actions, to be seen for the state.
+- [ ] **Then the X3:** its URDF's forearm is over twice too long (x3plus/roboarm/kinematics.py) -> its
+      model from config.py's measured links; the same expert (x3pick) and recorder. One policy for both
+      arms is a research question of its own (cross-embodiment).
+- **The risk is sim-to-real:** images (the kit detector's lesson: synthetic pictures helped only once
+  they looked like our table and pieces), contact physics, cheap servos' dynamics. Hence domain
+  randomisation plus a real fine-tune -- and "a teacher in the simulator vs a teacher on the robot"
+  as the paper's experiment (RESEARCH.md P1).
+- **Time:** the first numbers in the simulator in 2-3 weeks, on the real M3 in 4-6.
+
 ## Next week (from Monday 2026-10-19): the M3's detector and the 40 mm cube
 
 The one 40 mm cube is the kit detector's blind spot on the M3: wood up it is missed, side up it is
