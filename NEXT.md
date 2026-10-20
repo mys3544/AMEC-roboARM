@@ -112,6 +112,19 @@ reaches, the expert's next move). **The M3 first** (Yahboom's URDF matches it), 
 - [ ] **Then the X3:** its URDF's forearm is over twice too long (x3plus/roboarm/kinematics.py) -> its
       model from config.py's measured links; the same expert (x3pick) and recorder. One policy for both
       arms is a research question of its own (cross-embodiment).
+- [ ] **Later: "podaj mi nástroj" -- small and thin things** (the user, 2026-10-20: could a VLA grip a
+      scalpel, or things smaller than the cubes?). After the first VLA steps with the cubes work. What
+      decides it is the thing's shape and the arm's floor, not the VLA:
+      - small things standing >= ~1 cm off the table are in reach (a 15-20 mm cube, a Lego brick, a
+        marker, a screw; an SO-101 picked a Lego brick at 70-90 % where it was trained);
+      - flat and thin, lying on the table (a scalpel handle 2-3 mm, a coin), is very hard: the
+        fingertips must reach 1-2 mm over the table, our floor is ~1-2 mm with the camera's loop, the
+        servos' backlash 3-6 mm a joint, the M3 1.5 cm off without its corrections;
+      - so: **the tools in a foam stand** (handles 2-3 cm up) -- first by Teach + Find on the M3 (DINOv2
+        tells them apart already), then as a VLA task; later a contact grip (soft fingertips, down until
+        the table, close along it) learned from demos; thinner, longer fingers with rubber -- measure how
+        far our grippers close first; matte tape on shiny metal (the depth sees no 2-3 mm thing at all);
+      - **never a real blade** at the event or near people: a handle without its blade or a printed one.
 - **The risk is sim-to-real:** images (the kit detector's lesson: synthetic pictures helped only once
   they looked like our table and pieces), contact physics, cheap servos' dynamics. Hence domain
   randomisation plus a real fine-tune -- and "a teacher in the simulator vs a teacher on the robot"
