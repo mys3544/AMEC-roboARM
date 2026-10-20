@@ -109,6 +109,9 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
         answer = picker.start("pick_once", kind=kind, at=params.get("at"), drive=bool(params.get("drive")))
     elif url.path == "/pick/cleanup":
         answer = picker.start("clean_up", kind=kind, drive=bool(params.get("drive")))
+    elif url.path == "/pick/sort":   # {"line": the kind for the line out on the right -- blocks, unless "cube"}
+        answer = picker.start("sort", line_kind="cube" if params.get("line") == "cube" else "block",
+                              drive=bool(params.get("drive")))
     elif url.path == "/pick/home":
         answer = picker.start("home")
     elif url.path == "/pick/look":

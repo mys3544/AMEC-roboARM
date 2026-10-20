@@ -152,6 +152,27 @@ def test_with_no_box_the_drops_go_on_the_line_and_are_not_picked_again():
     assert robot.dropped_here(robot.table[0])
 
 
+def test_a_sort_puts_the_blocks_on_the_line_and_the_cubes_into_the_box():
+    robot = Pretend([thing(0.18, 0.02), thing(0.20, 0.08, kind="block"), thing(0.16, 0.12)], box_at=(90, (-0.05, 0.30)))
+    state = run("sort", robot)
+    assert state["picked"] == 3 and state["box"]["drops"] == 2 and robot.line_drops == 1 and not state["error"]
+    lines = [m for m in robot.moves if isinstance(m, tuple) and m[0] == "line"]
+    carries = [m for m in robot.moves if isinstance(m, tuple) and m[0] == "carry"]
+    assert len(lines) == 1 and len(carries) == 2 and robot.to_line is None
+    assert robot.dropped_here(thing(0.0, -0.22, kind="block"))   # where the block fell: not picked again
+    assert len(robot.obstacles()) == 2   # the base keeps off both
+
+
+def test_a_sort_is_refused_without_a_box_or_with_the_box_on_the_line():
+    robot = Pretend([thing(0.18, 0.02)])
+    state = run("sort", robot)
+    assert "cannot sort: no drop-off box" in state["error"] and state["picked"] == 0 and robot.moves[-1] == "home"
+    robot = Pretend([thing(0.18, 0.02)], box_at=(180, (0.0, -0.30)))
+    state = run("sort", robot)
+    assert "stands where the line" in state["error"] and state["picked"] == 0
+    assert run("clean_up", robot)["picked"] == 1   # a clean-up minds no line: everything into the box
+
+
 def test_a_spot_missed_twice_is_left_and_the_job_goes_on():
     robot = Pretend([thing(0.18, 0.02), thing(0.21, -0.04)], misses=2)
     state = run("clean_up", robot)

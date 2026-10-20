@@ -22,7 +22,7 @@ const TEXT = {
     visitorView: 'Pre návštevníkov', controls: 'Ovládanie', other: 'EN', talk: 'Hovor (drž V)', listening: 'počúvam',
     heard: 'Počul som:', typed: 'alebo napíš: uprac stôl, X3 uprac stôl, domov, stop',
     keys: 'H skryje tlačidlá · medzerník zastaví všetko',
-    cleanup: 'Uprac stôl', look: 'Pozri sa', home: 'Domov', teach: 'Nauč sa', find: 'Nájdi', pickNamed: 'Zober',
+    cleanup: 'Uprac stôl', look: 'Pozri sa', home: 'Domov', sort: 'Roztrieď', teach: 'Nauč sa', find: 'Nájdi', pickNamed: 'Zober',
     thing: 'názov veci, napr. marhuľa', pretend: '(simulácia)', noArms: 'V robots.json nie je žiadna ruka.',
     connecting: 'Pripájam sa…', offline: 'Nepripojený', nosignal: 'Zatiaľ bez obrazu', cameraStalled: 'Kamera stojí',
     pillBusy: 'pracuje', pillIdle: 'čaká', pillOffline: 'nepripojený',
@@ -37,20 +37,22 @@ const TEXT = {
     picked: 'Zobral som {thing} za {s} s', missed: 'Nevyšlo to, skúsim znova',
     leftMissed: 'Jeden kúsok nechávam: dvakrát som ho minul', leftRefused: 'Jeden kúsok nechávam: tam nedočiahnem',
     clear: 'Stôl je uprataný', clearLeft: 'Upratané, {n} som musel nechať', boxFound: 'Krabicu vidím',
-    boxMoved: 'Krabica sa pohla, mierim na jej nové miesto', noBox: 'Krabicu nevidím, kladiem vpravo',
+    boxMoved: 'Krabica sa pohla, mierim na jej nové miesto', noBox: 'Krabicu nevidím',
     dropped: 'Je v krabici', droppedLine: 'Položený vpravo',
     pickedN: 'Zobraté {n}', missedN: 'Minuté {n}', perPiece: '{s} s na kúsok', inView: 'Na stole vidím {n}',
     busy: 'Robot práve pracuje', needName: 'Najprv napíš názov veci', refused: 'Nešlo to: {why}',
     allStopped: 'Všetko zastavené', noRobot: '{name} nie je pripojený', anyColour: 'farbu zatiaľ nerozlišujem',
     pickAny: 'Zober kúsok', pickCube: 'Zober kocku', pickBlock: 'Zober kváder', pickThing: 'Zober: {name}',
-    cleanupCubes: 'Uprac kocky', cleanupBlocks: 'Uprac kvádre', sortLater: 'Triediť roboty zatiaľ nevedia',
+    cleanupCubes: 'Uprac kocky', cleanupBlocks: 'Uprac kvádre', sortKind: 'Roztrieď: kocky do krabice, kvádre vpravo',
+    sortColour: 'Podľa farby zatiaľ triediť neviem', noSortBox: 'Triediť neviem: nevidím krabicu',
+    noSortLine: 'Triediť neviem: krabica stojí vpravo, kam idú kvádre -- posuňte ju dopredu',
     cube: '{n} mm kocku', blockLying: 'ležiaci kváder', blockStanding: 'stojaci kváder',
   },
   en: {
     visitorView: 'Visitor view', controls: 'Controls', other: 'SK', talk: 'Talk (hold V)', listening: 'listening',
     heard: 'Heard:', typed: 'or type: clean up, X3 clear the table, go home, stop',
     keys: 'H hides the buttons · Space stops all',
-    cleanup: 'Clean up', look: 'Look', home: 'Home', teach: 'Teach', find: 'Find', pickNamed: 'Pick it',
+    cleanup: 'Clean up', look: 'Look', home: 'Home', sort: 'Sort', teach: 'Teach', find: 'Find', pickNamed: 'Pick it',
     thing: 'its name, e.g. apricot', pretend: '(pretend)', noArms: 'No arm in robots.json.',
     connecting: 'Connecting…', offline: 'Not connected', nosignal: 'No picture yet', cameraStalled: 'Camera stalled',
     pillBusy: 'working', pillIdle: 'idle', pillOffline: 'offline',
@@ -65,13 +67,15 @@ const TEXT = {
     picked: 'Picked {thing} in {s} s', missed: 'Missed it, trying again',
     leftMissed: 'Leaving one: missed it twice', leftRefused: 'Leaving one: I cannot reach it there',
     clear: 'The table is clear', clearLeft: 'Cleaned up, {n} had to stay', boxFound: 'I see the box',
-    boxMoved: 'The box moved: aiming at its new place', noBox: 'No box in sight: putting them on the right',
+    boxMoved: 'The box moved: aiming at its new place', noBox: 'No box in sight',
     dropped: 'In the box', droppedLine: 'Put down on the right',
     pickedN: 'Picked {n}', missedN: 'Missed {n}', perPiece: '{s} s a piece', inView: '{n} on the table',
     busy: 'Busy with another job', needName: "Type the thing's name first", refused: 'Not done: {why}',
     allStopped: 'Everything stopped', noRobot: '{name} is not connected', anyColour: 'colours not told apart yet',
     pickAny: 'Pick one', pickCube: 'Pick a cube', pickBlock: 'Pick a block', pickThing: 'Pick: {name}',
-    cleanupCubes: 'Clean up the cubes', cleanupBlocks: 'Clean up the blocks', sortLater: 'The robots cannot sort yet',
+    cleanupCubes: 'Clean up the cubes', cleanupBlocks: 'Clean up the blocks', sortKind: 'Sort: cubes into the box, blocks on the right',
+    sortColour: 'I cannot sort by colour yet', noSortBox: 'Cannot sort: I see no box',
+    noSortLine: 'Cannot sort: the box stands on the right, where the blocks go -- move it to the front',
     cube: 'the {n} mm cube', blockLying: 'the lying block', blockStanding: 'the standing block',
   },
 };
@@ -152,6 +156,7 @@ class Arm {   // an arm's pick service (/pick/* on the M3's bridge or the X3's),
     $('.cleanup', this.el).onclick = () => this.act('pick/cleanup', {});
     $('.lookover', this.el).onclick = () => this.act('pick/look', {});
     $('.home', this.el).onclick = () => this.act('pick/home', {});
+    $('.sort', this.el).onclick = () => this.act('pick/sort', { line: 'block' });
     if (spec.kind === 'm3arm') this.teachRow($('.teach', this.el));
     else $('.teach', this.el).classList.add('none');
     this.stream();
@@ -274,11 +279,12 @@ class Arm {   // an arm's pick service (/pick/* on the M3's bridge or the X3's),
       const key = STEPS[s.step];
       if (!key) return s.step;
       if (key === 'taking' && this.thing) return t('takingThing', { thing: thing(this.thing) });
-      if (key === 'drop' && !s.box) return t('dropLine');
+      if (key === 'drop' && (s.drop_to === 'line' || !s.box)) return t('dropLine');   // no box, or a sort's block
       return t(key);
     }
     if (s.error) {
       if (/^stopped/.test(s.error)) return t('stopped');
+      if (/^cannot sort/.test(s.error)) return t(/line/.test(s.error) ? 'noSortLine' : 'noSortBox');
       if (/^[A-Z]\w*(Error|Exception)\b/.test(s.error)) return t('failed');
       return t('nothing');   // the job's NothingToPick: why not, in its words, below
     }
@@ -391,7 +397,10 @@ async function main() {
       look: () => ['pick/look', {}, t('look')],
       find: () => ['pick/find', {}, t('find')],
       pick_named: () => ['pick/named', { name: c.name }, t('pickThing', { name: c.name })],
-      sort: () => { throw new Error(t('sortLater')); },   // a job the robots do not have yet
+      sort: () => {   // cubes into the box, blocks on the line out on the right (roboshared.task's sort)
+        if (c.by === 'colour') throw new Error(t('sortColour'));   // the robots read no colours yet
+        return ['pick/sort', { line: 'block' }, t('sortKind')];
+      },
     }[c.action]();
   }
   async function one(kind, command) {

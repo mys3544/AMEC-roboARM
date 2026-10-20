@@ -4,6 +4,8 @@ they can perform the same tasks; only difference is that X3 has to use different
     pick_once   the drop-off box looked for, the nearest kit thing in reach picked (the base may
                 drive up to it), dropped into the box -- or on the line out on the right -- home
     clean_up    every kit thing in reach, one by one; a spot refused or missed twice is left
+    sort        a clean-up that sorts (2026-10-20): one kind onto the line out on the right, the
+                other into the box -- the box seen, and clear of the line
     home        the arm home
     drop        what is held, to the drop-off
 
@@ -54,6 +56,7 @@ PART_M = 0.06    # a thing one look saw cut by the picture's edge is another loo
 MAX_MISSES = 2   # clean_up gives a spot up after this many misses in a row
 APPROACHES = 3   # drives towards things before a pick gives up
 DRIVE_GAP = 0.03   # m the base's footprint keeps from the drop-off box and the line it has dropped onto
+LINE_CLEAR_M = 0.04   # m a sort's line out on the right keeps from the drop-off box's walls
 
 
 class Stopped(Exception):
@@ -137,7 +140,8 @@ class Task:
         self.box_drops: list[np.ndarray] = []   # in the box's own terms (in_box): they move with it
         self.box_seen: list[dict] = []          # this job's readings of the box where it stands (boxes.merged)
         self.box_dir = self.BOX_LOOKS[0] if self.BOX_LOOKS else 0   # J1 it was last seen at: looked for there first
-        self.line_drops = 0                     # let go on the line out on the right this job (no box)
+        self.line_drops = 0                     # let go on the line out on the right this job (no box, or a sort)
+        self.to_line: str | None = None         # a sort's: the kind that goes on the line, the box or not
         self.skip: list[np.ndarray] = []        # spots this job has given up (pick's `skip`): looked past
         self.unplannable: list[dict] = []       # things this job found no plan for, the base where it is
         self.offset = np.zeros(2)   # m the base has driven since the job began (forward, left): the drop-off
@@ -153,7 +157,7 @@ class Task:
         self.frame: bytes | None = None   # the last look, marked, as JPEG
         self.found: list[dict] = []
         self.state = {"job": None, "step": "idle", "since": time.time(), "busy": False, "error": None,
-                      "last": None, "picked": 0, "missed": 0, "looks": 0}
+                      "last": None, "picked": 0, "missed": 0, "looks": 0, "drop_to": None}   # the last drop's: "box", "line"
         self._log: collections.deque = collections.deque(maxlen=300)
         self._seq = 0
         self._lock = threading.Lock()
@@ -233,7 +237,7 @@ class Task:
     def jobs(self) -> dict:
         """What start() runs, by name; a robot's body may add its own (the M3's "scan")."""
         return {"pick_once": self.pick_once, "clean_up": self.clean_up, "home": self.home, "drop": self.drop,
-                "look": self.look_over}
+                "look": self.look_over, "sort": self.sort}
 
     def start(self, job: str, **kwargs) -> dict:
         """Start `job` (one of jobs()) on its own thread; an error if one runs."""
@@ -324,6 +328,11 @@ class Task:
         self.unplannable = []
         self.engaged()
         self.box_look()
+        if self.to_line is not None and (self.box is None or not self.line_free()):
+            self.home()
+            raise NothingToPick("cannot sort: " + ("no drop-off box seen -- the other kind goes into it"
+                                                   if self.box is None else "the drop-off box stands where the"
+                                                   " line out on the right is -- move it to the front"))
         found, misses, skip = None, [], []
         for _ in range(limit):
             try:
@@ -347,6 +356,22 @@ class Task:
                 misses = []
         self.drive_back()
         self.home()
+
+    def sort(self, line_kind: str = "block", limit: int = 20, drive: bool = False) -> None:
+        """A clean-up that sorts: every `line_kind` piece onto the line out on the right, every other into
+        the drop-off box (2026-10-20, for voice's "sort the pieces"). Refused, the arm home, without a box or
+        with the box on the line."""
+        self.to_line = line_kind
+        try:
+            self.clean_up(limit=limit, drive=drive)
+        finally:
+            self.to_line = None
+
+    def line_free(self) -> bool:
+        """The line out on the right keeps LINE_CLEAR_M from the drop-off box's walls (the job's start frame)."""
+        x = float(self.AXIS[0])
+        outs = np.arange(self.DROP_OUT, self.DROP_OUT + self.DROP_SPREAD + 1e-9, 0.01)
+        return not any(boxes.inside(self.box, np.array([x, -out]), boxes.BOX_WALL + LINE_CLEAR_M) for out in outs)
 
     def pick(self, kind: str | None = None, at=None, found: list[dict] | None = None,
              skip: list[np.ndarray] = ()) -> tuple[dict, list[dict]]:
@@ -404,7 +429,7 @@ class Task:
         if held is False:
             self.say("the fingers closed on nothing: nothing to drop off")
         else:
-            self.drop(back=(self.offset.copy(), grip.get("line")))
+            self.drop(back=(self.offset.copy(), grip.get("line")), kind=grip["reading"].get("kind", target["kind"]))
         with self.step("look.after"):   # the next pick's wide look, too
             after = self.wide_look()
         centre = grip["centre"]
@@ -424,16 +449,20 @@ class Task:
         return record, after
 
     # ------------------------------------------------------------------------ the drop --
-    def drop(self, back=None) -> None:
+    def drop(self, back=None, kind: str | None = None) -> None:
         """What is held to the drop-off and let go. Into the box when the job found one: looked at again
         from where it was found (to_box_view: risen and turned, no up and down) -- moved, it is aimed at
         where it is now; not seen there, looked for all round, holding; nowhere, what is held is put
         back where it came from (`back`: (the base's offset then, the robot's own record of the pick))
         and the job stops (the user's, 2026-10-02: the box may be moved between picks) -- then carried
-        out over a spot in it (way_into) and straight down. No box at the job's start: on the line out
-        on the right, like the X3's (0-DROP_SPREAD further out, at random)."""
+        out over a spot in it (way_into) and straight down. No box at the job's start, or in a sort a
+        `kind` that goes there: on the line out on the right, like the X3's (0-DROP_SPREAD further out,
+        at random)."""
         self.drive_back()   # the box did not drive with it
-        if self.box is None:
+        to_line = self.box is None or (self.to_line is not None and kind == self.to_line)
+        with self._lock:
+            self.state["drop_to"] = "line" if to_line else "box"
+        if to_line:
             with self.step("drop"):
                 extra = float(self.rng.uniform(0.0, self.DROP_SPREAD))
                 self.drop_on_line(extra)
@@ -574,14 +603,13 @@ class Task:
     # ------------------------------------------------------------------------- the base --
     def obstacles(self) -> list[np.ndarray]:
         """What the base keeps DRIVE_GAP from, as points round it (the job's start frame): the drop-off
-        box, BOX_WALL outside its inside; or the line out on the right, once it has dropped there."""
-        if self.box is not None:
-            return [boxes.outline_points(boxes.outline(self.box))]
+        box, BOX_WALL outside its inside; and the line out on the right, once it has dropped there."""
+        found = [] if self.box is None else [boxes.outline_points(boxes.outline(self.box))]
         if self.line_drops:
             x = float(self.AXIS[0])
             near, far = -(self.DROP_OUT - 0.03), -(self.DROP_OUT + self.DROP_SPREAD + 0.03)
-            return [boxes.outline_points([np.array(c) for c in ((x - 0.03, near), (x + 0.03, near), (x + 0.03, far), (x - 0.03, far))])]
-        return []
+            found.append(boxes.outline_points([np.array(c) for c in ((x - 0.03, near), (x + 0.03, near), (x + 0.03, far), (x - 0.03, far))]))
+        return found
 
     def right_room(self) -> float:
         """m the base may slide right from where it is: right_cm, and no nearer than DRIVE_GAP to

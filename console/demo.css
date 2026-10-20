@@ -68,7 +68,7 @@ body.visitor .operator { display: none !important; }
 .news { margin: 0; min-height: 1.4em; font-size: 18px; color: var(--accent); }
 .news.bad { color: var(--warn); }
 .counts { margin: 0; min-height: 1.4em; color: var(--muted); font-size: 16px; font-variant-numeric: tabular-nums; }
-.buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 4px; }
+.buttons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 4px; }
 .buttons button, .teach button { height: 56px; font-size: 18px; font-weight: 600; }
 .teach.none { visibility: hidden; }   /* the X3 learns no names: its row kept, the columns level */
 .teach { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)); gap: 8px; }

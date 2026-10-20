@@ -795,6 +795,7 @@ async function main() {
       look: () => ['pick/look', {}, 'look started'],
       find: () => ['pick/find', {}, 'find started'],
       pick_named: c => ['pick/named', { name: c.name }, `pick '${c.name}' started`],
+      sort: () => ['pick/sort', { line: 'block' }, 'sort started: cubes into the box, blocks on the line on the right'],
     },
   };
   JOBS.x3arm = JOBS.m3arm;
@@ -810,7 +811,7 @@ async function main() {
     return `${robot.name}: ${done}${asked?.length ? ` (it takes what it finds first, not "${asked.join(' ')}")` : ''}`;
   }
   async function job(command) {   // on the robot named (the M3 unless the X3), or on both
-    if (command.action === 'sort') throw new Error('the robots cannot sort yet');
+    if (command.action === 'sort' && command.by === 'colour') throw new Error('the robots read no colours yet: sort by kind');
     const arms = command.robot === 'both' ? ['m3arm', 'x3arm'] : [command.robot === 'x3' ? 'x3arm' : 'm3arm'];
     const done = await Promise.allSettled(arms.map(arm => one(arm, command)));
     const said = done.map(d => d.status === 'fulfilled' ? d.value : d.reason.message).join('; ');
