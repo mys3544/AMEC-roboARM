@@ -91,8 +91,10 @@ def main() -> None:
     ap.add_argument("--val-every", type=int, default=5)
     a = ap.parse_args()
 
-    stems = [p.name[:-5] for p in a.frames.glob("*.json")
-             if p.name[16:-5] in LOOKS and (a.frames / (p.name[:-5] + "_rgb.jpg")).exists()]
+    held = {p.name[:-5] for p in (ROOT / "out" / "kit_test" / "frames").glob("*.json")}   # the test set's
+    stems = [p.name[:-5] for p in a.frames.glob("*.json")                               # (kit_test_m3.py)
+             if p.name[16:-5] in LOOKS and (a.frames / (p.name[:-5] + "_rgb.jpg")).exists()
+             and p.name[:-5] not in held]
     if a.out.exists():
         shutil.rmtree(a.out)
     counts = {"train": [0, 0, [0] * len(NAMES)], "val": [0, 0, [0] * len(NAMES)]}

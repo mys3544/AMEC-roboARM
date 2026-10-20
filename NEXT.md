@@ -4,15 +4,21 @@
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning:
 
-- [ ] **Tuesday morning: the M3's detectors judged fairly, on looks no model has seen** (the user,
-      2026-10-19). 2 Clean up rounds on the M3 with the 40 mm cube on the table, turned between them
-      (wood up, a painted side up); the M3 keeps serving `lap_20261016_m3` (nothing deployed). Then
-      on the laptop: those rounds' wide and close looks through all three -- `lap_20261016_m3`,
-      `dio_20261019_mix`, `dio_20261019_m3` (weights in Dionysos's roboarm-train\runs\kit\, fetch
-      them) -- counting, per model and look, how often it finds the 40 mm cube where the depth does
-      (and the other pieces: kit_dataset.py's cleaned depth labels as the truth). **Keep these looks
-      out of training: the M3's fixed test set** (as the X3's x3plus/out/looks_test), so every
-      comparison from now on is fair. Deploy a new model on the M3 only if it wins there.
+- [x] **Tuesday morning: the M3's detectors judged fairly, on looks no model has seen** (2026-10-20).
+      2 Clean up rounds (wood up 7 picked, painted up 6), their 40 looks (20 wide, 20 close; 25 with
+      the 40 mm cube) are **the M3's fixed test set**: m3pro/out/kit_test (tools/kit_test_m3.py
+      add/build; kit_dataset.py leaves them out of training), train/eval_kit.py `--test` per part.
+      | model | mask mAP50 all / wide / close | 40 mm cube found (conf 0.25) wood wide, wood close, painted wide, painted close |
+      |---|---|---|
+      | `lap_20261016_m3` (served) | 0.840 / 0.951 / 0.729 | 9/9, 3/6, 4/4, 6/6 = 22/25 |
+      | `dio_20261019_mix` | 0.861 / 0.979 / 0.760 | 7/9, 6/6, 4/4, 6/6 = 23/25 |
+      | `dio_20261019_m3` | 0.835 / 0.975 / 0.717 | 7/9, 6/6, 2/4 (as other kinds), 6/6 = 21/25 |
+      **A tie: nothing deployed**, the M3 keeps `lap_20261016_m3`. The served model misses the wooden
+      face up close, the synthetic ones far off -- one cube either way out of 25. The blind spot left
+      is the WOOD face at close range. The test set's own faults (all models alike): in 2 close looks
+      the depth's outlines sit half a cube off the pieces (155819, 160227), pieces already in the box
+      and cut by the picture's edge are labelled -- hence ~12 "missed" 30 mm cubes up close for every
+      model. Worth cleaning (drop labels on the edge and inside the box) before the next comparison.
 
 - [ ] **A new UI for the app** (the console: console/index.html, console.js, console.css, served by
       console/serve.py on :8099). Ask first: what is wrong with today's (a card per robot, the 3D
