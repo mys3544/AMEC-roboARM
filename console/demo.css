@@ -1,0 +1,99 @@
+/* The event page (demo.html): the robots' cameras big, a sentence each, big buttons that H hides */
+:root {
+  --bg: #f2f3f6; --panel: #ffffff; --ink: #1c2230; --muted: #647086; --line: #d8dce4;
+  --key: #eceff5; --accent: #2f6fdf; --stop: #d23b3b; --ok: #1f8a4c; --warn: #b7791f;
+  --bar: #1c2230; --bar-ink: #f2f3f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12151b; --panel: #1b1f27; --ink: #e5e8ef; --muted: #98a2b5; --line: #2e3441;
+    --key: #262c37; --bar: #0b0d11; --accent: #4d86ea; --ok: #3ccf7a; --warn: #e0a83a;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); display: grid;
+       grid-template-rows: auto minmax(0, 1fr) auto; font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+button { font: inherit; color: var(--ink); background: var(--key); border: 1px solid var(--line);
+         border-radius: 10px; padding: 8px 14px; cursor: pointer; user-select: none; }
+button:hover { border-color: var(--muted); }
+input { font: inherit; color: var(--ink); background: var(--key); border: 1px solid var(--line);
+        border-radius: 10px; padding: 8px 12px; min-width: 0; }
+.spacer { flex: 1; }
+body.visitor .operator { display: none !important; }
+
+/* the bar */
+.bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 16px;
+       background: var(--bar); color: var(--bar-ink); }
+.bar h1 { font-size: 20px; margin: 0 8px 0 0; letter-spacing: 0.02em; }
+.pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pill { font-size: 14px; padding: 3px 12px; border-radius: 999px; background: #2a3140; color: var(--bar-ink); }
+.pill.busy { background: var(--ok); color: #fff; }
+.pill.offline { background: var(--stop); color: #fff; }
+.bar .quiet { background: transparent; color: #aab3c3; border-color: #3a4252; font-size: 14px; }
+.talk { background: #2a3140; color: var(--bar-ink); border-color: #3a4252; touch-action: none; min-width: 9.5em;
+        font-variant-numeric: tabular-nums;
+        background-image: linear-gradient(90deg, rgba(60, 207, 122, 0.5) calc(var(--level, 0) * 100%), transparent 0); }
+.talk.on { border-color: #3ccf7a; color: #fff; }
+.stopall { background: var(--stop); border-color: var(--stop); color: #fff; font-weight: 700;
+           padding: 10px 28px; letter-spacing: 0.06em; }
+
+/* the robots, side by side */
+.robots { display: grid; gap: 16px; padding: 16px; min-height: 0;   /* the columns' rows lined up (subgrid): */
+          grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));    /* the cameras as big, the sentences level */
+          grid-template-rows: auto minmax(0, 1fr) repeat(6, auto); }
+.robots > .empty { color: var(--muted); align-self: center; justify-self: center; grid-row: 1 / -1; }
+.robot { display: grid; grid-template-rows: subgrid; grid-row: 1 / -1; row-gap: 6px; min-height: 0;
+         background: var(--panel); border: 1px solid var(--line);
+         border-top: 5px solid var(--robot); border-radius: 12px; padding: 12px 14px; }
+.head { display: flex; align-items: center; gap: 10px; }
+.swatch { width: 14px; height: 14px; border-radius: 4px; background: var(--robot); }
+.head h2 { font-size: 20px; margin: 0; }
+.volts { margin-left: auto; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.volts.low { color: #fff; background: var(--stop); padding: 1px 10px; border-radius: 999px; font-weight: 600; }
+.view { position: relative; min-height: 180px; background: #0e1116; border-radius: 10px; overflow: hidden; }
+.view .live { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.view .live:not([src]), .view .live.broken { display: none; }
+.nosignal { position: absolute; inset: 0; display: grid; place-items: center; color: #7d8799; font-size: 15px; }
+.view .live[src]:not(.broken) ~ .nosignal { display: none; }
+.view .look { position: absolute; right: 10px; bottom: 10px; width: 30%; max-height: 40%; object-fit: contain;
+              border: 2px solid #fff; border-radius: 6px; background: #0e1116; cursor: zoom-in; }
+.view.swapped .look { inset: 0; width: 100%; height: 100%; max-height: none; border: 0; border-radius: 0; cursor: zoom-out; }
+.camerr { position: absolute; top: 10px; left: 10px; padding: 4px 10px; border-radius: 6px;
+          background: var(--stop); color: #fff; font-size: 14px; font-weight: 600; }
+.camerr:empty { display: none; }
+.doing { font-size: clamp(22px, 2.4vw, 34px); font-weight: 650; margin: 2px 0 0; line-height: 1.2; }
+.doing.bad { color: var(--stop); }
+.news { margin: 0; min-height: 1.4em; font-size: 18px; color: var(--accent); }
+.news.bad { color: var(--warn); }
+.counts { margin: 0; min-height: 1.4em; color: var(--muted); font-size: 16px; font-variant-numeric: tabular-nums; }
+.buttons { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 4px; }
+.buttons button, .teach button { height: 56px; font-size: 18px; font-weight: 600; }
+.teach.none { visibility: hidden; }   /* the X3 learns no names: its row kept, the columns level */
+.teach { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(3, minmax(0, 1fr)); gap: 8px; }
+.teach input { height: 56px; font-size: 17px; }
+.detail { margin: 0; min-height: 1.3em; color: var(--muted); font: 13px/1.4 ui-monospace, Consolas, monospace;
+          white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detail.bad { color: var(--stop); }
+
+/* voice, along the bottom */
+.voicebar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 16px;
+            background: var(--panel); border-top: 1px solid var(--line); font-size: 18px; }
+.voicebar .label { color: var(--muted); }
+.voicebar .arrow { color: var(--muted); }
+.voicebar .done { color: var(--accent); font-weight: 600; }
+.voicebar .done.err { color: var(--stop); }
+.voicebar .state { font-size: 13px; color: var(--muted); }
+.voicebar .state:not(.err) { display: none; }
+.voicebar .state.err { color: var(--stop); }
+.voicebar .typed input { width: 24em; max-width: 60vw; font-size: 15px; }
+.voicebar .keys { color: var(--muted); font-size: 13px; }
+
+@media (max-width: 900px) {
+  body { height: auto; }
+  .robots { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; }
+  .robot { display: flex; flex-direction: column; grid-row: auto; gap: 6px; }
+  .teach.none { display: none; }
+  .view { aspect-ratio: 4 / 3; }
+}

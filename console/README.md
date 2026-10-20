@@ -56,6 +56,16 @@ is tried as `::1` first, and without it every connection waited 2 s). Not yet: d
 
 `python -m pytest console` runs `test_serve.py` and `test_voice.py`.
 
+## The event page (demo.html)
+
+http://localhost:8099/demo.html (2026-10-20, for the event out of the lab on 2026-10-22): each arm
+in `robots.json` side by side -- its camera live with the last look inset, what it is doing in one
+sentence ("Beriem 30 mm kocku", from the job's step and its log), news under it ("Zobral som ... za
+13 s", "Stôl je uprataný"), the job's counts; big buttons: Clean up, Look, Home, and on the M3
+Teach / Find / Pick it by name. **H** hides every button (what visitors see), **SK / EN** in the
+bar, Talk (hold V) and STOP as here (Space, Esc). The same /robot/<id>/ JSON; nothing on the
+robots changed. Tried on `--fake` and on both robots: a clean-up each, 8 picked, 0 missed.
+
 ## Voice
 
 Hold **Talk** in the bar, or hold **V**, say a command, let go. Speech recognition runs on this

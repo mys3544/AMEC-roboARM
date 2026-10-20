@@ -71,7 +71,7 @@
 
   function tick() {
     button.style.setProperty('--level', Math.min(1, peak * 3).toFixed(2));
-    button.textContent = `listening ${((performance.now() - held) / 1000).toFixed(1)} s`;
+    button.textContent = `${button.dataset.listening || 'listening'} ${((performance.now() - held) / 1000).toFixed(1)} s`;
     peak = 0;
   }
 
@@ -79,7 +79,7 @@
     if (held !== null) return;
     held = performance.now();
     button.classList.add('on');
-    button.textContent = 'listening';
+    button.textContent = button.dataset.listening || 'listening';
     if (!mic) {
       try {
         mic = await openMic();
@@ -99,7 +99,7 @@
     ticker = null;
     button.classList.remove('on');
     button.style.removeProperty('--level');
-    button.textContent = 'Talk (hold V)';
+    button.textContent = button.dataset.idle || 'Talk (hold V)';   // the words: the page's (demo.html's in its language)
   }
 
   async function finish() {

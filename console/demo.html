@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="sk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RoboARM</title>
+<link rel="stylesheet" href="demo.css">
+</head>
+<body>
+<header class="bar">
+  <h1>RoboARM</h1>
+  <span id="pills" class="pills"></span>
+  <span class="spacer"></span>
+  <button id="visitor" class="quiet" title="H"></button>
+  <button id="lang" class="quiet" title="SK / EN"></button>
+  <button id="talk" class="talk"></button>
+  <button id="stopall" class="stopall" title="Space / Esc">STOP</button>
+</header>
+<main id="robots" class="robots"></main>
+<footer id="voice" class="voicebar">
+  <span class="said"><span class="label" data-t="heard"></span> <span class="heard">&ndash;</span></span>
+  <span class="arrow" aria-hidden="true">&rarr;</span>
+  <span class="done">&ndash;</span>
+  <span class="state"></span>
+  <span class="command" hidden></span><span class="timing" hidden></span>
+  <span class="spacer"></span>
+  <form class="typed operator">
+    <input type="text" data-t-placeholder="typed" aria-label="command">
+  </form>
+  <span class="keys operator" data-t="keys"></span>
+</footer>
+
+<template id="robot">
+  <article class="robot">
+    <header class="head">
+      <span class="swatch"></span>
+      <h2 class="name"></h2>
+      <span class="volts"></span>
+    </header>
+    <div class="view">
+      <img class="live" alt="">
+      <img class="look" alt="" hidden>
+      <span class="nosignal"></span>
+      <span class="camerr"></span>
+    </div>
+    <p class="doing"></p>
+    <p class="news"></p>
+    <p class="counts"></p>
+    <div class="buttons operator">
+      <button class="cleanup" data-t="cleanup"></button>
+      <button class="lookover" data-t="look"></button>
+      <button class="home" data-t="home"></button>
+    </div>
+    <div class="teach operator">
+      <input class="thing" type="text" autocomplete="off" data-t-placeholder="thing" aria-label="name">
+      <button class="teach-it" data-t="teach"></button>
+      <button class="find" data-t="find"></button>
+      <button class="pick-named" data-t="pickNamed"></button>
+    </div>
+    <p class="detail operator"></p>
+  </article>
+</template>
+
+<script src="demo.js"></script>
+<script src="voice.js"></script>
+</body>
+</html>
