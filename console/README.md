@@ -10,6 +10,12 @@ a STOP on each and STOP ALL always on screen (Space or Esc too). Plan v2.3, M1, 
 
 then open http://localhost:8099/ (`.claude/launch.json` has both as `console-fake` and `console`).
 
+**Where the robots are** (`locate.py`, since 2026-10-20): as it starts, serve.py finds each robot by
+its name (`m3pro.local`, `x3plus.local`: mDNS), else at its `robots.json` address, and with `--scan`
+by looking round this laptop's networks for the bridges' port 8761 (only on our router or hotspot);
+the page gets the addresses found. `python console/locate.py [--scan]` says where each robot is.
+The event page for visitors is http://localhost:8099/demo.html (below).
+
 - **The robots** are listed in `robots.json`: the X3's panel, on the robot since 2026-10-06
   (`docker compose --profile web up -d web` in `~/roboarm`, port 8080; the laptop copy,
   launch config `webapp-robot`, still works against the bridge instead), its arm card on the

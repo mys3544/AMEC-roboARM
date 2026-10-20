@@ -27,6 +27,7 @@ the fuse's own process).
 """
 
 import argparse
+import contextlib
 import io
 import json
 import os
@@ -44,6 +45,7 @@ import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import llm
+import locate
 import voice
 
 HERE =pathlib.Path(__file__).resolve().parent
@@ -233,6 +235,12 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None, splats=None
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0))   # drained, too
             if self.path == "/api/voice":   # a WAV (or typed text) -> what was said, the command
                 code, reply = voice.answer(recognizer, body, self.headers.get("Content-Type", ""), brain)
+                if "intent" in reply:   # each command in the console's own output: what was heard, what it made of it
+                    times = [f"{reply['llm_ms']} ms" if "llm_ms" in reply else "",
+                             f"heard in {reply['asr_ms']} ms" if "asr_ms" in reply else ""]
+                    with contextlib.suppress(OSError, UnicodeError):   # a note, never the command's end
+                        print(f"voice: {reply['text']!r} -> {json.dumps(reply['intent'], ensure_ascii=False)} "
+                              f"({' '.join([reply['by'], *filter(None, times)])})", flush=True)
                 return self.send(code, json.dumps(reply).encode(), TYPES[".json"])
             if self.path == "/api/scan":   # {"robot": id}: fetch its newest scan and fuse it
                 try:
@@ -295,10 +303,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--fake", action="store_true", help="pretend robots, no hardware")
     parser.add_argument("--port", type=int, default=PORT, help=f"(default {PORT}) another, for a second console beside one open")
+    parser.add_argument("--scan", action="store_true",
+                        help="a robot not found by its name or robots.json address: look round this laptop's networks")
     parser.add_argument("--llm", default=llm.DEFAULT, choices=[*llm.MODELS, "off"],
                         help=f"the language model voice commands go to (default {llm.DEFAULT}; off: the grammar only)")
     args = parser.parse_args()
+    for stream in (sys.stdout, sys.stderr):   # 2026-10-20: "roztrieď" printed to a cp1252 pipe failed the request
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     robots = json.loads((HERE / ("robots.fake.json" if args.fake else "robots.json")).read_text())
+    if not args.fake:   # the robots where they are on this network (locate.py): by name, robots.json, a scan
+        robots = locate.locate(robots, scan_too=args.scan)
     # not waited for: the page asks each robot every 0.5 s until it answers
     procs = [subprocess.Popen(cmd, cwd=ROOT) for cmd in FAKES] if args.fake else []
     brain = None if args.llm == "off" else llm.Brain(args.llm, names=taught(robots))

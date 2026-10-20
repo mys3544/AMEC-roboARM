@@ -11,7 +11,8 @@ as a copy of the X3 Plus software (below); the X3 Plus's own copy lives in `../x
   Ubuntu 22.04.5, L4T R36.4.4 (JetPack 6), GNOME 42 on X11, `jetson` logs in automatically.
 - **Network:** IISLab-AMEC at 192.168.73.66 (DHCP; the same address over two reboots so
   far), with internet. `ssh jetson@192.168.73.66` with the factory password; sudo asks for it.
-- **Hostname** `yahboom`, the same as the X3 Plus: use the address, not `yahboom.local`.
+- **Hostname** `m3pro` since 2026-10-20 (the X3 Plus `x3plus`; both were `yahboom`): `m3pro.local`
+  resolves by mDNS on any network the laptop shares with it (avahi; Windows resolves `.local`).
 - **Its own software runs in the desktop session.** `~/.config/autostart` starts the micro-ROS
   agent on `/dev/myserial` at 2 Mbaud (the base controller; the X3 Plus talks to its board
   through Rosmaster_Lib on `/dev/ttyUSB0` instead), the joystick controller

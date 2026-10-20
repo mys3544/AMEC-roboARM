@@ -218,6 +218,14 @@ def test_the_console_hears_a_wav_and_answers_with_the_command():
     assert post(f"{base}/api/nothing", b"{}", "application/json")[0] == 404
 
 
+def test_a_slovak_command_is_answered_whatever_the_output_can_print(monkeypatch):
+    """2026-10-20: the console printed each command; "roztrieď" on a cp1252 pipe failed the request."""
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(io.BytesIO(), encoding="cp1252"))
+    port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler([], recognizer=Pretend())))
+    status, reply = post(f"http://127.0.0.1:{port}/api/voice", "uprac stôl, ďakujem".encode(), "text/plain; charset=utf-8")
+    assert status == 200 and reply["intent"]["action"] == "clean_up"
+
+
 def test_without_a_model_the_console_says_how_to_get_one_and_goes_on():
     port = start(ThreadingHTTPServer(("127.0.0.1", 0), serve.make_handler([], recognizer=Missing())))
     base = f"http://127.0.0.1:{port}"
