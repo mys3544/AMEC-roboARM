@@ -43,6 +43,7 @@ import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import llm
 import voice
 
 HERE =pathlib.Path(__file__).resolve().parent
@@ -178,7 +179,7 @@ class Splats:
             self.set(state="failed", message=str(e) or type(e).__name__)
 
 
-def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None, splats=None):
+def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None, splats=None, brain=None):
     urls = {r["id"]: r["url"].rstrip("/") for r in robots}
     recognizer = recognizer or voice.Recognizer()   # loads nothing until the page asks
     scans = scans or Scans()
@@ -214,7 +215,8 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None, splats=None
             if path == "/api/splat":   # the newest scan's Gaussian splat, on hekate: how far
                 return self.send(200, json.dumps(splats.status()).encode(), TYPES[".json"])
             if path == "/api/voice":   # ready, loading, or why not; starts the model's load
-                return self.send(200, json.dumps(recognizer.status()).encode(), TYPES[".json"])
+                status = recognizer.status() | {"llm": brain.status() if brain else None}
+                return self.send(200, json.dumps(status).encode(), TYPES[".json"])
             if path.startswith("/clouds/"):
                 return self.file(clouds, urllib.parse.unquote(path[len("/clouds/"):]), CLOUD_TYPES)
             self.file(HERE, "index.html" if path == "/" else path.lstrip("/"), TYPES)
@@ -230,7 +232,7 @@ def make_handler(robots, clouds=CLOUDS, recognizer=None, scans=None, splats=None
                 return self.proxy("POST")
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0))   # drained, too
             if self.path == "/api/voice":   # a WAV (or typed text) -> what was said, the command
-                code, reply = voice.answer(recognizer, body, self.headers.get("Content-Type", ""))
+                code, reply = voice.answer(recognizer, body, self.headers.get("Content-Type", ""), brain)
                 return self.send(code, json.dumps(reply).encode(), TYPES[".json"])
             if self.path == "/api/scan":   # {"robot": id}: fetch its newest scan and fuse it
                 try:
@@ -293,11 +295,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--fake", action="store_true", help="pretend robots, no hardware")
     parser.add_argument("--port", type=int, default=PORT, help=f"(default {PORT}) another, for a second console beside one open")
+    parser.add_argument("--llm", default=llm.DEFAULT, choices=[*llm.MODELS, "off"],
+                        help=f"the language model voice commands go to (default {llm.DEFAULT}; off: the grammar only)")
     args = parser.parse_args()
     robots = json.loads((HERE / ("robots.fake.json" if args.fake else "robots.json")).read_text())
     # not waited for: the page asks each robot every 0.5 s until it answers
     procs = [subprocess.Popen(cmd, cwd=ROOT) for cmd in FAKES] if args.fake else []
-    handler = make_handler(robots)
+    brain = None if args.llm == "off" else llm.Brain(args.llm, names=taught(robots))
+    if brain is not None:
+        brain.start()   # loads in seconds, on the GPU; without its files the grammar does it all
+        brain.warm()    # its first answer is slow: taken now, not on the first command
+        why = brain.missing()
+        print(f"voice commands: {args.llm}" if not why else f"voice commands: the grammar ({why[0]})", flush=True)
+    handler = make_handler(robots, brain=brain)
     server = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     try:   # "localhost" is tried as ::1 first on Windows; without this each connection waits
         server6 = Server6(("::1", args.port), handler)
@@ -312,6 +322,26 @@ def main():
     finally:
         for proc in procs:
             proc.terminate()
+        if brain is not None:
+            brain.stop()
+
+
+def taught(robots, keep_s=20):
+    """What the M3 was taught to pick by name (its bridge's GET /pick/taught), for the language
+    model: asked at most every `keep_s`, an empty list while it does not answer."""
+    url = next((r["url"].rstrip("/") for r in robots if r["kind"] == "m3arm"), None)
+    kept = {"t": 0.0, "names": []}
+
+    def names():
+        if url and time.time() - kept["t"] > keep_s:
+            kept["t"] = time.time()
+            try:
+                with urllib.request.urlopen(f"{url}/pick/taught", timeout=1) as reply:
+                    kept["names"] = json.loads(reply.read()).get("names", [])
+            except (OSError, ValueError):
+                pass   # offline: the names known last
+        return kept["names"]
+    return names
 
 
 if __name__ == "__main__":

@@ -164,7 +164,8 @@
     const doing = act ? (async () => act(command))() : null;   // called now; a throw is a rejection
     const ms = Math.round(performance.now() - since);
     const timing = `${ms} ms from ${data.asr_ms === undefined ? 'Enter' : 'letting go'} to the command` +
-      (data.asr_ms === undefined ? '' : ` (${data.audio_s} s of speech, heard in ${data.asr_ms} ms)`);
+      (data.asr_ms === undefined ? '' : ` (${data.audio_s} s of speech, heard in ${data.asr_ms} ms)`) +
+      (data.by === 'llm' ? `, understood by the language model in ${data.llm_ms} ms` : ', by the grammar');
     const heard = data.text ? `"${data.text}"` : '(nothing heard)';
     show({ heard, command: JSON.stringify(command), done: '...', timing });
     let done, error = false;

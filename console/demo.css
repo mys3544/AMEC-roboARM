@@ -88,7 +88,7 @@ body.visitor .operator { display: none !important; }
 .voicebar .state:not(.err) { display: none; }
 .voicebar .state.err { color: var(--stop); }
 .voicebar .typed input { width: 24em; max-width: 60vw; font-size: 15px; }
-.voicebar .keys { color: var(--muted); font-size: 13px; }
+.voicebar .keys, .voicebar .timing { color: var(--muted); font-size: 13px; }
 
 @media (max-width: 900px) {
   body { height: auto; }

@@ -1,5 +1,6 @@
 """Voice commands for the console: what was said (speech recognition on this laptop, no cloud),
-and the command in it (a small grammar, no language model: that comes later, on a lab server).
+and the command in it: a small language model on this laptop's GPU when it runs (llm.py, since
+2026-10-20), a small grammar otherwise -- and a stop always by the grammar, at once.
 
     python console/voice.py fetch                  # the speech model, once (487 MB, GitHub)
     python console/voice.py parse pick up the red cube    # the command in a sentence
@@ -11,9 +12,11 @@ answers POST /api/voice:
 
     Content-Type: audio/wav    a WAV, 16-bit PCM mono, any rate (the page sends the
                                microphone's own; sherpa-onnx resamples to 16 kHz)
-                               -> {"text", "intent", "audio_s", "asr_ms"}
-    Content-Type: text/plain   a typed command: the grammar only, no recogniser needed
-                               -> {"text", "intent"}
+                               -> {"text", "intent", "audio_s", "asr_ms", "by", ["llm_ms"]}
+    Content-Type: text/plain   a typed command: no recogniser needed
+                               -> {"text", "intent", "by", ["llm_ms"]}
+
+"by" says what found the command: "llm" (llm_ms: how long it took) or "grammar".
 
 Without sherpa-onnx or the model, a WAV is answered 503 with how to get them; nothing else in the
 console needs either. Standard library, and sherpa-onnx when it is there.
@@ -270,11 +273,26 @@ def read_wav(data):
     return [s / 32768 for s in array.array("h", frames)], rate
 
 
-def answer(recognizer, body, content_type):
-    """POST /api/voice -> (HTTP status, reply): a WAV is heard, then parsed; text is parsed."""
+def understand(text, brain=None):
+    """(the command in `text`, how it was found): a stop by the grammar, at once, whatever else was
+    said; the rest by the language model (llm.Brain) when there is one and it answers in time, else
+    by the grammar."""
+    said = parse(text)
+    if said["action"] == "stop" or brain is None or not text:
+        return said, {"by": "grammar"}
+    try:
+        command, ms = brain.ask(text)
+    except Exception as e:   # noqa: BLE001 -- not running, too slow, garbled: the grammar's then
+        return said, {"by": "grammar", "llm_error": str(e)}
+    return command, {"by": "llm", "llm_ms": ms}
+
+
+def answer(recognizer, body, content_type, brain=None):
+    """POST /api/voice -> (HTTP status, reply): a WAV is heard, then understood; text is understood."""
     if content_type.split(";")[0].strip().lower() == "text/plain":
         text = body.decode("utf-8", "replace").strip()
-        return 200, {"text": text, "intent": parse(text)}
+        command, how = understand(text, brain)
+        return 200, {"text": text, "intent": command, **how}
     try:
         samples, rate = read_wav(body)
     except ValueError as e:
@@ -284,8 +302,9 @@ def answer(recognizer, body, content_type):
         text = recognizer.text(samples, rate)
     except Unavailable as e:
         return 503, {"error": str(e), "fix": e.fix}
-    return 200, {"text": text, "intent": parse(text), "audio_s": round(len(samples) / rate, 2),
-                 "asr_ms": round((time.perf_counter() - t0) * 1000)}
+    asr_ms = round((time.perf_counter() - t0) * 1000)
+    command, how = understand(text, brain)
+    return 200, {"text": text, "intent": command, "audio_s": round(len(samples) / rate, 2), "asr_ms": asr_ms, **how}
 
 
 # --- from the command line -------------------------------------------------------------------

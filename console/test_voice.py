@@ -207,7 +207,7 @@ def test_the_console_hears_a_wav_and_answers_with_the_command():
     assert post(f"{base}/api/voice", make_wav([0] * 1600), "audio/wav")[1]["intent"] == STOP
     status, reply = post(f"{base}/api/voice", b"X3, clear the table", "text/plain; charset=utf-8")
     assert status == 200 and reply == {"text": "X3, clear the table",
-                                       "intent": {"action": "clean_up", "robot": "x3"}}
+                                       "intent": {"action": "clean_up", "robot": "x3"}, "by": "grammar"}
     assert len(ears.got) == 2   # typed text is not heard, only parsed
     status, reply = post(f"{base}/api/voice", "Stůj!".encode(), "text/plain; charset=utf-8")
     assert reply["intent"] == STOP

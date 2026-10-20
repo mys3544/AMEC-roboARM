@@ -83,8 +83,8 @@ console/pyproject.toml, in the workspace's lock.) `console/models/` is gitignore
 model, the console runs as before, the Voice box says which is missing and the line that fixes
 it, and typed commands still work.
 
-- **The commands** (`voice.py`'s `parse`: a small grammar, no language model; an LLM parser
-  comes later, on a lab server). The M3 unless the X3 is named ("X3", "X three", "Plus").
+- **The commands without the language model** (`voice.py`'s `parse`, a small grammar; with the
+  model, below, it still finds every stop). The M3 unless the X3 is named ("X3", "X three", "Plus").
   - *stop*, *halt*, *freeze*; Slovak *stoj*, Czech *stůj*, both *zastav* -> STOP ALL. It wins
     whenever it is said, whatever else is ("please stop the robot", "don't stop"), and stops
     every robot, whichever was named.
@@ -120,3 +120,32 @@ it, and typed commands still work.
   parse) is 15-20 ms of it. Seven commands spoken by Windows' own voices, all heard and parsed
   right; no real voice yet.
 - `python console/voice.py parse pick up the red cube` prints the command in a sentence.
+
+### The language model (since 2026-10-20)
+
+What was said goes to a small LLM on this laptop's GPU (`llm.py`): llama.cpp's `llama-server`
+(release b11617, Windows, CUDA 12.4) with Qwen3.5 4B (Q4_K_M), on 127.0.0.1:8081. It picks one
+function and fills its arguments as JSON held to a schema (llama.cpp's grammar: only those
+functions and values): *pick* (kind, colour, size), *pick_named* (a thing the M3 was taught, by
+the name it means -- "podaj mi rybu" -> fish; the names come from the M3's `/pick/taught`),
+*clean_up* (only cubes or blocks if said), *sort* (the robots cannot yet), *look*, *find*,
+*home*, *stop*, *unknown*; robot m3, x3 or both. A stop never goes to it: the grammar finds
+it first, at once. Not answered in 6 s, or garbled: the grammar's command. serve.py starts
+the server with the console (`--llm off`, or another model), and asks it once at the start --
+the first answer after a start takes ~15 s (CUDA readies itself), every next ~0.6 s. The reply
+says `"by": "llm"` with `llm_ms`, or `"by": "grammar"`.
+
+Files, outside the repo, in `~/.roboarm/llm` (ROBOARM_LLM moves it): `bin/` both zips of the
+llama.cpp release unpacked (`llama-b11617-bin-win-cuda-12.4-x64.zip`, `cudart-llama-bin-win-cuda-
+12.4-x64.zip`, GitHub ggml-org/llama.cpp), `models/` the GGUFs (unsloth's on Hugging Face).
+`python console/llm.py bench` runs each model there on `llm_cases.json` (45 sentences, Slovak,
+Czech, English, some without accents as the recogniser may write them); 2026-10-20 on the RTX
+2070 Super, the prompt tuned once on the 2B's mistakes (general rules, not the sentences):
+
+| model (Q4_K_M) | right of 45 | median | worst | file |
+|---|---|---|---|---|
+| **Qwen3.5 4B** (default) | **45** | 646 ms | 767 ms | 2.7 GB |
+| Qwen3 4B Instruct 2507 | 44 | 535 ms | 593 ms | 2.5 GB |
+| Gemma 4 E4B | 43 | 1067 ms | 3020 ms | 5.0 GB |
+| Qwen3.5 2B | 42 | 364 ms | 431 ms | 1.3 GB |
+| Gemma 4 E2B | 37 | 541 ms | 678 ms | 3.1 GB |

@@ -42,7 +42,8 @@ const TEXT = {
     pickedN: 'Zobraté {n}', missedN: 'Minuté {n}', perPiece: '{s} s na kúsok', inView: 'Na stole vidím {n}',
     busy: 'Robot práve pracuje', needName: 'Najprv napíš názov veci', refused: 'Nešlo to: {why}',
     allStopped: 'Všetko zastavené', noRobot: '{name} nie je pripojený', anyColour: 'farbu zatiaľ nerozlišujem',
-    pickAny: 'Zober kúsok', pickCube: 'Zober kocku', pickBlock: 'Zober kváder',
+    pickAny: 'Zober kúsok', pickCube: 'Zober kocku', pickBlock: 'Zober kváder', pickThing: 'Zober: {name}',
+    cleanupCubes: 'Uprac kocky', cleanupBlocks: 'Uprac kvádre', sortLater: 'Triediť roboty zatiaľ nevedia',
     cube: '{n} mm kocku', blockLying: 'ležiaci kváder', blockStanding: 'stojaci kváder',
   },
   en: {
@@ -69,7 +70,8 @@ const TEXT = {
     pickedN: 'Picked {n}', missedN: 'Missed {n}', perPiece: '{s} s a piece', inView: '{n} on the table',
     busy: 'Busy with another job', needName: "Type the thing's name first", refused: 'Not done: {why}',
     allStopped: 'Everything stopped', noRobot: '{name} is not connected', anyColour: 'colours not told apart yet',
-    pickAny: 'Pick one', pickCube: 'Pick a cube', pickBlock: 'Pick a block',
+    pickAny: 'Pick one', pickCube: 'Pick a cube', pickBlock: 'Pick a block', pickThing: 'Pick: {name}',
+    cleanupCubes: 'Clean up the cubes', cleanupBlocks: 'Clean up the blocks', sortLater: 'The robots cannot sort yet',
     cube: 'the {n} mm cube', blockLying: 'the lying block', blockStanding: 'the standing block',
   },
 };
@@ -377,18 +379,25 @@ async function main() {
   }
   $('#stopall').onclick = stopAll;
 
-  // What a voice command may do (voice.js calls these with the command voice.py heard): each answers
-  // with what was done, or throws why not.
-  async function job(command) {
-    const id = command.robot === 'x3' ? 'x3arm' : 'm3arm';
-    const arm = arms.find(a => a.kind === id);
-    if (!arm || arm.up === false) throw new Error(t('noRobot', { name: id === 'x3arm' ? 'X3 Plus' : 'M3 Pro' }));
-    const pickWhat = { cube: 'pickCube', block: 'pickBlock' }[command.kind] ?? 'pickAny';
-    const [path, body, what] = {
-      pick: ['pick/start', { kind: command.kind ?? null, colour: command.colour, size_mm: command.size_mm }, t(pickWhat)],
-      clean_up: ['pick/cleanup', {}, t('cleanup')],
-      home: ['pick/home', {}, t('home')],
-    }[command.action];
+  // What a voice command may do (voice.js calls these with the command voice.py found -- by the
+  // language model, llm.py, or the grammar): each answers with what was done, or throws why not.
+  function route(c) {   // [path, body, what it is called]
+    const cleanup = { cube: 'cleanupCubes', block: 'cleanupBlocks' }[c.kind] ?? 'cleanup';
+    return {
+      pick: () => ['pick/start', { kind: c.kind ?? null, colour: c.colour, size_mm: c.size_mm },
+        t({ cube: 'pickCube', block: 'pickBlock' }[c.kind] ?? 'pickAny')],
+      clean_up: () => ['pick/cleanup', { kind: c.kind ?? null }, t(cleanup)],
+      home: () => ['pick/home', {}, t('home')],
+      look: () => ['pick/look', {}, t('look')],
+      find: () => ['pick/find', {}, t('find')],
+      pick_named: () => ['pick/named', { name: c.name }, t('pickThing', { name: c.name })],
+      sort: () => { throw new Error(t('sortLater')); },   // a job the robots do not have yet
+    }[c.action]();
+  }
+  async function one(kind, command) {
+    const arm = arms.find(a => a.kind === kind);
+    if (!arm || arm.up === false) throw new Error(t('noRobot', { name: kind === 'x3arm' ? 'X3 Plus' : 'M3 Pro' }));
+    const [path, body, what] = route(command);
     try {
       await call(arm, path, body);
     } catch (e) {
@@ -397,11 +406,16 @@ async function main() {
     const colour = command.action === 'pick' && (command.colour || command.size_mm);
     return `${arm.label()}: ${what}${colour ? ` (${t('anyColour')})` : ''}`;
   }
+  async function job(command) {   // on the robot named, or on both
+    const kinds = command.robot === 'both' ? ['m3arm', 'x3arm'] : [command.robot === 'x3' ? 'x3arm' : 'm3arm'];
+    const done = await Promise.allSettled(kinds.map(kind => one(kind, command)));
+    const said = done.map(d => d.status === 'fulfilled' ? d.value : d.reason.message).join(' · ');
+    if (done.every(d => d.status === 'rejected')) throw new Error(said);
+    return said;
+  }
   window.consoleActions = {
     stop: async () => { await stopAll(); return t('allStopped'); },
-    pick: job,
-    clean_up: job,
-    home: job,
+    ...Object.fromEntries(['pick', 'clean_up', 'home', 'look', 'find', 'pick_named', 'sort'].map(a => [a, job])),
   };
 
   addEventListener('keydown', e => {

@@ -788,28 +788,38 @@ async function main() {
       clean_up: () => ['api/auto/oneclick', { detector: 'auto', job: 'pickall' }, 'Clear the table started'],
       home: () => ['api/arm/preset', { name: 'home' }, 'Home done'],
     },
-    m3arm: {
+    m3arm: {   // the language model's commands too (llm.py): look, find, pick by name, only cubes or blocks
       pick: c => ['pick/start', { kind: c.kind, colour: c.colour, size_mm: c.size_mm }, 'pick started'],
-      clean_up: () => ['pick/cleanup', {}, 'clean up started'],
+      clean_up: c => ['pick/cleanup', { kind: c.kind ?? null }, `clean up${c.kind ? ` (${c.kind}s only)` : ''} started`],
       home: () => ['pick/home', {}, 'home'],
+      look: () => ['pick/look', {}, 'look started'],
+      find: () => ['pick/find', {}, 'find started'],
+      pick_named: c => ['pick/named', { name: c.name }, `pick '${c.name}' started`],
     },
   };
   JOBS.x3arm = JOBS.m3arm;
-  async function job(command) {
-    const arm = command.robot === 'x3' ? 'x3arm' : 'm3arm';
-    const kind = command.robot === 'x3' && !robots.some(r => r.id === arm) ? 'x3' : arm;
+  async function one(arm, command) {
+    const kind = arm === 'x3arm' && !robots.some(r => r.id === arm) ? 'x3' : arm;
     const robot = robots.find(r => r.id === kind);
     if (!robot) throw new Error(kind === 'x3' ? 'no X3 in robots.json' : 'M3 arm not connected');
-    const [path, body, done] = JOBS[kind][command.action](command);
+    const route = JOBS[kind][command.action];
+    if (!route) throw new Error(`${robot.name}: no ${command.action.replace('_', ' ')} here`);
+    const [path, body, done] = route(command);
     await call(robot, path, body);
-    const asked = kind !== 'm3arm' && [command.colour, command.size_mm && `${command.size_mm} mm`].filter(Boolean);
+    const asked = command.action === 'pick' && [command.colour, command.size_mm && `${command.size_mm} mm`].filter(Boolean);
     return `${robot.name}: ${done}${asked?.length ? ` (it takes what it finds first, not "${asked.join(' ')}")` : ''}`;
+  }
+  async function job(command) {   // on the robot named (the M3 unless the X3), or on both
+    if (command.action === 'sort') throw new Error('the robots cannot sort yet');
+    const arms = command.robot === 'both' ? ['m3arm', 'x3arm'] : [command.robot === 'x3' ? 'x3arm' : 'm3arm'];
+    const done = await Promise.allSettled(arms.map(arm => one(arm, command)));
+    const said = done.map(d => d.status === 'fulfilled' ? d.value : d.reason.message).join('; ');
+    if (done.every(d => d.status === 'rejected')) throw new Error(said);
+    return said;
   }
   window.consoleActions = {
     stop: async () => { await stopAll(); return 'STOP ALL (the log has the times)'; },
-    pick: job,
-    clean_up: job,
-    home: job,
+    ...Object.fromEntries(['pick', 'clean_up', 'home', 'look', 'find', 'pick_named', 'sort'].map(a => [a, job])),
   };
 
   const m3 = () => cards.find(c => c instanceof M3Card);
