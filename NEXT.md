@@ -88,6 +88,8 @@ PLAN.md's track D (a picker that teaches a VLA, RESEARCH.md P1), with the teache
 There the expert knows every piece's true pose, so it needs no detector or depth: perfect demos,
 automatic resets, thousands of episodes a night, and DAgger for free (from any state the student
 reaches, the expert's next move). **The M3 first** (Yahboom's URDF matches it), **the X3 too**, after.
+**Where:** Dionysos (Isaac Sim 5.0, A4500 20 GB), the laptop's GPU and, from Monday, hekate again (back
+Friday evening 2026-10-23: its 5090 and Isaac Sim 6.0).
 
 - [ ] **The M3's arm in Isaac Sim** (~1 week): Yahboom's URDF (yahboom_M3Pro_description/urdf/
       M3Pro.urdf, which m3pro/roboarm/m3kinematics.py follows, with the hand-eye calibration's
@@ -100,8 +102,7 @@ reaches, the expert's next move). **The M3 first** (Yahboom's URDF matches it), 
       true poses instead of the depth's; for DAgger, its next action from any state.
 - [ ] **Recorder and resets:** a LeRobotDataset per episode (the wrist image, the joints, the action =
       joint targets at 10-30 Hz, the instruction -- "zober modrú kocku" and in English); the pieces
-      scattered anew after each; 1-5k episodes on Dionysos (Isaac Sim 5.0) or hekate (6.0, back that
-      week).
+      scattered anew after each; 1-5k episodes on Dionysos (Isaac Sim 5.0) or hekate (6.0).
 - [ ] **Train and judge in the simulator:** SmolVLA or X-VLA through LeRobot (SmolVLA fits Dionysos's
       A4500 20 GB; pi0.5 with LoRA only on the 5090); success rate, unseen scenes, "the blue one", a
       cube moved mid-reach (what detect-then-move cannot do).
@@ -398,12 +399,15 @@ never seen that camera or the board.
       them; picking them needs a grip beyond the kit's sizes (a tape roll is at the ~65 mm limit).
 - [ ] The fusion on the robot (Open3D's aarch64 wheel), so a scan needs no laptop.
 
-## Waiting on others
+## hekate (the 5090)
 
-- **Rene: SSH to hekate over Tailscale.** `tailscale ping` answers, port 22 times out, hekate's
-  firewall allows the Tailscale range -- so shields-up or the tailnet ACL on Rene's side (Tailscale
-  there runs as AMEC-PC). Meanwhile `Host hekate` in `~/.ssh/config` is the lab LAN address
-  192.168.73.87; switch it back to `hekate.tail39f820.ts.net` once fixed.
+- **Out of the lab and offline, back Friday evening (2026-10-23)** (the user). Until then GPU work
+  runs on Dionysos and the laptop's GPU; what needs hekate waits: the splat (`tools/splat_cycle.py`,
+  gsplat is built there -- so the two splat items in 3 and 4 above), pi0.5, Isaac Sim 6.0.
+- [ ] **Monday 2026-10-26, first:** `ssh hekate` and its status script (CLAUDE.md) -- does it answer at
+  its old address, is Isaac Sim's task still there, how much VRAM the other job leaves.
+- **SSH works without Tailscale** (the user, 2026-10-20): `ssh hekate` over the lab LAN; nothing left
+  to wait on from Rene.
 
 ## Carried over from the plan
 
