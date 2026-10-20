@@ -1,8 +1,9 @@
-# Next -- the list (as of 2026-10-19, Monday)
+# Next -- the list (as of 2026-10-20, Tuesday)
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
-The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning:
+The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning
+(Tuesday's done; Wednesday: the open boxes below, in the lab):
 
 - [x] **Tuesday morning: the M3's detectors judged fairly, on looks no model has seen** (2026-10-20).
       2 Clean up rounds (wood up 7 picked, painted up 6), their 40 looks (20 wide, 20 close; 25 with
@@ -20,31 +21,65 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
       and cut by the picture's edge are labelled -- hence ~12 "missed" 30 mm cubes up close for every
       model. Worth cleaning (drop labels on the edge and inside the box) before the next comparison.
 
-- [ ] **A new UI for the app** (the console: console/index.html, console.js, console.css, served by
-      console/serve.py on :8099). Ask first: what is wrong with today's (a card per robot, the 3D
-      view, the timing card), who looks at it at the event (us driving, or visitors watching a
-      screen), one page or a demo mode -- then a sketch before any code.
-- [ ] **Voice commands with an LLM** that picks from predefined functions: sort the pieces (by colour
-      or kind, into the box or to drop spots), pick the named thing, clean up, look, home, stop.
-      Today console/voice.py is Parakeet TDT 0.6B on the laptop's CPU and a small grammar ("no
-      language model: that comes later"). To decide: which LLM and where -- a small local one (the
-      laptop's GPU has CUDA now) or the Claude API with tool use, which the event's network decides
-      (a hotspot may be slow or metered); Slovak and English; the functions over the robots' jobs
-      (/pick/cleanup, /pick/named, /pick/look, home, stop) plus new ones (sort = a clean-up with a
-      kind/colour filter and a drop spot per kind). RESEARCH.md S3 (Parakeet -> small LLM vs
-      speech-native) is the study behind it.
-- [ ] **The robots on a phone hotspot** -- the event is out of the lab: no IISLab-AMEC, no hekate,
-      no Dionysos. What changes:
-      - every robot address: 192.168.73.66 / .210 are written into console/robots.json and ~15
-        tools (`grep -r 192.168.73`) -> one place to set them (an env variable or a
-        robots.local.json), or the hotspot handing the robots fixed addresses;
-      - the robots must join the hotspot (a WiFi profile on each; on 2026-09-21/22 the X3 ran on one
-        as 172.20.78.81 -- the grown reach offset overshot there, offset 0 picked);
-      - nothing on the day may need the internet or the GPU servers: the kit detector, the depth
-        and the DINOv2 teach run on the robots, the voice on the laptop -- an LLM needs the
-        internet or a local model;
-      - test on Wednesday: both robots and the laptop on the hotspot, the console, a clean-up on
-        each, Teach and Find on the M3, /health; note the latency. Charge both batteries.
+- [x] **A new UI: the event page** (2026-10-20, b1a073c): `http://localhost:8099/demo.html` beside
+      the console. Asked first: both audiences (us driving, visitors watching), the laptop's own
+      screen, a new page. Each arm's camera big with the last look inset, what it does in one sentence
+      ("Beriem 30 mm kocku"), news under it ("Zobral som ... za 13 s", "Stôl je uprataný"), the job's
+      counts; big buttons Uprac stôl / Pozri sa / Domov / Roztrieď, on the M3 Nauč sa / Nájdi / Zober;
+      **H** hides every button (the visitors' view), SK / EN, Talk (hold V), STOP (Space, Esc). Tried
+      on --fake and on both robots: a clean-up each, 8 picked, 0 missed.
+- [x] **Voice commands with a local LLM** (2026-10-20, fb7e7e3; the user: local, on the laptop):
+      Parakeet -> Qwen3.5 4B (llama.cpp b11617, CUDA 12.4, the laptop's RTX 2070 Super; files in
+      ~/.roboarm/llm) -> one function as JSON held to a schema: pick, pick_named (the M3's taught
+      names), clean_up (cubes or blocks only), sort, look, find, home, stop, unknown, on the M3, the
+      X3 or both. A stop never waits for it (the grammar, at once); no answer in 6 s: the grammar's.
+      Five models on 45 Slovak, Czech and English sentences: Qwen3.5 4B 45/45 at 0.65 s (console/
+      README.md has the table). serve.py starts and warms it and prints each command ("voice: ...";
+      2026-10-20 "roztrieď" printed to a cp1252 pipe failed the request -- fixed, with a test).
+  - [ ] **Spoken, on the robots** (moved to Wednesday): `serve.py`, demo.html in Chrome, hold V --
+        "M3, choď domov", "X3, pozri sa na stôl", "zober modrú kocku", "Plus, zober kváder", "čo
+        vidíš", "podaj mi rybu", "oba roboty, upracte stôl" and "stoj!" in the middle; the console's
+        "voice:" lines show what Parakeet heard and what the model made of it.
+- [x] **Sorting** (2026-10-20): roboshared.task's `sort` job -- a clean-up whose blocks go onto the
+      line out on the right (J1 180), the cubes into the box; refused, the arm home, without a box or
+      with the box within 4 cm of the line (LINE_CLEAR_M). POST /pick/sort; the event page's
+      Roztrieď, voice "roztrieď" (by colour refused: the robots read no colours). Tests on the
+      pretend robot; on --fake the X3 sim (no box) refuses as it should.
+  - [ ] **Deploy to both robots** (shared/roboshared task.py + serve.py, restart the bridges) and
+        sort once on each with **the box in front** (J1 90-135), not at J1 180 where the line is --
+        the X3's box stood at y -0.24, right on it, on 2026-10-20.
+- **The network at the event** (2026-10-20):
+  - [ ] **Our router** (the user: our router, the phone only if we must): 192.168.73.0/24, gateway
+        .1, DHCP reservations M3 dc:4a:9e:f3:51:b7 -> .66, X3 dc:4a:9e:37:21:35 -> .210 (the
+        laptop's 58:96:1d:d1:57:63); then nothing changes anywhere. A profile for its SSID on both
+        robots (the user types the password; autoconnect-priority 5, below IISLab-AMEC's 10). Try
+        in the lab: a robot `nmcli con up` on it, the laptop on it, the console, back.
+  - [x] Fallback, the user's Android hotspot: profile `hotspot-zabka` ("Zakrič Žabka", WPA-PSK)
+        on both robots, autoconnect, priority 1 (checked). On the phone: WPA2, 2.4 GHz, no auto-off.
+  - [x] **Renamed**: the M3 is `m3pro`, the X3 `x3plus` (both were `yahboom`); the laptop resolves
+        m3pro.local and x3plus.local. Their desktop sessions predate the rename: a new X window may
+        fail until a reboot (the trip reboots them anyway).
+  - [x] **The console finds the robots** (console/locate.py): as serve.py starts, each robot by
+        its name, else at its robots.json address, and with `--scan` round the laptop's networks
+        (only on ours); `python console/locate.py` says where each is. **Try in the lab** (expect
+        "by its name").
+  - [ ] Optional: an Ethernet fallback (a static profile on eno1, e.g. 192.168.50.66 / .210, the
+        laptop 192.168.50.1).
+- [ ] **Thursday's checklist** (draft, to agree on):
+  - Pack: both robots and their chargers; the box (marker 10); the kit (30 and 40 mm cubes, the
+    blocks, the wooden 40 mm cube) and the taught things (fish, apricot, news, cosmetics, the yellow
+    cylinder); the router and its power; the laptop and its charger, a mouse; an Ethernet cable and
+    a small switch; the phone (the hotspot).
+  - On site, in order: the router on -> both robots on (their services start at boot, ~2 min) ->
+    the laptop on the router's WiFi -> `python console/serve.py` (finds the robots, starts the LLM,
+    ~20 s) -> Chrome at http://localhost:8099/demo.html -> Pozri sa on each, then Uprac stôl on each
+    -> H for the visitors' view.
+  - When something fails: a robot not found -> `serve.py --scan`, or the phone's hotspot (the
+    router off: the robots join it within a minute); voice not understood -> the typed line or the
+    buttons; the LLM down -> the grammar answers by itself; the M3's board silent -> power off and
+    on (2026-10-15); a camera stalled -> the bridge restarts its driver, else power off and on.
+  - Batteries: the M3 refuses under 10.5 V (the page warns under 10.8), the X3 under 10.0 (warns
+    under 10.5) -- charge between showings.
 
 ## Next week (from Monday 2026-10-19): the M3's detector and the 40 mm cube
 
