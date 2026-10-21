@@ -1,9 +1,9 @@
-# Next -- the list (as of 2026-10-20, Tuesday)
+# Next -- the list (as of 2026-10-21, Wednesday)
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning
-(Tuesday's done; Wednesday: the open boxes below, in the lab):
+(Tuesday's done; Wednesday's too but the router and the M3's aim check -- the open boxes below):
 
 - [x] **Tuesday morning: the M3's detectors judged fairly, on looks no model has seen** (2026-10-20).
       2 Clean up rounds (wood up 7 picked, painted up 6), their 40 looks (20 wide, 20 close; 25 with
@@ -36,24 +36,79 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
       Five models on 45 Slovak, Czech and English sentences: Qwen3.5 4B 45/45 at 0.65 s (console/
       README.md has the table). serve.py starts and warms it and prints each command ("voice: ...";
       2026-10-20 "roztrieď" printed to a cp1252 pipe failed the request -- fixed, with a test).
-  - [ ] **Spoken, on the robots** (moved to Wednesday): `serve.py`, demo.html in Chrome, hold V --
-        "M3, choď domov", "X3, pozri sa na stôl", "zober modrú kocku", "Plus, zober kváder", "čo
-        vidíš", "podaj mi rybu", "oba roboty, upracte stôl" and "stoj!" in the middle; the console's
-        "voice:" lines show what Parakeet heard and what the model made of it.
+  - [x] **Spoken, on the robots** (2026-10-21, three rounds): English came through clean; Slovak
+        did not -- Parakeet wrote it as Russian in Cyrillic ("Икс три убрать ствол"), Polish-looking
+        ("kotku nie kwadrę") or French/English ("Plus Zober Valence", "um ban ballet"), and the model
+        took misheard cubes for taught things on the wrong robot ("velkou kotku" -> the M3's yellow
+        cylinder). Now: prompt rules (Cyrillic/Polish spellings read as Slovak, a cube or block word
+        never a taught thing, a thing not taught or a sentence unsure is unknown, "valec" alone the
+        cylinder), and llm.SOUNDS_LIKE putting the robots' mangled words back ("valec", "uprac",
+        "stôl") before the model reads them -- told in the prompt instead, the 4B began picking cubes
+        for them. llm_cases.json 45 -> 79 sentences (all today's misheard), Qwen3.5 4B **79/79**,
+        median 644 ms. Round three: no wrong robot moved; 6 of 13 right, the rest nothing (unread).
+        The recogniser has no Slovak switch: at the event, short sentences, English as the fallback.
+        Later: Whisper forced to Slovak, or Parakeet's hotwords (modified beam search).
 - [x] **Sorting** (2026-10-20): roboshared.task's `sort` job -- a clean-up whose blocks go onto the
       line out on the right (J1 180), the cubes into the box; refused, the arm home, without a box or
       with the box within 4 cm of the line (LINE_CLEAR_M). POST /pick/sort; the event page's
       Roztrieď, voice "roztrieď" (by colour refused: the robots read no colours). Tests on the
       pretend robot; on --fake the X3 sim (no box) refuses as it should.
-  - [ ] **Deploy to both robots** (shared/roboshared task.py + serve.py, restart the bridges) and
-        sort once on each with **the box in front** (J1 90-135), not at J1 180 where the line is --
-        the X3's box stood at y -0.24, right on it, on 2026-10-20.
+  - [x] **Deployed to both robots** (2026-10-21; the robots' tests pass, the X3's but 3 of its old
+        retired panel's, test_web, as on the robot before) and the bridges restarted.
+  - [x] **Sorted on the M3** (2026-10-21), the box in front at J1 135. The first try refused, as it
+        should: the box stood at y -0.22, on the line. Then 4 rounds: 3 cubes in, both blocks left (no
+        grip); after the fixes below, 3 + 1 block on the line (2 misses: a cube shoved, a block stood up);
+        the last **5 of 5, 0 missed**: 3 cubes into the box, 2 blocks onto the line, 216-248 mm out.
+  - [x] **The user's three from watching it** (2026-10-21, the M3; tests on the laptop, deployed):
+        - **Drops slipped off the box's edge**: the spots keep 4 cm from its side walls and 4.5 from its
+          front (were 2.5), the lid's side as it was (4.5; the open lid is a ramp in) -- roboshared.box,
+          both robots.
+        - **The wrist turned over at a carry pose (J2 130), before and after each pick**: before, the
+          open fingers swung over the front deck as J5 went 90 -> 270 -- now closed to J6 150, turned
+          where the hand is, opened (m3pick.turn_way); after, with the box at J1 45/135 what is held came
+          over the deck's corner -- now round an arc 20-26 cm up, 17-19 cm out (VIEW_ARCS).
+        - **The floor limit** (fingertips over the table): 8 -> 5 mm (the setting's default and the
+          M3's saved value): the two blocks left had no square grip at 8 or 6, both had one at 5.
+        - **"The blocks are not too close"**: the one by the front-left corner was refused by the front
+          deck's 17.5 cm box across the full width; only the tyre is there (URDF wheels x 0.078,
+          y +-0.098, 4 cm round) -- the front corners keep 1 cm over the tyres now (CHASSIS by y, the
+          user's yes); picked in the last round.
+  - [x] **The M3's floor and line drop, after watching** (2026-10-21, the user's): at 5 mm for every
+        grip the fingers touched the table by small cubes and shoved the robot -> 8 mm first,
+        "fingertips_least_mm" 5 only where nothing plans at 8 (Picker.plan/floors; the log says so);
+        blocks bounced off the table from DROP_UP's 11 cm -> let go with what is held LINE_OVER 2 cm
+        over the table where the arm reaches that low (19-21 cm out), else the lowest of 5/6/8/11 cm.
+        Then 5 of 5 again, no grip needed the 5 mm.
+  - [x] **Sorted on the X3** (2026-10-21) -- after its camera: the first two tries picked 1 of 16, the
+        fingertips landing where aimed (2-3 mm by read-back) and the cube still there. **The wrist
+        camera had moved** (the user's guess): refitted the primary look (calibrate_table.py, the
+        board still taped where it was): the view had shifted ~3 cm towards the robot. The user then
+        set the camera to a place they can find again and it was fitted once more: 28 corners, 3.5 mm
+        worst, within 4-10 mm of the 2026-09-24 fit; verify: the fingertip 7 mm short and 7 mm right of
+        the corner (by eye). The old fits are kept on the robot (data/cameras/c930e/backup/). The taught
+        aim (2026-10-15's 9 grips, through the old camera) made it worse there (-5 mm out, +3 left), so
+        **the X3 aims by the camera alone now, 7 mm further out** (its saved settings: taught_aim 0,
+        reach_offset_mm 7; the code's defaults unchanged). Then **4 of 4, 0 missed**: 3 cubes into
+        the box, a block onto the line (263 mm out). Its box read 12 cm out and 25 cm right at first
+        (refused: on the line) -- moved straighter in front, found at J1 135.
+  - [ ] **The X3's first tries 1 cm short** (the user, watching, at 7 mm): its reach offset set to
+        17 mm -- check with a clean-up, the user watching.
+  - [ ] **The M3's aim "a little off"** (the user: gets the job done; today, at the end): which way and
+        how much, then the console's trims (trim_out_mm / trim_left_mm) or more taught grips (m3_teach).
+  - [ ] The X3, later: re-teach its grips (tools/x3_teach.py) with the camera where it is now, and
+        refit the lens on the arm (lens_on_arm.json, camera_model.py handeye -- its capture still
+        drives the old panel's /api/arm/move) -- the box look uses it.
 - **The network at the event** (2026-10-20):
-  - [ ] **Our router** (the user: our router, the phone only if we must): 192.168.73.0/24, gateway
-        .1, DHCP reservations M3 dc:4a:9e:f3:51:b7 -> .66, X3 dc:4a:9e:37:21:35 -> .210 (the
-        laptop's 58:96:1d:d1:57:63); then nothing changes anywhere. A profile for its SSID on both
-        robots (the user types the password; autoconnect-priority 5, below IISLab-AMEC's 10). Try
-        in the lab: a robot `nmcli con up` on it, the laptop on it, the console, back.
+  - [ ] **Our router** (the user: our router, the phone only if we must). 2026-10-21 the user was
+        unsure about changing the router's settings -- **none need to change**: the DHCP reservations
+        (M3 dc:4a:9e:f3:51:b7 -> .66, X3 dc:4a:9e:37:21:35 -> .210) only kept the lab addresses, and
+        the console finds the robots by name now (below), whatever addresses the router hands out.
+        What is left is on the robots: a profile for its SSID on both (the user types the password;
+        autoconnect-priority 5, below IISLab-AMEC's 10). Try in the lab: a robot `nmcli con up` on
+        it, the laptop on it, the console, back. Ready to paste on each robot (`ssh jetson@m3pro.local`,
+        `ssh jetson@x3plus.local` first -- PowerShell eats quotes in a one-line remote command; the
+        WiFi is wlP1p1s0 on both; the M3's sudo asks its password, the X3's does not), the SSID put in:
+        `read -rsp "router password: " P; echo; sudo nmcli connection add type wifi con-name event-router ifname wlP1p1s0 ssid "SSID" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$P" connection.autoconnect yes connection.autoconnect-priority 5; unset P`
   - [x] Fallback, the user's Android hotspot: profile `hotspot-zabka` ("Zakrič Žabka", WPA-PSK)
         on both robots, autoconnect, priority 1 (checked). On the phone: WPA2, 2.4 GHz, no auto-off.
   - [x] **Renamed**: the M3 is `m3pro`, the X3 `x3plus` (both were `yahboom`); the laptop resolves
@@ -61,19 +116,71 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
         fail until a reboot (the trip reboots them anyway).
   - [x] **The console finds the robots** (console/locate.py): as serve.py starts, each robot by
         its name, else at its robots.json address, and with `--scan` round the laptop's networks
-        (only on ours); `python console/locate.py` says where each is. **Try in the lab** (expect
-        "by its name").
-  - [ ] Optional: an Ethernet fallback (a static profile on eno1, e.g. 192.168.50.66 / .210, the
-        laptop 192.168.50.1).
-- [ ] **Thursday's checklist** (draft, to agree on):
+        (only on ours); `python console/locate.py` says where each is. **Tried in the lab**
+        (2026-10-21): both by name, lookups 0.0-0.2 s -- but serve.py's very first lookup of the X3
+        missed once (its robots.json address took over), so the name is now tried twice, 4 s each.
+  - Skipped (the user, 2026-10-21): an Ethernet fallback (static profiles on eno1).
+- [ ] **The fetch, a demo for Thursday** (the user, 2026-10-21 at lunch: "the robot moves towards the
+      cube, picks it up, comes back with it and drops it into the box"). Built that day from what the
+      M3 had (a pick may drive up to what is out of reach, and drives back before the drop); the event
+      page sent every pick without driving. Now: the M3's **Prines** button (its teach row: with a
+      name typed, that taught thing; empty, the nearest cube or block) and voice **fetch** ("M3,
+      prines kocku", "prines rybu", "fetch the red cube"; the grammar knows fetch/bring/prines/dones;
+      always the M3, the X3 does not drive). m3teach.pick_named takes `drive`, POST /pick/named
+      {"drive": true}. In the pretend world: a cube 42 cm out -> 10 + 10 cm forward, picked, 20 cm
+      back, into the box at the front-left (test_m3pick). The bench 87 sentences, 84 right, the 3
+      misses safe (a pick where a fetch was meant: no driving). Deployed; **not tried on the robot**.
+  - [x] **On the real M3** (2026-10-21, five tries): **it works** -- the last: the box found at J1 180
+        (x 0.039 y -0.249), 10 cm forward, the 30 mm cube picked (close look 2.2 mm off), 10 cm back,
+        dropped into the box; 24 s. The two before drove 18 cm + 9 cm left and 10 + 6 cm, picked and
+        came back (28-31 s) but found no box: it stood ~20 cm in front of the robot's middle, the
+        marker cut by the box look's top edge (the user measured "ahead" from the bumper, 12 cm
+        further). One before that picked a block in reach on the right instead: **a pick takes what
+        is in reach first** -- only the far piece on the table. **The setup that works:** the box
+        beside the robot, level with its front wheels, ~25 cm right of its middle, marker to the arm;
+        the lane clear; the cube 35-45 cm ahead.
+  - [ ] Later, if wanted: Prines goes for the nearest piece out of reach even with others in reach
+        (and a named fetch takes only that thing: Task.pick tries every piece in reach, nearest `at`
+        first); a second box look tilted out for a box further forward.
+  - [x] First try (2026-10-21): no drive -- the table's
+        clutter by the bumper (a cable grommet, a phone) was in the lane, and the box at the
+        front-left was never seen (**the M3's left looks see its own deck**). So: the box **on the
+        right, beside the robot** (~10 cm ahead, **its centre >= 24 cm right** of the robot's middle,
+        marker to the arm: J1 160-180); since then the drive also keeps its footprint DRIVE_GAP 3 cm
+        from the box (Picker.approach: its black walls give the depth nothing); **a clear lane** the
+        robot's width + 3 cm each side from the bumper past the cube; one cube **35-45 cm** ahead
+        (past the arm's ~27 cm, inside the wide look's 45 cm); the table >= 60 cm deep in front (no
+        edge sensing: odometry only, 10 cm a move at 5 cm/s, 3 moves at most, then back). STOP /
+        Space stops the base too.
+  - The show, in order (each a minute or two): **Pozri sa** -> **Uprac stôl** (in reach) -> a cube put
+    out of reach, **Prines** ("Podchádzam bližšie" ... "Vraciam sa na štart") -> a visitor's thing:
+    **Nauč sa** (its name typed, ~50 s), put it 35-45 cm out, **Prines** with the name ("prines
+    <name>") -> **Roztrieď** (cubes into the box, blocks onto the line: the box then back in front, the
+    right side clear) -> on the X3 meanwhile Uprac stôl / Roztrieď.
+- [ ] **Thursday's checklist** (draft, to agree on; updated with 2026-10-21's lessons):
+  - **Decide today: the router or the phone.** The robots join only networks they know (IISLab-AMEC,
+    hotspot-zabka). Our router needs its profile on both robots first (its SSID, the user types the
+    password); without it, at the event the phone's hotspot is the network.
   - Pack: both robots and their chargers; the box (marker 10); the kit (30 and 40 mm cubes, the
     blocks, the wooden 40 mm cube) and the taught things (fish, apricot, news, cosmetics, the yellow
-    cylinder); the router and its power; the laptop and its charger, a mouse; an Ethernet cable and
-    a small switch; the phone (the hotspot).
+    cylinder, the monster can, the jetson box); the router and its power; the laptop and its
+    charger, a mouse; the phone (the hotspot). **The X3's A3 ChArUco board and tape** -- if its wrist
+    camera is knocked in transport (it had moved on 2026-10-21) the camera fit needs it. Pad the X3's
+    wrist camera for the trip. No Ethernet cable or switch: that fallback was skipped (2026-10-21).
   - On site, in order: the router on -> both robots on (their services start at boot, ~2 min) ->
-    the laptop on the router's WiFi -> `python console/serve.py` (finds the robots, starts the LLM,
-    ~20 s) -> Chrome at http://localhost:8099/demo.html -> Pozri sa on each, then Uprac stôl on each
-    -> H for the visitors' view.
+    the laptop on the same WiFi -> `.venv\Scripts\python console\serve.py` (finds the robots by name,
+    starts the LLM, ~20 s) -> Chrome at http://localhost:8099/demo.html (F5 after any console
+    restart) -> Pozri sa on each, then Uprac stôl on each with 3-4 pieces -> H for the visitors' view.
+  - Each table: **the box in front** (J1 90-120, ~15-25 cm straight ahead), its marker facing the arm;
+    **the right side clear** -- the blocks go onto the line out there in a sort (Roztrieď), and a box
+    there is refused. Pieces 15-25 cm out, not right against the robot.
+  - **The X3's aim**: its camera was refitted 2026-10-21 and it aims by the camera alone (taught aim
+    0, reach offset 17 mm, its saved settings). First clean-up misses with the fingertip landing where
+    aimed -> the camera moved: look at its mark; quick fix the console's "reach offset" setting
+    (mm further out), proper fix x3plus/tools/calibrate_table.py with the board (bridge stopped).
+  - **The M3**: fingertips 8 mm over the table, 5 only where nothing else grips (console settings).
+  - **Voice**: English is the sure one; Slovak in short sentences, the robot first ("Plus, uprac
+    stôl"); "stop" / "stoj" always stops both at once (no model in the way); unread -> nothing moves.
   - When something fails: a robot not found -> `serve.py --scan`, or the phone's hotspot (the
     router off: the robots join it within a minute); voice not understood -> the typed line or the
     buttons; the LLM down -> the grammar answers by itself; the M3's board silent -> power off and
@@ -180,8 +287,7 @@ always a plain coloured block.
       if it gains (models/kit/yolo26n_kit.pt, `.venv-ml/bin/python tools/export_engine.py`, ~7 min).
 - [ ] Judge it LIVE, not only on val: a clean-up, the "kit detector:" lines -- does it see the cube
       wood up, in close looks?
-- [ ] The look job's fix (look_over) is on the M3 only -- the X3 runs 0f47deb's task.py (the box fix),
-      whose look job works there (the X3's body has no look()); bring it along with the next X3 deploy.
+- [x] The look job's fix (look_over) on the X3 too: deployed with the sort, 2026-10-21.
 
 
 Stage 1 (PLAN.md, "First show") has four demos: a coloured 3D scan in the console, "teach in 30 s,
