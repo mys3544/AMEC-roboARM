@@ -91,15 +91,19 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
         reach_offset_mm 7; the code's defaults unchanged). Then **4 of 4, 0 missed**: 3 cubes into
         the box, a block onto the line (263 mm out). Its box read 12 cm out and 25 cm right at first
         (refused: on the line) -- moved straighter in front, found at J1 135.
-  - [ ] **The X3's first tries 1 cm short** (the user, watching, at 7 mm): its reach offset set to
-        17 mm -- check with a clean-up, the user watching.
+  - [x] **The X3's first tries 1 cm short** (the user, watching, at 7 mm): its reach offset set to
+        17 mm; the check clean-up (2026-10-21): **9 picked, 1 missed** (picked the second time), one
+        left out of reach (15 cm out, 20 cm left), 9-17 s a pick. All drops went to 2 spots 2 cm apart:
+        the box's centre was ~33 cm from the X3's base, its reach's edge, where 3 of the 8 drop spots
+        (4 cm margins) are in reach -- **the X3's box ~5 cm nearer** (centre <= ~28 cm out).
   - [ ] **The M3's aim "a little off"** (the user: gets the job done; today, at the end): which way and
         how much, then the console's trims (trim_out_mm / trim_left_mm) or more taught grips (m3_teach).
   - [ ] The X3, later: re-teach its grips (tools/x3_teach.py) with the camera where it is now, and
         refit the lens on the arm (lens_on_arm.json, camera_model.py handeye -- its capture still
         drives the old panel's /api/arm/move) -- the box look uses it.
 - **The network at the event** (2026-10-20):
-  - [ ] **Our router** (the user: our router, the phone only if we must). 2026-10-21 the user was
+  - [x] **Decided 2026-10-21: the phone's hotspot**, the router stays home (its profile not made; the
+        line below kept for another day). **Our router** (the user: our router, the phone only if we must). 2026-10-21 the user was
         unsure about changing the router's settings -- **none need to change**: the DHCP reservations
         (M3 dc:4a:9e:f3:51:b7 -> .66, X3 dc:4a:9e:37:21:35 -> .210) only kept the lab addresses, and
         the console finds the robots by name now (below), whatever addresses the router hands out.
@@ -158,31 +162,35 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
     <name>") -> **Roztrieď** (cubes into the box, blocks onto the line: the box then back in front, the
     right side clear) -> on the X3 meanwhile Uprac stôl / Roztrieď.
 - [ ] **Thursday's checklist** (draft, to agree on; updated with 2026-10-21's lessons):
-  - **Decide today: the router or the phone.** The robots join only networks they know (IISLab-AMEC,
-    hotspot-zabka). Our router needs its profile on both robots first (its SSID, the user types the
-    password); without it, at the event the phone's hotspot is the network.
+  - **The network is the phone's hotspot** (the user, 2026-10-21): "Zakrič Žabka" (WPA2, 2.4 GHz, no
+    auto-off), which both robots know (hotspot-zabka, autoconnect, priority 1 -- IISLab-AMEC, 10, is
+    not there). The phone's hotspot on first, then the robots, the laptop on it too; the console
+    finds the robots by name (`serve.py --scan` if not). The router is left at home.
   - Pack: both robots and their chargers; the box (marker 10); the kit (30 and 40 mm cubes, the
     blocks, the wooden 40 mm cube) and the taught things (fish, apricot, news, cosmetics, the yellow
-    cylinder, the monster can, the jetson box); the router and its power; the laptop and its
-    charger, a mouse; the phone (the hotspot). **The X3's A3 ChArUco board and tape** -- if its wrist
+    cylinder, the monster can, the jetson box); the laptop and its charger, a mouse; the phone
+    (the hotspot) and its charger. **The X3's A3 ChArUco board and tape** -- if its wrist
     camera is knocked in transport (it had moved on 2026-10-21) the camera fit needs it. Pad the X3's
     wrist camera for the trip. No Ethernet cable or switch: that fallback was skipped (2026-10-21).
-  - On site, in order: the router on -> both robots on (their services start at boot, ~2 min) ->
-    the laptop on the same WiFi -> `.venv\Scripts\python console\serve.py` (finds the robots by name,
+  - On site, in order: the phone's hotspot on -> both robots on (their services start at boot,
+    ~2 min) -> the laptop on the hotspot -> `.venv\Scripts\python console\serve.py` (finds the robots by name,
     starts the LLM, ~20 s) -> Chrome at http://localhost:8099/demo.html (F5 after any console
     restart) -> Pozri sa on each, then Uprac stôl on each with 3-4 pieces -> H for the visitors' view.
-  - Each table: **the box in front** (J1 90-120, ~15-25 cm straight ahead), its marker facing the arm;
-    **the right side clear** -- the blocks go onto the line out there in a sort (Roztrieď), and a box
-    there is refused. Pieces 15-25 cm out, not right against the robot.
+  - Each table, its marker facing the arm: for a **sort** (Roztrieď) **the box in front** (J1 90-120,
+    ~15-25 cm straight ahead) and **the right side clear** -- the blocks go onto the line out there, a
+    box there is refused; for the M3's **fetch** (Prines) **the box beside it on the right**, level
+    with its front wheels, ~25 cm right of its middle, the lane ahead clear. Never on the M3's left:
+    it cannot see there. Pieces 15-25 cm out, not right against the robot.
   - **The X3's aim**: its camera was refitted 2026-10-21 and it aims by the camera alone (taught aim
-    0, reach offset 17 mm, its saved settings). First clean-up misses with the fingertip landing where
+    0, reach offset 17 mm, its saved settings; 9 of 10 picked with it). Its box no further than ~28 cm
+    from its base (its centre), or the drops pile up on the few spots it reaches. First clean-up misses with the fingertip landing where
     aimed -> the camera moved: look at its mark; quick fix the console's "reach offset" setting
     (mm further out), proper fix x3plus/tools/calibrate_table.py with the board (bridge stopped).
   - **The M3**: fingertips 8 mm over the table, 5 only where nothing else grips (console settings).
   - **Voice**: English is the sure one; Slovak in short sentences, the robot first ("Plus, uprac
     stôl"); "stop" / "stoj" always stops both at once (no model in the way); unread -> nothing moves.
-  - When something fails: a robot not found -> `serve.py --scan`, or the phone's hotspot (the
-    router off: the robots join it within a minute); voice not understood -> the typed line or the
+  - When something fails: a robot not found -> `serve.py --scan`; still not -> power it off and on
+    with the hotspot on (it joins within a minute); voice not understood -> the typed line or the
     buttons; the LLM down -> the grammar answers by itself; the M3's board silent -> power off and
     on (2026-10-15); a camera stalled -> the bridge restarts its driver, else power off and on.
   - Batteries: the M3 refuses under 10.5 V (the page warns under 10.8), the X3 under 10.0 (warns
