@@ -7,6 +7,11 @@ deadlines and demo craft. It re-checks [PLAN.md](PLAN.md)'s research program (tr
 S1-S5, swept on 2026-09-29) against what was published up to 5 October 2026, ranks what is worth
 writing up, and plans what to show professors and scientists. Nothing in it has been run.
 
+**Updated 2026-10-21:** [section 9](#9-october-update-2026-10-21-the-scoop-check-two-new-ideas-scan-to-skill)
+adds the October scoop check, two new ideas for P1 (a measured robot card, a hand-back gate),
+scan-to-skill from the robot's own scan, P1's revised hypotheses and four additions to the
+simulator plan.
+
 How sure: every paper below was checked against its arXiv abstract page, project page or official
 call. The load-bearing ones were re-checked by hand on 2026-10-05: HERO, OpenRUA, HEROIC, Project
 Fetch phase 2, the RSS 2027 call, the CoRL EEAI workshop and challenge, and ICSE SEIP. The surveys'
@@ -102,7 +107,8 @@ is a human on a leader arm. Four things are still open:
 - (c) the exchange rate between automatic and human demos on a cheap arm;
 - (d) cross-embodiment trained on automatic data only (X3 -> M3).
 
-**Hypotheses for the RSS Stage 1 abstract.** Each is falsifiable:
+**Hypotheses for the RSS Stage 1 abstract.** Each is falsifiable (revised on 2026-10-21 in
+[section 9.6](#96-p1s-hypotheses-revised)):
 - **H1, parity.** Trained only on the picker's data, the policy comes within 10 points of the
   picker on the 25-position grid.
 - **H2, the student beats the teacher.** After k relabelling rounds the policy beats the picker on
@@ -652,6 +658,219 @@ a "maybe", the overhead webcam (decision 3) can wait. Decisions 2, 4 and 5 are s
 4. **Collaborators.** Approach the Comenius pointing group (Hajdúch & Kocur) for C, and the
    SMaRTAban authors for P6?
 5. **The 5090.** Access is still pending, and P1, A4 and the splats depend on it.
+
+## 9. October update (2026-10-21): the scoop check, two new ideas, scan-to-skill
+
+Written 2026-10-21 from three parallel scans, after the user asked whether JEPA and FiLM could
+improve our models: latent world models and JEPA's alternatives; conditioning and adaptation in
+place of FiLM; bigger directions and what appeared from 1 to 21 October. The abstracts of VeriVLA,
+GaussianFactory, DUET-DINO, the self-compensating VLA, ZETA, Splat2Act, SimVLA, TILDE and VAMPS
+were re-checked by hand; the others rest on the scans' checks of arXiv abstract pages. Nothing in
+this section has been run.
+
+Two things changed in our own plan since 5 October. The VLA is now taught in Isaac Sim first, the
+M3 first and the X3 after ([NEXT.md](NEXT.md), from 26 October). And the 5090 has been in use since
+12 October (the kit detector trains on hekate), so decision 5 in section 8 is settled.
+
+### 9.1 Where JEPA and FiLM land
+
+- **JEPA** (a model that predicts the *features* of hidden or future frames, not their pixels;
+  I-JEPA, V-JEPA 2 and 2-AC, V-JEPA 2.1, RoboJEPA) brings nothing to today's perception models:
+  - the kit detector: a JEPA encoder is an 80M+ transformer against a 3 ms budget, and the
+    detector's misses (the wooden 40 mm cube) are gaps in its data;
+  - identity: DINOv2 was 84/84 in leave-one-out; Find failed only on faces never shown at Teach;
+  - Depth Anything already sits on a DINOv2 encoder.
+- In the VLA, JEPA is an ingredient, not a claim: a FLARE-style loss that predicts the frame at
+  the chunk's end during training (no cost at run time; GR00T N1.5 trains with it), and V-JEPA 2.1
+  features added through a zero-initialised path ([PVI](https://arxiv.org/abs/2603.12772)). Both
+  are ablations of SmolVLA.
+- JEPA as a zero-shot planner is far below our picker: V-JEPA 2-AC 50-80 % pick-and-place on a
+  Franka, [RoboJEPA](https://arxiv.org/abs/2610.10515)-8B 27 %, seconds a planning step.
+- **FiLM** ([1709.07871](https://arxiv.org/abs/1709.07871)) is a conditioning layer: a small
+  network turns a condition into a per-channel scale and shift. Fed a robot id it does what X-VLA's
+  soft prompts already do. Its better version for us is the robot card (9.3).
+
+### 9.2 The scoop check, 1-21 October
+
+P1 is not scooped, but its neighbourhood filled up:
+
+| paper | what it does | what it does not |
+|---|---|---|
+| TILDE ([2610.25376](https://arxiv.org/abs/2610.25376), 18 Oct) | "AutoDAgger": a reward model sees progress stall and calls the teacher, with no human watching; up to 4.1x over behaviour cloning on 3 real tasks | the teacher is a learned foundation model; no student-vs-teacher comparison |
+| VAMPS ([2610.05331](https://arxiv.org/abs/2610.05331), 4 Oct) | an MPPI planner on a real Flexiv arm records its own data; ACT learns from it | offline on hardware, no DAgger there, no student-vs-teacher comparison |
+| SimVLA ([2610.11248](https://arxiv.org/abs/2610.11248), 8 Oct) | a VLA from simulated data only (privileged-state skills), zero-shot to real homes; beats a policy on 50 real demos | no real-world loop |
+| ReDOA ([2610.25691](https://arxiv.org/abs/2610.25691)) | a simulated state teacher runs on the real robot and is distilled into an image student, no human demos | non-prehensile tasks |
+| Recova ([2610.01178](https://arxiv.org/abs/2610.01178)) | recoveries made in a digital twin, plus DAgger; real 23.8 -> 77.5 % | the twin, not the robot, makes the corrections |
+| Reward-DAgger ([2610.04054](https://arxiv.org/abs/2610.04054)) | a progress reward model decides when to call the expert | the expert is a human |
+| MobiAgent ([2610.03476](https://arxiv.org/abs/2610.03476)), Robo-COP ([2610.09228](https://arxiv.org/abs/2610.09228)) | real-robot self-improvement: 32.5 -> 57.5 % and 38.3 -> 50.0 % | learned judges |
+
+**What still sets P1 apart:** a teacher that is not learned and is also the referee and the reset;
+cheap servo arms; two embodiments; a student that beats its teacher.
+
+**What P1 must now add:**
+- a written perturbation protocol for "moved mid-reach" (speed, distance and timing fixed before
+  training, N >= 50 a condition): moving targets are now benchmarked
+  ([LIBERO-Dynamic](https://arxiv.org/abs/2610.24579), [TrajWAM](https://arxiv.org/abs/2610.25763));
+- two cheap baselines, a scripted retreat-and-retry and a plain re-run:
+  [2610.06921](https://arxiv.org/abs/2610.06921) found a scripted retreat as good as a learned
+  corrector on a frozen pi0.5;
+- its level on the L0-L5 scale of "Who Improves the Robot?"
+  ([2610.18842](https://arxiv.org/abs/2610.18842)), which finds physical recursive self-improvement
+  not yet shown.
+
+**The other lanes:**
+- **Verifiers are crowded.** [VeriVLA](https://arxiv.org/abs/2610.21985) (15 Oct): at critical
+  states a JEPA world model ranks a flow VLA's candidate chunks; real completion 50.8 -> 65.5 %,
+  +326 ms a decision on a 4090. [FARM](https://arxiv.org/abs/2609.11445): a 34K-parameter readout
+  on a frozen VLA-JEPA (SO-101, PiPER, Franka). [DiVeR](https://arxiv.org/abs/2610.04933). All take
+  success labels from people or VLM judges; the best VLM judge reaches 0.77 balanced accuracy
+  ([FailBench](https://arxiv.org/abs/2609.03611)).
+- **Phone scan -> twin -> VLA is taken.** [Splat2Act](https://arxiv.org/abs/2610.13945) (9 Oct): a
+  phone scan -> a 3DGS twin with collision geometry -> a privileged simulated oracle -> pi0.5 on a
+  Stretch 3; real 63.9 % against 66.7 % in the twin. [AutoRSR](https://arxiv.org/abs/2610.20336):
+  73-87 % real. [GaussianFactory](https://arxiv.org/abs/2609.21112): demos from one scan, mostly
+  kinematic; a diffusion policy 84.2 % on a real UR10e.
+- **DINOv3 over V-JEPA 2 on wrist views.** [DUET-DINO](https://arxiv.org/abs/2609.10506) (Sep):
+  V-JEPA 2's wrist-view predictions underestimate the change that fine actions cause; DINOv3 planned
+  better. That matters for the X3, which has only a wrist camera.
+- **Per-robot execution error.** The self-compensating VLA
+  ([2609.37334](https://arxiv.org/abs/2609.37334), 29 Sep) adapts a VLA online from the gap between
+  commanded and executed motion: more than 30 points on each of two arms of different ages. One arm
+  type, no camera error, code not out.
+- P2: [REMM](https://arxiv.org/abs/2610.12710), a revisable memory for a frozen VLA. P3:
+  [NovaSplat](https://arxiv.org/abs/2610.13309), an object's 3DGS from a phone video for 6D pose.
+  P5: [Agentic RSR](https://arxiv.org/abs/2610.10479), a coding agent rebuilds the scene and writes
+  the policy. P6: [EarlyCommit](https://arxiv.org/abs/2610.20531), the target object chosen
+  mid-sentence.
+
+### 9.3 New idea: the robot card (FiLM done our way)
+
+**Claim.** One policy for both arms, conditioned on about 20 *measured* numbers per robot, keeps
+working when the hardware drifts: a knocked camera, a worn joint.
+
+- **The card:** backlash per joint, the delay from command to motion, the hand-eye residual (the
+  camera pose's error), the gripper's offset and the zero of its tip gap. The camera pose itself
+  comes from the hand-eye calibration.
+- **Measured** by a ~2-minute automatic probe: the arm runs a fixed set of moves while the camera
+  tracks the gripper or the board. The M3 reports only the joints it was sent, so the camera is the
+  sensor on both robots.
+- **Trained** in Isaac Sim: each episode draws a card (backlash 0-6 mm a joint at 25 cm, a delay, a
+  hand-eye error up to ~5 deg, a gripper offset) and the simulated arm behaves by it. Backlash is a
+  dead band on the commanded joint targets before they reach the joint drives. The card enters the
+  policy by FiLM on the action expert's layers or as one token; try both.
+- **Actions** as relative end-effector chunks in a local frame as well as joint targets.
+  [ZETA](https://arxiv.org/abs/2609.02546) on transfer to a new arm: local end-effector actions +15
+  points, more varied training bodies +18, 5 % target-robot data +13.4.
+- **R1:** with a 5 deg hand-eye yaw error added, the policy given its measured card picks >= 15
+  points more than without one; a shuffled card loses the gain.
+- **R2:** re-fitting only the card (or a soft prompt, ~1-4k parameters) on <= 50 automatically
+  scored episodes recovers >= 80 % of a rank-4 LoRA's gain, within 10 minutes of a camera move.
+- **Closest:** the self-compensating VLA (above: an online LoRA, one arm type, the error measured on
+  the arm); MERL's embodiment-aware pi0.5 ([2603.00182](https://arxiv.org/abs/2603.00182): per-joint
+  tokens and FiLM from static URDF facts, simulation only, no gain on SO101); HCP
+  ([1811.09864](https://arxiv.org/abs/1811.09864): a hardware vector, simulation, 2018). Not found:
+  a manipulation policy conditioned on a measured fault vector across different arms.
+- **Demo:** knock the camera; the robot re-probes for two minutes and picks again. The C930e moved
+  on 2026-10-21 and needed a refit by hand; this is that refit, automatic.
+- **Where:** inside P1 as its transfer hypothesis (H4 in 9.6); an IROS'27 paper of its own if R1
+  holds.
+
+### 9.4 New idea: the hand-back gate (JEPA done our way)
+
+**Claim.** The VLA does the fast, reactive approach; a small predictive model trained only on the
+picker's own verdicts decides when to hand the last centimetres back to the millimetre-precise
+picker. The hybrid beats both its parts.
+
+- **The model:** an action-conditioned latent predictor with a progress head (will this chunk
+  succeed?) on frozen features. Compare DINOv3 with V-JEPA 2.1 (DUET-DINO's finding, tested on a
+  wrist-only arm, the X3, and an RGB-D arm, the M3). Optionally slots from the kit detector's masks
+  plus DINOv2 identity: slot quality decides planning success
+  ([Better Slots](https://arxiv.org/abs/2608.12078)).
+- **The labels:** the picker's verdicts (gripper readback, the cube gone from the table) on every
+  chunk; in the simulator, the expert's progress. No human, no VLM judge.
+- **G1:** failure prediction with AUROC >= 0.85 on real attempts.
+- **G2:** the hybrid gets more successes per minute than VLA-only, picker-only, a hand-back on a
+  fixed timer and a scripted retreat, with <= 3 % needless hand-backs.
+  [RESCUE](https://arxiv.org/abs/2610.13516) found in simulation that stop-and-reset tolerates only
+  2-3 % false alarms.
+- Every hand-back is a labelled hard state, so it goes into the next DAgger round.
+- **Closest:** VeriVLA, FARM, DiVeR (they choose among the VLA's own chunks, with labels from people
+  or VLMs); EqC ([2610.18790](https://arxiv.org/abs/2610.18790), an expert takes over when an energy
+  gate fires); ReAP ([2610.16309](https://arxiv.org/abs/2610.16309)). Not found: a real-robot hybrid
+  whose fallback is a classical picker and whose gate learns from that picker's verdicts.
+- **Demo:** a live confidence gauge in the console; the VLA chases a pushed cube and hands the last
+  centimetre to the picker.
+
+### 9.5 Scan-to-skill from the robot's own scan (P3's long form)
+
+- **The chain:** the M3 circles a new object (the scan exists: `tools/m3_scan.py` -> a splat on
+  hekate); the splat and a collision mesh become a twin in Isaac Sim; the privileged expert makes
+  demos on it; a policy is fine-tuned; the arm picks the object while the real picker judges.
+- **Open after Splat2Act and AutoRSR:** no human at all (the robot scans), time-to-skill as the
+  headline number, and the twin's predictions checked against hundreds of automatically refereed
+  real trials.
+- **S1:** from the M3 circling a never-seen object to a deployed learned grasp in under 4 hours with
+  zero human input; the twin ranks >= 5 checkpoints in the same order as >= 100 refereed real
+  trials (Spearman >= 0.8).
+- **Caveat:** Isaac Sim renders splats (NuRec/3DGUT) but they are
+  [visual only](https://docs.isaacsim.omniverse.nvidia.com/6.0.1/assets/usd_assets_nurec.html):
+  the collision mesh is ours to build, from the fused depth.
+- **The story with P3:** taught in 30 seconds by DINOv2 and a classical pick; a learned skill for
+  it by the next morning.
+- **Effort** M-L; IROS'27 at the earliest.
+
+### 9.6 P1's hypotheses, revised
+
+The teacher now lives in the simulator first, and the M3 comes first. The set for the RSS Stage 1
+abstract (4 Dec), each falsifiable and written down before the runs:
+- **H1, parity** (as on 5 Oct): trained only on the teacher's data (simulated, then a few dozen real
+  episodes), the policy comes within 10 points of the picker on the 25-position grid.
+- **H2, the student beats the teacher,** on the written protocol: the cube pushed mid-reach at a
+  fixed speed, distance and timing, N >= 50 a condition, against the picker, a scripted
+  retreat-and-retry and a plain re-run. After k DAgger rounds the student wins by >= 15 points and
+  stays within 5 points on still cubes.
+- **H3, the exchange rate** (as on 5 Oct), plus the simulated teacher against the real one: N
+  simulated demos are worth M real ones.
+- **H4, transfer through the robot card:** with its measured card, an M3-trained policy needs fewer
+  X3 episodes (R1 and R2 in 9.3).
+- **H5, the gate:** the hybrid beats both its parts on successes per minute (G2 in 9.4).
+- **H6, no human in the loop:** over <= 5 unattended nights the success curve climbs with no human
+  labels, no human resets and no learned reward; the picker scatters the cube itself.
+
+Slovak comes free: the picker's hindsight instructions are written in Slovak and English, so one
+table reports both. On translated LIBERO, success drops 30-50 % outside English
+([2606.11906](https://arxiv.org/abs/2606.11906)).
+
+### 9.7 Four additions to Monday's simulator plan
+
+Cheap from the first episode, costly to add later:
+1. Each episode draws a robot card (backlash, delay, hand-eye pose, gripper offset), stored with the
+   episode.
+2. Actions recorded as relative end-effector chunks in a local frame as well as joint targets.
+3. The expert's verdict and progress stored for every chunk: the gate's labels from the first
+   night.
+4. The mid-reach perturbation protocol written down before the first student is trained.
+
+The FLARE-style loss and the V-JEPA 2.1 features (9.1) stay ablations of SmolVLA, not claims.
+
+### 9.8 What not to do
+
+- JEPA or RoboJEPA as a zero-shot planner (27-80 % pick-and-place on a Franka, seconds a step);
+- a plain JEPA verifier for a VLA (VeriVLA, FARM, DiVeR);
+- physics twins (PhysTwin-style) for rigid cubes: they pay off only for pushing or soft things;
+- large video world-action models: Ctrl-World trained on nodes of eight A100s or H100s, and
+  Cosmos-class models do not fit our GPUs;
+- a learned scout-and-picker team: P4 stays classical;
+- a Slovak VLA as a paper of its own: one table inside P1.
+
+### 9.9 Decisions this raises
+
+1. **P1's scope.** Fold the robot card (H4) and the gate (H5) into P1 for the RSS abstract, or keep
+   P1 as on 5 October? Recommended: fold them in; each is a falsifiable hypothesis the others' data
+   already serves.
+2. **The overhead webcam** (decision 3) becomes necessary for H2 and H6 on the real X3: the
+   relabeller must see the cube from any state the student reaches.
+3. **Scan-to-skill:** after P3's teach demo, or not before IROS?
 
 ## Method and caveats
 
