@@ -260,6 +260,16 @@ def test_out_of_reach_it_drives_up_when_allowed_and_only_then():
     assert np.allclose(world.dropped_at[0], 0) and np.allclose(world.base, 0)
 
 
+def test_a_cube_at_the_edge_of_reach_is_not_blamed_on_the_lidar():
+    """2026-10-21, the user: "why is the cube too near the lidar? both are out of reach" -- a 40 mm cube
+    24.6 cm from the arm's axis, its middle reached to 23.5: a slide right brings it nearer, not off the lidar."""
+    picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
+    cube = {"kind": "cube", "centre": np.array([0.262, -0.092, 0.02]), "height": 0.04, "size": 0.04, "length": 0.04,
+            "yaw": 66.0, "period": 90.0, "whole": True, "footprint": (0.04, 0.04)}
+    said = picker.why_not([cube], [cube])
+    assert "edge of the arm's reach" in said and "lidar for the arm" not in said and "further left" in said, said
+
+
 def test_the_fetch_drives_up_to_a_cube_far_off_and_back_to_the_box_beside_it():
     """2026-10-21, the event's fetch (the user's): a cube 42 cm out, the box at the front-left out of the
     base's way -- driven up to it in moves of nudge_cm, picked, driven back, dropped into the box."""

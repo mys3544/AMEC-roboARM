@@ -1176,28 +1176,35 @@ class Picker(Task):
         the robot's body (2026-10-05: a cube beside the left wheel, the elbow over the arm's base,
         was "out of reach"); else the square grip."""
         base, floor = np.asarray(self.AXIS), min(self.floors())   # the lowest a plan tries
-        far, lidar, body, awkward = [], [], [], []
+        far, lidar, edge, body, awkward = [], [], [], [], []
         for o in kit:
-            if float(np.hypot(*(o["centre"][:2] - base))) > furthest(o["height"]) + 0.005:
+            out = float(np.hypot(*(o["centre"][:2] - base)))
+            if out > furthest(o["height"]) + 0.005:
                 far.append(o)
             elif plan_grasp(o["centre"], o["height"], floor_clear=floor) is not None:
                 awkward.append(o)
             else:
                 slide = slide_for(o, found, SIDESTEP_MOST, floor) if o["centre"][1] < 0 else None
-                (body if slide is None else lidar).append(o if slide is None else (o, slide))
+                if slide is None:
+                    body.append(o)
+                else:   # the slide brings it nearer the arm too: past its middle's reach that is why
+                    # (2026-10-21: a 40 mm cube 24.6 cm out, its middle reached to 23.5, "near the lidar")
+                    (edge if out > furthest(max(o["centre"][2], GRIP_Z_MIN)) else lidar).append((o, slide))
         parts = [f"out of reach: {describe(far)}"] if far else []
         for o in body:   # the guard's own words for the grip from above
             grip = np.r_[o["centre"][:2], max(o["centre"][2], GRIP_Z_MIN)]
             poses = (m3kinematics.reach(grip, pitch, floor_clear=floor, guard=False) for pitch in (90, 70, 50))
             why = next((m3kinematics.problem(q, floor) for q in poses if q is not None), None)
             parts.append(f"in reach but too close to the robot's body for the arm: {describe([o])}" + (f" ({why})" if why else ""))
-        if lidar:
+        if lidar or edge:
             room = self.right_room()
             how = ("may drive closer lets the base slide right" if not self.may_drive
                    else f"the base may slide only {100 * room:.0f} cm right" + (", the drop-off box is there" if room < self.cfg["right_cm"] / 100 else ""))
-            parts.append(f"too near the right lidar for the arm (it keeps {100 * m3kinematics.LIDAR_ROOM:.1f} cm off it), "
-                         + "; ".join(f"{describe([o])} -- picked from {100 * slide:.0f} cm further left" for o, slide in lidar)
-                         + f" ({how})")
+        for which, said in ((lidar, f"too near the right lidar for the arm (it keeps {100 * m3kinematics.LIDAR_ROOM:.1f} cm off it)"),
+                            (edge, "at the edge of the arm's reach (only its top in reach from here)")):
+            if which:
+                parts.append(f"{said}, " + "; ".join(f"{describe([o])} -- picked from {100 * slide:.0f} cm further left"
+                                                     for o, slide in which) + f" ({how})")
         if awkward:
             parts.append("no square grip from here, a finger would come down on the table or over the bumper "
                          f"(turned so, at this distance): {describe(awkward)}")
