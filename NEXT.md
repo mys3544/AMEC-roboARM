@@ -3,7 +3,7 @@
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning
-(Tuesday's done; Wednesday's too but the router and the M3's aim check -- the open boxes below):
+(Tuesday's done, and Wednesday's -- Thursday's checklist below):
 
 - [x] **Tuesday morning: the M3's detectors judged fairly, on looks no model has seen** (2026-10-20).
       2 Clean up rounds (wood up 7 picked, painted up 6), their 40 looks (20 wide, 20 close; 25 with
@@ -96,8 +96,8 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
         left out of reach (15 cm out, 20 cm left), 9-17 s a pick. All drops went to 2 spots 2 cm apart:
         the box's centre was ~33 cm from the X3's base, its reach's edge, where 3 of the 8 drop spots
         (4 cm margins) are in reach -- **the X3's box ~5 cm nearer** (centre <= ~28 cm out).
-  - [ ] **The M3's aim "a little off"** (the user: gets the job done; today, at the end): which way and
-        how much, then the console's trims (trim_out_mm / trim_left_mm) or more taught grips (m3_teach).
+  - [x] **The M3's aim "a little off"** (the user: gets the job done): checked with a clean-up at the
+        day's end, 6 of 6, the user watching: "the grips were fine" -- left as it is (no trims).
   - [ ] The X3, later: re-teach its grips (tools/x3_teach.py) with the camera where it is now, and
         refit the lens on the arm (lens_on_arm.json, camera_model.py handeye -- its capture still
         drives the old panel's /api/arm/move) -- the box look uses it.
