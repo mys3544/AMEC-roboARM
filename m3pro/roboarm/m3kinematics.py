@@ -61,10 +61,15 @@ FINGER_SIDE = 0.006   # m a finger's outer edge past the opening's edge (its thi
 # no spare in front (2026-10-05, the user's: "edit the safety bounding box" -- the block in front of
 # the left wheel, the near finger 1.5 cm in front of the bumper): there the body's own shape keeps
 # the arm's shell off it (too_near), as round the lidars.
-CHASSIS_Y = 0.135   # m either side
+BODY_Y, TYRES_Y, SPARE_Y = 0.112, 0.12, 0.015   # m either side: the body, the wheels' outer faces; and spare
+CHASSIS_Y = TYRES_Y + SPARE_Y
 # The middle step is the arm's own base (its shoulder joint sits at 0.218): 0.9 cm over it, not 1.5,
 # or the folded home pose -- the SAG overstates the droop of an upright, unloaded forearm -- reads 2 mm in.
-CHASSIS = ((-0.17, 0.08, 0.205), (0.08, 0.124, 0.175))
+# Each step is (x from, x to, the height kept above, how far either side it is -- SPARE_Y added). The front
+# deck is the body's width; beside it, the front corners, only the tyres (2026-10-21, the user's: a block by
+# the front-left corner refused, the arm's line 1.4 cm over and beside the tyre -- the URDF's front wheels at
+# x 0.078, y +-0.098, 4 cm round): 1 cm over their tops there, not the deck's 17.5.
+CHASSIS = ((-0.17, 0.08, 0.205, TYRES_Y), (0.08, 0.124, 0.175, BODY_Y), (0.08, 0.124, 0.090, TYRES_Y))
 # base_link is ON the floor: the URDF's wheel axles are 0.040 above it and the wheels' radius is
 # 0.040 (meshes/lwheel1.STL); camcheck's 0.350 m for the camera at the mapping pose against the
 # URDF's 0.355 agrees. (Yahboom's launch puts base_link 2 cm up, base_footprint -> base_link.)
@@ -263,8 +268,8 @@ def problem(pose: dict[int, float], floor_clear: float = FLOOR_CLEAR) -> str | N
     f = frames(pose)
     p = outline(pose, f)
     step = np.full(len(p), -1)
-    for i, (x0, x1, top) in enumerate(CHASSIS):
-        over = (p[:, 0] > x0) & (p[:, 0] < x1) & (np.abs(p[:, 1]) < CHASSIS_Y) & (p[:, 2] < top)
+    for i, (x0, x1, top, half) in enumerate(CHASSIS):
+        over = (p[:, 0] > x0) & (p[:, 0] < x1) & (np.abs(p[:, 1]) < half + SPARE_Y) & (p[:, 2] < top)
         step = np.where(over & (step < 0), i, step)
     low = p[:, 2] < FLOOR + max(floor_clear, MIN_FLOOR_CLEAR)
     bad = (step >= 0) | low

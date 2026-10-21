@@ -2,11 +2,13 @@
 cube is picked with the fingers square to it and dropped off, a lying block is gripped across,
 something out of reach is left and said so, and a stop stops the job between two moves."""
 
+import itertools
 import math
 import time
 
 import numpy as np
 import pytest
+from roboshared.box import outline
 
 from roboarm import m3aim, m3arm, m3kinematics, m3pick
 
@@ -258,6 +260,39 @@ def test_out_of_reach_it_drives_up_when_allowed_and_only_then():
     assert np.allclose(world.dropped_at[0], 0) and np.allclose(world.base, 0)
 
 
+def test_the_fetch_drives_up_to_a_cube_far_off_and_back_to_the_box_beside_it():
+    """2026-10-21, the event's fetch (the user's): a cube 42 cm out, the box at the front-left out of the
+    base's way -- driven up to it in moves of nudge_cm, picked, driven back, dropped into the box."""
+    world = World([(0.42, 0.0, 0, 0.03, 0.03)])
+    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
+    left = {"centre": np.array([0.13, 0.23]), "along": np.array([1.0, 0.0]), "into": np.array([0.0, -1.0]),
+            "turn": 0.0, "items": []}   # its lid along x on the far (left) side
+    picker.see_box = lambda tag: left
+    picker.start("pick_once", drive=True)
+    picker.wait(120)
+    assert picker.state["error"] is None and picker.state["picked"] == 1 and len(world.released) == 1
+    out = [d for d in world.driven if d[0] > 0]
+    assert len(out) >= 2 and all(dx <= picker.cfg["nudge_cm"] / 100 + 1e-9 for dx, _ in out)   # up, a move at a time
+    assert np.allclose(world.base, 0, atol=0.002)                       # back where it began, the box there
+    along, across = m3pick.in_box(left, world.released[0])             # and into it
+    assert abs(along) < m3pick.BOX_INSIDE[0] / 2 and abs(across) < m3pick.BOX_INSIDE[1] / 2
+
+
+def test_the_fetch_never_drives_into_the_box_the_depth_does_not_see():
+    """The box's black walls give the depth nothing: a box ahead in the base's way stops the drive short
+    of it (the footprint DRIVE_GAP off), wherever the cube is -- 2026-10-21, the fetch."""
+    world = World([(0.42, 0.06, 0, 0.03, 0.03)])
+    picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
+    ahead = {**box_here(), "centre": np.array([0.30, -0.10])}   # its walls y -0.165 to -0.035: in the way
+    picker.see_box = lambda tag: ahead
+    picker.start("pick_once", drive=True)
+    picker.wait(120)
+    nearest = min(float(p[0]) for p in outline(ahead))   # the box's near wall, outside
+    forward = sum(dx for dx, _ in world.driven if dx > 0)
+    assert 0 < forward <= nearest - m3pick.ROBOT_X[1] - m3pick.DRIVE_GAP + 1e-6, (forward, nearest)
+    assert "out of reach" in picker.state["error"]   # driven as far as that, the cube still too far
+
+
 def test_the_drive_keeps_clear_of_what_is_in_the_way():
     def at(x, y):
         return {"kind": "cube", "centre": np.array([x, y, 0.015]), "height": 0.03}
@@ -302,8 +337,8 @@ def test_the_settings_are_held_to_their_ranges_kept_and_count(tmp_path):
 
 
 def test_the_fingertips_keep_their_height_over_the_table_the_grip_rises_instead():
-    """Asked for more room over the table, the grip rises on the cube (8 mm, the default since 2026-10-05:
-    they still touched it, the user saw)."""
+    """Asked for more room over the table, the grip rises on the cube (8 mm, the default from 2026-10-05:
+    they still touched it, the user saw; 5 from 2026-10-21, the user's, for more grips)."""
     for centre in ((0.20, 0.03, 0.015), (0.25, -0.05, 0.015), (0.16, 0.0, 0.015)):
         low = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.003)
         high = m3pick.plan_grasp(np.array(centre), 0.03, floor_clear=0.008)
@@ -311,7 +346,36 @@ def test_the_fingertips_keep_their_height_over_the_table_the_grip_rises_instead(
             assert m3kinematics.grip(poses[-1])[0][2] <= 0.03 + 1e-6   # never above the cube's top
         assert min(m3kinematics.outline(p)[:, 2].min() for p in high[1]) >= 0.008
         assert m3kinematics.grip(high[1][-1])[0][2] > m3kinematics.grip(low[1][-1])[0][2]
-    assert m3pick.SETTINGS["fingertips_mm"][5] == 8
+    assert m3pick.SETTINGS["fingertips_mm"][5] == 8 and m3pick.SETTINGS["fingertips_least_mm"][5] == 5
+
+
+def test_on_the_line_it_lets_go_just_over_the_table():
+    """2026-10-21, the user's: let go from DROP_UP's 11 cm, blocks bounced off the table -- now what is held
+    LINE_OVER over it where the arm reaches that low, else the lowest of LINE_RELEASES."""
+    world = World([(0.20, 0.03, 0, 0.06, 0.03)])   # a block lying; no box: onto the line
+    picker = run(world, "pick_once")
+    assert picker.state["error"] is None and picker.state["picked"] == 1
+    on_line = [b for b in world.boxes if b[0] < 0.10 and b[1] < -0.15]   # set down low (World: under 4 cm)
+    assert on_line or (world.released and world.released[-1][2] <= 0.06), (world.boxes, world.released)
+    here = {1: 80, 2: 76, 3: 15, 4: 19, 5: 90, 6: 134}
+    for extra in (0.0, 0.05, 0.10):   # further out the arm reaches only higher: still on the line
+        way = next(w for h in (0.04, *m3pick.LINE_RELEASES) if (w := m3pick.carry_to(here, m3pick.DROP_OUT + extra, 180.0, h, 0.18)))
+        assert way[-1][1] == 180
+
+
+def test_the_fingertips_come_lower_only_where_nothing_plans_higher():
+    """2026-10-21, the user's: at 5 mm for every grip the fingers touched the table by small cubes and
+    shoved the robot; at 8 two blocks had no grip. 8 first, 5 for those only."""
+    picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
+    cube = {"centre": np.array([0.20, 0.03, 0.015]), "height": 0.03, "size": 0.03, "length": 0.03, "yaw": 20.0,
+            "period": 90.0, "whole": True, "kind": "cube"}
+    assert picker.plan(cube, [cube]) is not None and cube["floor"] == 0.008
+    block = {"centre": np.array([0.225, 0.117, 0.015]), "height": 0.03, "size": 0.03, "length": 0.06, "yaw": 37.0,
+             "period": 180.0, "whole": True, "kind": "block", "footprint": (0.03, 0.06)}   # that day's, no grip at 8
+    assert picker.plan(block, [block]) is not None and block["floor"] == 0.005
+    assert picker.floor_m is None and picker.floor_clear() == 0.008   # planning leaves the first set
+    picker.set_settings({"fingertips_least_mm": 8}, save=False)
+    assert picker.floors() == [0.008] and picker.plan(dict(block), [block]) is None
 
 
 def test_a_plan_is_one_the_arm_will_glide_down_and_back_up():
@@ -684,6 +748,21 @@ def test_a_block_lying_across_in_front_of_the_wheel_has_the_careful_grip():
     assert "looked again turned onto it" in said, said   # by the bumper the first close look cuts it
 
 
+def test_a_block_by_the_front_corner_is_picked_beside_the_tyre():
+    """2026-10-21, the user's: a block lying ahead of the left front wheel, beside the chassis, refused --
+    the arm's line 1.4 cm over and beside the tyre, inside the front deck's 17.5 cm box. The front corners
+    keep 1 cm over the tyres now; the deck itself, the body's width, its 17.5."""
+    picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
+    block = {"centre": np.array([0.129, 0.187, 0.015]), "height": 0.03, "size": 0.03, "length": 0.06, "yaw": 74.0,
+             "period": 180.0, "whole": True, "kind": "block", "footprint": (0.03, 0.06)}
+    assert picker.plan(block, [block]) is not None
+    def kept(x, y):   # the height the arm keeps over the floor at (x, y)
+        return max((top for x0, x1, top, half in m3kinematics.CHASSIS
+                    if x0 < x < x1 and abs(y) < half + m3kinematics.SPARE_Y), default=0.0)
+    assert kept(0.10, 0.12) == kept(0.10, -0.12) == 0.175 and kept(0.10, 0.13) == kept(0.10, -0.13) == 0.09
+    assert kept(0.0, 0.13) == 0.205 and kept(0.13, 0.0) == 0.0   # the arm's base full width; in front: none
+
+
 def test_the_careful_grip_goes_down_only_on_a_whole_close_look(monkeypatch):
     """2026-10-05: the blue block's close look cut it, the wide look aimed, and the careful grip's near
     finger -- 4.5 mm off it by plan -- came down on its edge and rolled it over. Not seen whole: left."""
@@ -773,11 +852,36 @@ def test_the_raised_turn_holds_the_thing_over_the_chassis():
     assert m3pick.held_problem(top, [flat, {**flat, 1: 180}], 0.035) is not None   # front deck's corner, low
 
 
-def test_the_drop_spots_keep_off_the_standing_lid():
+def test_to_a_box_at_j1_45_or_135_the_arm_swings_round_low():
+    """2026-10-21, the user's: with the box at J1 135 every pick went up to a carry pose (J2 130) on the way
+    to the box view -- now round an arc VIEW_ARCS high, what is held over the front deck."""
+    top = {1: 46, 2: 63, 3: 38, 4: 10, 5: 270, 6: m3arm.gripper_angle(30)}   # a line's top by the bumper, turned over
+    for j1, below in itertools.product((135, 45), (0.018, 0.035)):
+        view = {**top, **m3pick.SIDE_LOOK, 1: j1}
+        legs = m3pick.view_way(top, view, below)
+        assert legs[-1][-1] == view and all(p[2] < 130 for leg in legs for p in leg), (j1, below, legs)
+
+
+def test_the_wrist_turns_over_with_the_fingers_closed_not_up_high():
+    """2026-10-21, the user's: from the close look (J5 90) to a line's top turned over (J5 270) the arm went
+    up to a carry pose and back -- the open fingers, swung across, came over the front deck."""
+    look = {1: 46, 2: 63, 3: 38, 4: 10, 5: 90, 6: 76}
+    top = {**look, 5: 270}
+    assert m3arm.glide_problem(look, [top]) is not None   # turned open: over the deck
+    legs = m3pick.turn_way(look, top)
+    assert legs is not None and legs[-1] == [top] and legs[0][0][6] >= m3pick.TURN_SHUT and legs[1][0][6] >= m3pick.TURN_SHUT
+    assert all(p[2] == look[2] for leg in legs for p in leg)   # no carry pose: turned where it is
+    assert m3pick.turn_way(look, {**look, 5: 100}) is None   # a small turn goes straight (way_to's)
+
+
+def test_the_drop_spots_keep_off_the_standing_lid_and_clear_of_the_walls():
     box = box_here()
     across = [float(m3pick.in_box(box, s)[1]) for s in m3pick.box_spots(box)]
     assert min(across) >= -m3pick.BOX_INSIDE[1] / 2 + m3pick.BOX_LID_MARGIN - 1e-9   # the lid: -into
-    assert max(across) <= m3pick.BOX_INSIDE[1] / 2 - m3pick.BOX_MARGIN + 1e-9
+    assert max(across) <= m3pick.BOX_INSIDE[1] / 2 - m3pick.BOX_FRONT_MARGIN + 1e-9   # the front: +into
+    along = [abs(float(m3pick.in_box(box, s)[0])) for s in m3pick.box_spots(box)]
+    assert max(along) <= m3pick.BOX_INSIDE[0] / 2 - m3pick.BOX_MARGIN + 1e-9   # the sides
+    assert len(m3pick.box_spots(box)) >= 6   # room to spread the drops still
 
 
 def test_the_taught_aim_follows_the_grips_near_a_thing_and_their_mean_far_from_them():

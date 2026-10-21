@@ -2,7 +2,8 @@
 which stands up at the far side -- the box found from it with one look, empty or full (its black
 walls give a depth camera nothing; the marker reads from 28 cm, 109 px), from the colour picture
 alone: no depth. The inside: `along` the lid's hinge, `into` it from the hinge towards the robot,
-the walls' height; drops keep BOX_MARGIN from the walls and let go BOX_DROP_OVER over their tops.
+the walls' height; drops keep BOX_MARGIN from the side walls, BOX_FRONT_MARGIN from the front one and
+BOX_LID_MARGIN from the lid's side, and let go BOX_DROP_OVER over their tops.
 
 Coordinates are the robot's base frame (x forward, y left, z up, m), whose floor is at `floor_z`
 (the M3's base_link is on the floor: 0; the X3's base plate is 0.19 m above its table: -0.19).
@@ -18,7 +19,11 @@ import numpy as np
 
 BOX_MARKER = ("DICT_4X4_50", 10, 0.064)   # family, id, side (m, measured: 64.0-64.7 from the M3's depth)
 BOX_INSIDE = (0.15, 0.11, 0.038)          # m: along, across, walls
-BOX_MARGIN = 0.025
+BOX_MARGIN = 0.04         # m from the side walls (the ends `along`) and ...
+BOX_FRONT_MARGIN = 0.045  # ... from the front one (the robot's side, +`into`): 2026-10-21, the user's -- at 2.5
+# cm cubes and blocks were let go over the edge and slipped out. What is held reaches 2 cm round the spot
+# (a 40 mm cube), 3 cm along a lying block, which hangs along the arm's reach -- the box's `into` when it
+# faces the arm -- and the box is read +-1.5 cm. The lid's side keeps its own, the open lid a ramp into it:
 BOX_LID_MARGIN = 0.045   # m from the lid's side: what is let go comes straight down past the standing lid
                          # (2026-10-05: a drop 2.5 cm from it, and the box was hit and turned)
 BOX_DROP_OVER = 0.04
@@ -88,13 +93,16 @@ def box_corners(box: dict, lift: float = 0.0, floor_z: float = 0.0) -> list[np.n
 
 
 def box_spots(box: dict, step: float = 0.02) -> list[np.ndarray]:
-    """Spots inside the box to let go over, BOX_MARGIN clear of its walls and BOX_LID_MARGIN of the
-    lid's side (the hinge: -`into`), `step` m apart."""
+    """Spots inside the box to let go over, BOX_MARGIN clear of its side walls, BOX_FRONT_MARGIN of the
+    front one and BOX_LID_MARGIN of the lid's side (the hinge: -`into`), about `step` m apart, both
+    ends of each way taken."""
     along_m, across_m, _ = BOX_INSIDE
     a_half = along_m / 2 - BOX_MARGIN
-    b_lo, b_hi = -across_m / 2 + BOX_LID_MARGIN, across_m / 2 - BOX_MARGIN
-    return [box["centre"] + box["along"] * a + box["into"] * b
-            for a in np.arange(-a_half, a_half + 1e-9, step) for b in np.arange(b_lo, b_hi + 1e-9, step)]
+    b_lo, b_hi = -across_m / 2 + BOX_LID_MARGIN, across_m / 2 - BOX_FRONT_MARGIN
+
+    def ticks(lo, hi):
+        return np.linspace(lo, hi, max(1, round((hi - lo) / step)) + 1)
+    return [box["centre"] + box["along"] * a + box["into"] * b for a in ticks(-a_half, a_half) for b in ticks(b_lo, b_hi)]
 
 
 def same_box(seen: dict, known: dict) -> bool:

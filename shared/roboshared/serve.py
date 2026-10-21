@@ -127,7 +127,7 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
     elif url.path == "/pick/find" and "find" in picker.jobs():
         answer = picker.start("find")
     elif url.path == "/pick/named" and "pick_named" in picker.jobs():
-        answer = picker.start("pick_named", name=str(params.get("name") or ""))
+        answer = picker.start("pick_named", name=str(params.get("name") or ""), drive=bool(params.get("drive")))
     elif url.path == "/pick/settings":
         try:
             answer = {"settings": picker.set_settings(params)}

@@ -308,11 +308,12 @@ def close_view(thing: dict, others: list[dict]) -> dict | None:
     return None
 
 
-def pick_named(p, name: str) -> None:
-    """Find the thing taught as `name` and pick it (the surest, when several are)."""
+def pick_named(p, name: str, drive: bool = False) -> None:
+    """Find the thing taught as `name` and pick it (the surest, when several are); `drive`: the base
+    may drive up to it, and back to the box (2026-10-21, the event's fetch)."""
     named = [o for o in find(p) if o["taught"] == name]
     if not named:
         raise RuntimeError(f"no '{name}' in view")
     target = max(named, key=lambda o: o["sure"])
     p.say(f"picking '{name}' ({target['sure']:.2f}) at x {target['centre'][0]:.3f} y {target['centre'][1]:+.3f}")
-    p.pick_once(at=[float(target["centre"][0]), float(target["centre"][1])])
+    p.pick_once(at=[float(target["centre"][0]), float(target["centre"][1])], drive=drive)
