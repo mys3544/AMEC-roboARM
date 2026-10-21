@@ -397,9 +397,13 @@ VIEW_TURN = 20
 VIEW_ARCS = tuple((high, radius) for high in (0.20, 0.22, 0.24, 0.26) for radius in (0.17, 0.19))
 HELD_ROUND = 0.02   # m what is held reaches round the grip point (a 40 mm cube's half): a thing just
                     # picked in front of the bumper is not over the chassis yet
-BOX_LOOKS = (180, 135, 90, 45, 0)   # J1s the box is looked for at, SIDE_LOOK's other joints: 15-61 cm out
-                                    # from the arm's axis each way -- the box anywhere in the arm's half
-                                    # circle, its marker facing the arm (the user's, 2026-10-02)
+BOX_LOOKS = (180, 158, 135, 112, 90, 68, 45, 22, 0)   # J1s the box is looked for at, SIDE_LOOK's other joints:
+                                    # 15-61 cm out from the arm's axis each way -- the box anywhere in the arm's
+                                    # half circle, its marker facing the arm (the user's, 2026-10-02). Every 22.5
+                                    # deg, not 45 (2026-10-21, the user: "it misses it even when it is in the
+                                    # picture"): the box beside the robot's right, 25 cm out, had its marker cut by
+                                    # the picture's right edge at J1 135 and by its left edge at 180 -- a 45 deg turn
+                                    # moved it a whole picture (640 px, 67 deg), the marker a quarter of one
 CARRY_OVER = 0.02   # m the carry swings round above the drop-off's height
 ARC_STEP = 15       # deg of J1 between the carry's points
 

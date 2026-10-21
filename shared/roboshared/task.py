@@ -57,6 +57,10 @@ MAX_MISSES = 2   # clean_up gives a spot up after this many misses in a row
 APPROACHES = 3   # drives towards things before a pick gives up
 DRIVE_GAP = 0.03   # m the base's footprint keeps from the drop-off box and the line it has dropped onto
 LINE_CLEAR_M = 0.04   # m a sort's line out on the right keeps from the drop-off box's walls
+BOX_NEAR = 0.035   # m round the drop-off box's walls what is seen is the box's and not picked: its black walls give
+# the depth a relief past them (2026-10-21, the X3: a "30 mm cube" 3.6 cm from the inside, at 2 cm round it was
+# picked -- air; the M3 too named the walls cubes). A piece really lying that near has the open fingers come
+# down on the wall
 
 
 class Stopped(Exception):
@@ -591,10 +595,10 @@ class Task:
         return any(np.linalg.norm(np.asarray(o["centre"][:2], float) - spot) <= MATCH_M for spot in self.skip)
 
     def dropped_here(self, o: dict) -> bool:
-        """`o` lies where this job lets go -- in the drop-off box (its walls and 2 cm round) or on the
+        """`o` lies where this job lets go -- in the drop-off box (its walls and BOX_NEAR round) or on the
         line out on the right once dropped onto -- and is not to be picked (the side looks see there)."""
         p = np.asarray(o["centre"][:2], float) + self.offset   # in the job's start frame, the box's
-        if self.box is not None and boxes.inside(self.box, p, boxes.BOX_WALL + 0.02):
+        if self.box is not None and boxes.inside(self.box, p, boxes.BOX_WALL + BOX_NEAR):
             return True
         x = float(self.AXIS[0])
         return bool(self.line_drops) and abs(p[0] - x) < 0.05 \

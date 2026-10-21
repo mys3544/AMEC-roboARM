@@ -145,7 +145,8 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
         the lane clear; the cube 35-45 cm ahead.
   - [ ] Later, if wanted: Prines goes for the nearest piece out of reach even with others in reach
         (and a named fetch takes only that thing: Task.pick tries every piece in reach, nearest `at`
-        first); a second box look tilted out for a box further forward.
+        first); a second box look tilted out for a box further forward; the log saying why it does
+        not drive (2026-10-21: the box too near, and only "out of reach" in the log).
   - [x] First try (2026-10-21): no drive -- the table's
         clutter by the bumper (a cable grommet, a phone) was in the lane, and the box at the
         front-left was never seen (**the M3's left looks see its own deck**). So: the box **on the
@@ -161,11 +162,47 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
     **Nauč sa** (its name typed, ~50 s), put it 35-45 cm out, **Prines** with the name ("prines
     <name>") -> **Roztrieď** (cubes into the box, blocks onto the line: the box then back in front, the
     right side clear) -> on the X3 meanwhile Uprac stôl / Roztrieď.
-- [ ] **Thursday's checklist** (draft, to agree on; updated with 2026-10-21's lessons):
+- [x] **The dress rehearsal on the phone's hotspot** (2026-10-21, 14:40-16:20, in the lab):
+  - **Cold start** (both robots off and on by the switch): every service up by itself, the X3's bridge
+    after 114 s, the M3's after 151 s. The M3's arm reads "not connected" until the first command when
+    Yahboom's micro-ROS agent (desktop autostart) comes up after the bridge: the first button connects it.
+  - **The hotspot**: both robots joined it (the X3 in 4 s), the laptop too (Windows went back to
+    IISLab-AMEC once by itself: connect again); the console found both **by name** on it (mDNS works
+    on the Android hotspot: laptop 10.31.21.150, M3 .191, X3 .81); both cameras streamed fine on 2.4 GHz.
+  - **The M3 must start on the network it works on**: moved from IISLab to the hotspot while running,
+    its camera stopped (the bridge restarted the driver every 21 s, no frames) and its arm too -- ROS 2
+    (CycloneDDS) keeps the address it started with. A bridge restart brought the camera back, not the
+    arm (the agent's); started on the hotspot (IISLab-AMEC's autoconnect off for the test, on again
+    after) everything worked. So at the event: hotspot on BEFORE the robots; if the WiFi drops and the
+    M3 comes back with another address, power it off and on.
+  - **The show**: M3 look 11 s; clean-up 2 of 2, 44 s; sort **7 of 7** (5 cubes into the box, 2 blocks
+    onto the line), 2 min 1 s; **fetch: 30 mm cube 34 cm out, 10 cm forward and 2 right, back, into the
+    box, 33 s**. Fetch failures on the way: the box's middle 21.8 cm right of the robot's -> no drive
+    (DRIVE_GAP from the box at any distance), only "out of reach" in the log; pieces in reach taken
+    first; a piece in reach that no grip reaches ends a fetch ("Refused: no way down with the fingers
+    turned"). X3 clean-ups 6 of 6 (the 6th a phantom, below), 6 of 8, 7 of 8 after the refit (below).
+    Not rehearsed: Teach + fetch by name. Voice once ("m3 pozri sa" right; "Pôrissa" unknown).
+  - **Fixed and deployed that afternoon** (tests: M3 134, X3 358, shared 27):
+    - **The M3's box looks every 22.5 deg** (m3pick.BOX_LOOKS, were 45): the box beside the robot's right
+      had its marker cut by the picture's right edge at J1 135 and its left edge at 180 (640 px, 67 deg;
+      the marker a quarter of the picture) -- "marker 10 not seen all round". Checked live: found.
+    - **The zone round the box 4.5 cm** (roboshared.task BOX_NEAR, was 2 cm past the 1 cm wall): the X3
+      picked a "30 mm cube" 3.6 cm from the box's inside -- air (the black walls' relief in the depth).
+    - **The X3's survey turn smooth**: each picture's yaw from the commanded setpoint less the servos'
+      0.1 s trail, not read back -- the read held the serial line the setpoint stream needs, and the
+      stream caught up on its clock: jumps of 10-20 deg now and then (the user: "it looks bad"). Smooth
+      now (the user), the look again still 1-11 mm off the search's.
+    - **The X3's near and outer looks refitted** (calibrate_table.py with the board; since the morning's
+      camera refit only the primary was calibrated, so nothing under ~11 cm was seen): from yaw 0 only,
+      0.7 mm worst each (pooled over 5 yaws 7.2 and 16.8 mm: the board against J1's axis); verify (near):
+      fingertip 7 mm short (the arm's own reach) and 4-5 mm left. Then cubes at 9.5-12 cm found and picked
+      (two at the first go, one at the second). Fits kept in data/cameras/c930e/backup/.
+- [ ] **Thursday's checklist** (updated with the rehearsal):
   - **The network is the phone's hotspot** (the user, 2026-10-21): "Zakrič Žabka" (WPA2, 2.4 GHz, no
     auto-off), which both robots know (hotspot-zabka, autoconnect, priority 1 -- IISLab-AMEC, 10, is
-    not there). The phone's hotspot on first, then the robots, the laptop on it too; the console
-    finds the robots by name (`serve.py --scan` if not). The router is left at home.
+    not there). **The phone's hotspot on first, then the robots** (the M3 keeps the address it starts
+    with), the laptop on it too; the console finds the robots by name (`serve.py --scan` if not). The
+    router is left at home.
   - Pack: both robots and their chargers; the box (marker 10); the kit (30 and 40 mm cubes, the
     blocks, the wooden 40 mm cube) and the taught things (fish, apricot, news, cosmetics, the yellow
     cylinder, the monster can, the jetson box); the laptop and its charger, a mouse; the phone
@@ -175,15 +212,21 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
   - On site, in order: the phone's hotspot on -> both robots on (their services start at boot,
     ~2 min) -> the laptop on the hotspot -> `.venv\Scripts\python console\serve.py` (finds the robots by name,
     starts the LLM, ~20 s) -> Chrome at http://localhost:8099/demo.html (F5 after any console
-    restart) -> Pozri sa on each, then Uprac stôl on each with 3-4 pieces -> H for the visitors' view.
+    restart) -> Pozri sa on each (the M3's arm card may say "not connected" until then: the first
+    button connects it), then Uprac stôl on each with 3-4 pieces -> H for the visitors' view.
   - Each table, its marker facing the arm: for a **sort** (Roztrieď) **the box in front** (J1 90-120,
     ~15-25 cm straight ahead) and **the right side clear** -- the blocks go onto the line out there, a
     box there is refused; for the M3's **fetch** (Prines) **the box beside it on the right**, level
-    with its front wheels, ~25 cm right of its middle, the lane ahead clear. Never on the M3's left:
-    it cannot see there. Pieces 15-25 cm out, not right against the robot.
+    with its front wheels, **its middle 25-26 cm right of the robot's** (21.8 cm: no drive), the lane
+    ahead clear, **nothing else in the arm's reach** (it takes that first), one cube 35-40 cm ahead.
+    Never on the M3's left: it cannot see there. M3 pieces 15-25 cm out, not right against the robot.
+    The box near the arm (15-25 cm): further out the marker on the lid can stand out of the box look's
+    top edge (seen once, 2026-10-21).
   - **The X3's aim**: its camera was refitted 2026-10-21 and it aims by the camera alone (taught aim
     0, reach offset 17 mm, its saved settings; 9 of 10 picked with it). Its box no further than ~28 cm
-    from its base (its centre), or the drops pile up on the few spots it reaches. First clean-up misses with the fingertip landing where
+    from its base (its centre), or the drops pile up on the few spots it reaches. Its near and outer
+    looks refitted in the afternoon: X3 pieces from ~9 cm out, best 12-25 cm (the look again finds
+    nothing under ~11 cm, so a miss there is picked at the second go). First clean-up misses with the fingertip landing where
     aimed -> the camera moved: look at its mark; quick fix the console's "reach offset" setting
     (mm further out), proper fix x3plus/tools/calibrate_table.py with the board (bridge stopped).
   - **The M3**: fingertips 8 mm over the table, 5 only where nothing else grips (console settings).
@@ -192,7 +235,9 @@ The user's three for these two days (asked 2026-10-19), and first thing on Tuesd
   - When something fails: a robot not found -> `serve.py --scan`; still not -> power it off and on
     with the hotspot on (it joins within a minute); voice not understood -> the typed line or the
     buttons; the LLM down -> the grammar answers by itself; the M3's board silent -> power off and
-    on (2026-10-15); a camera stalled -> the bridge restarts its driver, else power off and on.
+    on (2026-10-15); a camera stalled -> the bridge restarts its driver, else power off and on; **the
+    M3's camera and arm dead after the WiFi dropped** -> power the M3 off and on (the hotspot on);
+    **a fetch that does not drive** -> the box too near the robot's side, or a piece within reach.
   - Batteries: the M3 refuses under 10.5 V (the page warns under 10.8), the X3 under 10.0 (warns
     under 10.5) -- charge between showings.
 

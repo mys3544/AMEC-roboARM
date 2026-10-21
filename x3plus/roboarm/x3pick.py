@@ -53,6 +53,8 @@ REFINE_IF_OFF_DEG = 3   # a look already this close to head-on needs no second o
 DROP_ZONE_M = 0.080  # what lies this near the drop line was put there: not picked
 SETTLE_S = {"sonix": 1.2, "c930e": 0.4}[cfg.WRIST_CAMERA]
 SCAN_POLL_S = 0.02
+TRAIL_S = 0.1   # s the servos trail the newest setpoint of a glide: each is given arm.STREAM_AHEAD (2) of its
+                # arm.STREAM_S (0.05) to get there
 YAW_SETTLE_S = 0.15   # a look that only turned the base keeps its exposure: this much still
 VISION_CHECK_S = 30.0   # how long the vision service's answer to /health is believed
 BOX_LOOK = {2: 100, 3: 20, 4: 0, 5: 90}   # the angled look of the depth tests (2026-10-06): the table from
@@ -389,7 +391,14 @@ class Picker(Task):
                             time.sleep(SCAN_POLL_S)
                             continue
                         frame = self.frames().settled(0.0)
-                        seen.append(detector.submit(on_frame, self.station(entry, self.here()[1]), frame))
+                        # the yaw: where the arm is told to be, less how far the servos trail that -- not
+                        # read back, which held the line the stream needs every STREAM_S for 50-300 ms (a
+                        # joint asked again), and the stream caught up on its clock: the turn jumped 10-20
+                        # deg now and then (2026-10-21, the user: "it looks bad")
+                        yaw = self.arm.commanded()[1]
+                        if self.arm.moving():
+                            yaw -= ahead * self.dps("scan_dps") * TRAIL_S
+                        seen.append(detector.submit(on_frame, self.station(entry, yaw), frame))
                         pending.pop(0)
                         if not self.arm.moving():   # the glide ended (short of the rest, or at the last)
                             break

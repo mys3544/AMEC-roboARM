@@ -152,6 +152,18 @@ def test_with_no_box_the_drops_go_on_the_line_and_are_not_picked_again():
     assert robot.dropped_here(robot.table[0])
 
 
+def test_what_reads_by_the_box_walls_is_the_box_not_a_piece():
+    """2026-10-21, the X3: a "30 mm cube" read 3.6 cm past the box's inside by its wall towards the robot
+    (the box at x 0.140 y -0.191, turned -172 deg) was picked -- air. A piece further off is still one."""
+    robot = Pretend([])
+    t = math.radians(-172.0)
+    along = np.array([math.cos(t), math.sin(t)])
+    robot.box = {"centre": np.array([0.140, -0.191]), "along": along, "into": np.array([along[1], -along[0]]),
+                 "turn": -172.0, "items": []}
+    assert robot.dropped_here(thing(0.115, -0.103))
+    assert not robot.dropped_here(thing(0.115, -0.07))
+
+
 def test_a_sort_puts_the_blocks_on_the_line_and_the_cubes_into_the_box():
     robot = Pretend([thing(0.18, 0.02), thing(0.20, 0.08, kind="block"), thing(0.16, 0.12)], box_at=(90, (-0.05, 0.30)))
     state = run("sort", robot)
