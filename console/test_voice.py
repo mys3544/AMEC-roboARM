@@ -131,6 +131,16 @@ def test_anything_else_is_unknown_and_says_why_when_it_can(said, why):
     assert command.get("why") == why
 
 
+@pytest.mark.parametrize("said, command", [   # 2026-10-21, the event's fetch: the M3 drives up to it
+    ("M3, prines kocku", {"action": "fetch", "robot": "m3", "kind": "cube", "colour": None, "size_mm": None}),
+    ("Fetch the red cube", {"action": "fetch", "robot": "m3", "kind": "cube", "colour": "red", "size_mm": None}),
+    ("Zober kocku a prines ju", {"action": "fetch", "robot": "m3", "kind": "cube", "colour": None, "size_mm": None}),
+    ("X3, bring me a block", {"action": "fetch", "robot": "m3", "kind": "block", "colour": None, "size_mm": None}),
+])
+def test_a_fetch_is_the_m3s_whichever_robot_is_named(said, command):
+    assert voice.parse(said) == command
+
+
 def test_the_words_are_plain_however_they_were_written():
     assert voice.plain_words("Stůj! Pick up the X-3's 30mm cube.") == [
         "stuj", "pick", "up", "the", "x", "3", "s", "30", "mm", "cube"]

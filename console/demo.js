@@ -23,6 +23,7 @@ const TEXT = {
     heard: 'Počul som:', typed: 'alebo napíš: uprac stôl, X3 uprac stôl, domov, stop',
     keys: 'H skryje tlačidlá · medzerník zastaví všetko',
     cleanup: 'Uprac stôl', look: 'Pozri sa', home: 'Domov', sort: 'Roztrieď', teach: 'Nauč sa', find: 'Nájdi', pickNamed: 'Zober',
+    fetch: 'Prines', fetchAny: 'Prinášam kúsok', fetchThing: 'Prinášam: {name}',
     thing: 'názov veci, napr. marhuľa', pretend: '(simulácia)', noArms: 'V robots.json nie je žiadna ruka.',
     connecting: 'Pripájam sa…', offline: 'Nepripojený', nosignal: 'Zatiaľ bez obrazu', cameraStalled: 'Kamera stojí',
     pillBusy: 'pracuje', pillIdle: 'čaká', pillOffline: 'nepripojený',
@@ -53,6 +54,7 @@ const TEXT = {
     heard: 'Heard:', typed: 'or type: clean up, X3 clear the table, go home, stop',
     keys: 'H hides the buttons · Space stops all',
     cleanup: 'Clean up', look: 'Look', home: 'Home', sort: 'Sort', teach: 'Teach', find: 'Find', pickNamed: 'Pick it',
+    fetch: 'Fetch', fetchAny: 'Fetching a piece', fetchThing: 'Fetching: {name}',
     thing: 'its name, e.g. apricot', pretend: '(pretend)', noArms: 'No arm in robots.json.',
     connecting: 'Connecting…', offline: 'Not connected', nosignal: 'No picture yet', cameraStalled: 'Camera stalled',
     pillBusy: 'working', pillIdle: 'idle', pillOffline: 'offline',
@@ -188,6 +190,12 @@ class Arm {   // an arm's pick service (/pick/* on the M3's bridge or the X3's),
     $('.teach-it', row).onclick = () => { const n = named(); if (n) this.act('pick/teach', { name: n }); };
     $('.find', row).onclick = () => this.act('pick/find', {});
     $('.pick-named', row).onclick = () => { const n = named(); if (n) this.act('pick/named', { name: n }); };
+    // the fetch (2026-10-21, for the event): the base drives up to it when it is out of reach, picks it,
+    // drives back and drops it into the box -- the thing named, else the nearest kit piece
+    $('.fetch', row).onclick = () => {
+      const n = name.value.trim();
+      this.act(n ? 'pick/named' : 'pick/start', n ? { name: n, drive: true } : { kind: null, drive: true });
+    };
   }
 
   async act(path, body) {
@@ -397,6 +405,9 @@ async function main() {
       look: () => ['pick/look', {}, t('look')],
       find: () => ['pick/find', {}, t('find')],
       pick_named: () => ['pick/named', { name: c.name }, t('pickThing', { name: c.name })],
+      fetch: () => c.name   // the base may drive up to it and back (the M3: the X3 does not drive yet)
+        ? ['pick/named', { name: c.name, drive: true }, t('fetchThing', { name: c.name })]
+        : ['pick/start', { kind: c.kind ?? null, colour: c.colour, size_mm: c.size_mm, drive: true }, t('fetchAny')],
       sort: () => {   // cubes into the box, blocks on the line out on the right (roboshared.task's sort)
         if (c.by === 'colour') throw new Error(t('sortColour'));   // the robots read no colours yet
         return ['pick/sort', { line: 'block' }, t('sortKind')];
@@ -416,7 +427,8 @@ async function main() {
     return `${arm.label()}: ${what}${colour ? ` (${t('anyColour')})` : ''}`;
   }
   async function job(command) {   // on the robot named, or on both
-    const kinds = command.robot === 'both' ? ['m3arm', 'x3arm'] : [command.robot === 'x3' ? 'x3arm' : 'm3arm'];
+    const kinds = command.action === 'fetch' ? ['m3arm']   // only the M3 drives
+      : command.robot === 'both' ? ['m3arm', 'x3arm'] : [command.robot === 'x3' ? 'x3arm' : 'm3arm'];
     const done = await Promise.allSettled(kinds.map(kind => one(kind, command)));
     const said = done.map(d => d.status === 'fulfilled' ? d.value : d.reason.message).join(' · ');
     if (done.every(d => d.status === 'rejected')) throw new Error(said);
@@ -424,7 +436,7 @@ async function main() {
   }
   window.consoleActions = {
     stop: async () => { await stopAll(); return t('allStopped'); },
-    ...Object.fromEntries(['pick', 'clean_up', 'home', 'look', 'find', 'pick_named', 'sort'].map(a => [a, job])),
+    ...Object.fromEntries(['pick', 'clean_up', 'home', 'look', 'find', 'pick_named', 'sort', 'fetch'].map(a => [a, job])),
   };
 
   addEventListener('keydown', e => {

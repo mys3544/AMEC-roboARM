@@ -67,8 +67,9 @@ SMALL_STEMS = ("small", "little", "tiny", "mal")   # mal-: Slovak/Czech malú, m
 BIG_STEMS = ("big", "large", "velk")   # velk-: veľkú, velkou
 CLEAN_STEMS = ("clean", "clear", "tidy", "uprac", "uprat", "uklid")
 HOME_WORDS = {"home", "homing", "domov", "domu"}
-PICK_STEMS = ("pick", "grab", "take", "fetch", "lift",
+PICK_STEMS = ("pick", "grab", "take", "lift",
               "zober", "zdvihni", "vezmi", "seber", "zvedni")   # Slovak, Czech
+FETCH_STEMS = ("fetch", "bring", "prines", "dones")   # the M3 drives up to it, picks it, brings it back
 ALL_STEMS = ("every", "vset", "vsech")   # and "all": pick them all, pick everything -> clean up
 
 
@@ -138,6 +139,7 @@ def parse(text):
         {"action": "stop", "robot": "all"}       stop / halt / freeze, stoj, stůj, zastav
         {"action": "pick", "robot": "m3"|"x3", "kind": "cube"|"block"|None,
          "colour": "red"|...|None, "size_mm": 30|40|None}
+        {"action": "fetch", "robot": "m3", ...}  as pick: fetch, bring, prines, dones (the M3 drives)
         {"action": "clean_up", "robot": ...}     clean up, clear the table / arena
         {"action": "home", "robot": ...}         go home
         {"action": "unknown", "text": text}      anything else (with "why", when it is known)
@@ -157,6 +159,9 @@ def parse(text):
     if any(w.startswith(PICK_STEMS) for w in words):
         everything = any(w == "all" or w.startswith(ALL_STEMS) for w in words)
         actions.add("clean_up" if everything else "pick")
+    if any(w.startswith(FETCH_STEMS) for w in words):
+        actions.discard("pick")   # "zober kocku a prines ju": the fetch
+        actions.add("fetch")
     if not actions:
         return {"action": "unknown", "text": text}
     if len(actions) > 1:
@@ -165,8 +170,10 @@ def parse(text):
     if len(robots) > 1:
         return {"action": "unknown", "text": text, "why": "both robots named"}
     action, robot = actions.pop(), robots.pop() if robots else "m3"
-    if action != "pick":
+    if action not in ("pick", "fetch"):
         return {"action": action, "robot": robot}
+    if action == "fetch":   # only the M3 drives
+        robot = "m3"
     kind = first(words, lambda w: "cube" if w.startswith(CUBE_STEMS)
                  else "block" if w.startswith(BLOCK_STEMS) else None)
     size = None if kind == "block" else find_size(words)
@@ -174,7 +181,7 @@ def parse(text):
         return {"action": "unknown", "text": text, "why": f"no {size} mm cube in the kit"}
     colour = first(words, lambda w: COLOURS.get(w) or next(
         (c for stem, c in COLOUR_STEMS.items() if w.startswith(stem)), None))
-    return {"action": "pick", "robot": robot, "kind": kind, "colour": colour, "size_mm": size}
+    return {"action": action, "robot": robot, "kind": kind, "colour": colour, "size_mm": size}
 
 
 # --- the recogniser --------------------------------------------------------------------------

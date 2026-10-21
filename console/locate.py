@@ -95,9 +95,10 @@ def locate(robots, scan_too=False, say=print):
     labs = {robot_of(spec["kind"]): urllib.parse.urlsplit(spec["url"]).hostname for spec in robots}
 
     def where(robot):   # by its name, or at its robots.json address: (address, how), or None
-        named = resolve(NAMES[robot])
-        if named and who(health(named)) == robot:
-            return named, f"by its name {NAMES[robot]}"
+        for _ in range(2):   # 2026-10-21 the X3's name missed once as serve.py started, then never (a cold lookup)
+            named = resolve(NAMES[robot], 4.0)
+            if named and who(health(named, 1.5)) == robot:
+                return named, f"by its name {NAMES[robot]}"
         if who(health(labs[robot])) == robot:
             return labs[robot], "at its robots.json address"
         return None

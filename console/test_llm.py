@@ -52,6 +52,26 @@ def test_calls_become_the_pages_commands():
     assert full(action="unknown") == {"action": "unknown", "text": "said"}
 
 
+def test_a_fetch_is_the_m3s_for_a_piece_or_a_thing_taught():
+    """2026-10-21, the event's fetch: only the M3 drives, whichever robot was named."""
+    piece = llm.intent(llm.full({"action": "fetch", "robot": "x3", "kind": "cube", "colour": "red"}), "Plus, prines kocku")
+    assert piece == {"action": "fetch", "robot": "m3", "name": None, "kind": "cube", "colour": "red", "size_mm": None}
+    thing = llm.intent(llm.full({"action": "fetch", "name": "fish", "kind": "cube"}), "prines rybu")
+    assert thing["name"] == "fish" and thing["kind"] is None
+
+
+def test_the_robots_words_as_the_recogniser_mangles_them_are_put_back():
+    """2026-10-21, Slovak spoken on the robots: "valec" and "uprac" came out as French and English."""
+    for heard, meant in (("Plus Zober Valence.", "Plus Zober valec."), ("plus, zober, balet", "plus, zober, valec"),
+                         ("Plus, Vezmi Žolty Vallet.", "Plus, Vezmi Žolty valec."), ("Plus o prata.", "Plus uprac."),
+                         ("plus u pracovstvo", "plus uprac"), ("O prato stol", "uprac stol"),
+                         ("plus u Prat stu.", "plus uprac stu."), ("X tri plus у братство.", "X tri plus uprac."),
+                         ("Икс три убрать ствол.", "Икс три uprac stôl.")):
+        assert llm.as_meant(heard) == meant, heard
+    for said in ("uprac stôl", "zober žltý valec", "pracuj", "zober kocku"):   # left as they are
+        assert llm.as_meant(said) == said
+
+
 def test_the_schema_holds_every_field_and_only_taught_names():
     s = llm.schema(["fish", "news"])
     assert s["required"] == llm.FIELDS and set(s["properties"]) == set(llm.FIELDS)

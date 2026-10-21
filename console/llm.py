@@ -18,6 +18,7 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import threading
@@ -41,25 +42,34 @@ TIMEOUT_S = 6   # a command later than this is the grammar's
 WARM_S = 180    # the first answer after a start: 15 s on the RTX 2070 Super (CUDA readies itself), 0.4 s after
 CASES = HERE / "llm_cases.json"
 
-ACTIONS = ["pick", "pick_named", "clean_up", "sort", "look", "find", "home", "stop", "unknown"]
+ACTIONS = ["pick", "pick_named", "fetch", "clean_up", "sort", "look", "find", "home", "stop", "unknown"]
 COLOURS = ["red", "green", "blue", "yellow", "orange", "purple", "white", "black", "wood"]
 PROMPT = """You turn one spoken command for two robot arms into one function call, as JSON.
 The speech was written down by a recogniser: words may be misheard, accents missing. The speaker
-talks Slovak, Czech or English.
+talks Slovak, Czech or English. The recogniser often writes Slovak as Russian in Cyrillic
+("Икс три убрать ствол" is "X3 uprac stôl") or in Polish-looking spellings ("kotku", "kostkę" is
+"kocku"; "kwadrę" is "kváder"; "velkou" is "veľkú"): read them as the Slovak they sound like.
 
 Robots: "m3" (the M3 Pro: also "M3", "em tri", "Pro"), "x3" (the X3 Plus: also "X3", "iks tri",
-"Plus"), named anywhere in the sentence. "both" only when both robots are meant ("oba roboty",
-"obaja", "both robots"): "všetko", "všetky", "all" are about the pieces, not the robots.
-No robot named: "m3".
+"Plus"), named anywhere in the sentence. A robot named is that robot, whatever it is asked.
+"both" only when both robots are meant ("oba roboty", "obaja", "both robots"): "všetko",
+"všetky", "all" are about the pieces, not the robots. No robot named: "m3".
 On each robot's table: kit pieces -- cubes of 30 mm (small, "malá") and 40 mm (big, "veľká"),
 and blocks of 30 x 30 x 60 mm ("kváder", "hranol", "block", "kvádr") -- and a box they go into.
 
 Functions (action):
 - pick: pick up ONE kit piece into the box. kind "cube"/"block", colour, size_mm 30/40 only when
   said ("nejaký kúsok", "something": all null).
-- pick_named: the M3 picks a thing it was taught, by its name: anything asked for that is not a
-  cube or a block (a fish, an apricot, newspapers, a can). name: the known name it means, said
-  in any language ("rybu" -> "fish", "marhuľu" -> "apricot"). Known names: {names}.
+- pick_named: the M3 picks a thing it was taught, by its name (only the M3 has any, whichever robot
+  is named): anything asked for that is not a cube or a block (a fish, an apricot, newspapers, a
+  can). name: the known name it means, said in any language and maybe by one of its words alone
+  ("rybu" -> "fish", "marhuľu" -> "apricot", "plechovku" -> a "... can", "valec" -> a "...
+  cylinder"). Known names: {names}.
+  A cube or block word, however misheard ("kocka", "kotka", "kostka", "kváder", "cube"), is a
+  pick, never pick_named. A thing that is none of the known names (scissors): unknown.
+- fetch: the M3 goes for a piece or a taught thing, driving up to it when it is out of reach, picks
+  it and brings it back into the box ("prines", "dones", "prineste", "bring", "fetch"; "zober",
+  "podaj" are pick or pick_named): kind, colour, size_mm as pick, or name as pick_named.
 - clean_up: every piece in reach into the box, one by one ("uprac", "ukliď", "clear the table",
   "zober všetko"). kind only when the speaker limits it to cubes or to blocks ("uprac kocky");
   "uprac stôl" has kind null.
@@ -68,7 +78,8 @@ Functions (action):
 - find: the M3 names the taught things it sees ("nájdi", "čo vidíš", "what do you see").
 - home: the arm back to rest ("domov", "domů", "go home").
 - stop: stop.
-- unknown: anything else -- not a command for the robots.
+- unknown: anything else -- not a command for the robots, or words you cannot read as one
+  command for sure (unknown moves nothing; a wrong guess moves a robot).
 Every field not said is null."""
 EXAMPLES = [   # (said, the call): one of each, in the three languages
     ("zober červenú kocku", {"action": "pick", "robot": "m3", "kind": "cube", "colour": "red", "size_mm": None}),
@@ -79,8 +90,26 @@ EXAMPLES = [   # (said, the call): one of each, in the three languages
     ("roztrieď kúsky podľa farby", {"action": "sort", "robot": "m3", "by": "colour"}),
     ("čo vidíš na stole", {"action": "find", "robot": "m3"}),
     ("aké je dnes počasie", {"action": "unknown"}),
+    ("podaj mi kľúče", {"action": "unknown"}),   # a thing not taught (2026-10-21: "nožnice" was taken for "news")
 ]
 FIELDS = ["action", "robot", "kind", "colour", "size_mm", "name", "by"]
+# The robots' few words as the recogniser mangles them, even into French or English (2026-10-21,
+# Slovak spoken on the robots) -> the word meant, put back before the model reads the sentence: told
+# these in its prompt, the 4B model began picking cubes for "valec".
+SOUNDS_LIKE = [
+    (re.compile(r"\b(?:v[aá]l+e[ct]s?|vallet|valence|bal+et)\b", re.IGNORECASE), "valec"),   # a cylinder
+    (re.compile(r"\b(?:zuber|zobar)\b", re.IGNORECASE), "zober"),                             # pick
+    (re.compile(r"\b(?:u ?prac\w*|[uo] ?prat\w*|prac)\b", re.IGNORECASE), "uprac"),           # clean up
+    (re.compile(r"\b(?:у ?братств\w*|убратств\w*|убрать)", re.IGNORECASE), "uprac"),           # in Cyrillic
+    (re.compile(r"\b(?:ствол|стол)\b", re.IGNORECASE), "stôl"),                                  # the table
+]
+
+
+def as_meant(text):
+    """`text` with the mangled words SOUNDS_LIKE knows put back."""
+    for pattern, word in SOUNDS_LIKE:
+        text = pattern.sub(word, text)
+    return text
 
 
 class Unavailable(Exception):
@@ -127,6 +156,10 @@ def intent(call, text):
         if not call["name"]:
             return {"action": "unknown", "text": text, "why": "no thing of that name taught"}
         return {"action": "pick_named", "robot": "m3", "name": call["name"]}
+    if action == "fetch":   # only the M3 drives: whichever robot was named
+        kind = call["kind"]
+        return {"action": "fetch", "robot": "m3", "name": call["name"], "kind": None if call["name"] else kind,
+                "colour": call["colour"], "size_mm": None if kind == "block" else call["size_mm"]}
     if action == "clean_up":
         return {"action": "clean_up", "robot": robot, "kind": call["kind"]}
     if action == "sort":
@@ -203,7 +236,7 @@ class Brain:
         if self.missing():
             raise Unavailable(*self.missing())
         names = sorted(set(self.names() or []))
-        body = {"messages": messages(text, names), "temperature": 0, "max_tokens": 256,   # Gemma indents its JSON
+        body = {"messages": messages(as_meant(text), names), "temperature": 0, "max_tokens": 256,   # Gemma indents its JSON
                 "response_format": {"type": "json_schema", "json_schema": {"name": "command", "schema": schema(names)}},
                 "chat_template_kwargs": {"enable_thinking": False}}
         request = urllib.request.Request(f"{self.url}/v1/chat/completions", json.dumps(body).encode(),

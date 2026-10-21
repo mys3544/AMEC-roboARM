@@ -155,3 +155,14 @@ Czech, English, some without accents as the recogniser may write them); 2026-10-
 | Gemma 4 E4B | 43 | 1067 ms | 3020 ms | 5.0 GB |
 | Qwen3.5 2B | 42 | 364 ms | 431 ms | 1.3 GB |
 | Gemma 4 E2B | 37 | 541 ms | 678 ms | 3.1 GB |
+
+2026-10-21, spoken on the robots: English came through clean, Slovak did not -- Parakeet wrote it as
+Russian in Cyrillic ("Икс три убрать ствол") or Polish-looking ("Plus zober kotku nie kwadrę"), and
+the model took misheard cubes for taught things ("velkou kotku" -> the yellow cylinder, on the M3
+though "Plus" was said). 14 such sentences went into `llm_cases.json` (59 now) and the prompt got
+rules for them (Cyrillic and Polish spellings read as Slovak, a cube or block word never a taught
+thing, a thing not taught is unknown, unsure is unknown): Qwen3.5 4B 53/59 -> **59/59**, median
+704 ms, the 7 taught names given. The recogniser itself has no Slovak switch. A second round the same
+day: "valec" heard as "Valence", "balet", "Vallet", "uprac" as "o prata", "u pracovstvo" -- told
+in the prompt, the 4B model began picking cubes for them (64/71), so llm.SOUNDS_LIKE puts those
+words back before it reads the sentence: **71/71** (12 more sentences), median 732 ms.
