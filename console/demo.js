@@ -26,6 +26,7 @@ const TEXT = {
     fetch: 'Prines', fetchAny: 'Prinášam kúsok', fetchThing: 'Prinášam: {name}',
     thing: 'názov veci, napr. marhuľa', pretend: '(simulácia)', noArms: 'V robots.json nie je žiadna ruka.',
     connecting: 'Pripájam sa…', offline: 'Nepripojený', nosignal: 'Zatiaľ bez obrazu', cameraStalled: 'Kamera stojí',
+    camStop: 'Vypni obraz', camStart: 'Zapni obraz', cameraOff: 'Obraz vypnutý (šetrí sieť)',
     pillBusy: 'pracuje', pillIdle: 'čaká', pillOffline: 'nepripojený',
     ready: 'Pripravený', done: 'Hotovo', stopped: 'Zastavený', nothing: 'Nič v dosahu na zobratie',
     failed: 'Niečo sa nepodarilo',
@@ -57,6 +58,7 @@ const TEXT = {
     fetch: 'Fetch', fetchAny: 'Fetching a piece', fetchThing: 'Fetching: {name}',
     thing: 'its name, e.g. apricot', pretend: '(pretend)', noArms: 'No arm in robots.json.',
     connecting: 'Connecting…', offline: 'Not connected', nosignal: 'No picture yet', cameraStalled: 'Camera stalled',
+    camStop: 'Stop camera', camStart: 'Start camera', cameraOff: 'Camera off (saves the network)',
     pillBusy: 'working', pillIdle: 'idle', pillOffline: 'offline',
     ready: 'Ready', done: 'Done', stopped: 'Stopped', nothing: 'Nothing in reach to pick',
     failed: 'Something went wrong',
@@ -155,6 +157,8 @@ class Arm {   // an arm's pick service (/pick/* on the M3's bridge or the X3's),
     this.look = $('.look', this.el);
     this.look.onload = () => { this.look.hidden = false; };
     this.look.onclick = () => $('.view', this.el).classList.toggle('swapped');
+    this.camOff = store.get(`demo.camOff.${spec.id}`, false);
+    $('.cam', this.el).onclick = () => this.toggleCamera();
     $('.cleanup', this.el).onclick = () => this.act('pick/cleanup', {});
     $('.lookover', this.el).onclick = () => this.act('pick/look', {});
     $('.home', this.el).onclick = () => this.act('pick/home', {});
@@ -215,13 +219,25 @@ class Arm {   // an arm's pick service (/pick/* on the M3's bridge or the X3's),
     this.show();
   }
 
-  stream() {   // the camera, live: if the stream breaks or never comes, again shortly
+  stream() {   // the camera, live: if the stream breaks or never comes, again shortly; none while turned off
+    if (this.camOff) {
+      this.live.removeAttribute('src');   // closes the stream
+      return;
+    }
     this.live.onload = () => this.live.classList.remove('broken');
     this.live.onerror = () => {
       this.live.classList.add('broken');
       setTimeout(() => this.stream(), 3000);
     };
     this.live.src = `${this.url}/stream.mjpg?t=${Date.now()}`;
+  }
+
+  toggleCamera() {   // 2026-10-22, at the event: every open page pulls its own stream from the robot,
+    // ~15-20 Mbit/s each over the phone's hotspot -- off and on per viewer, remembered
+    this.camOff = !this.camOff;
+    store.set(`demo.camOff.${this.id}`, this.camOff);
+    this.stream();
+    this.show();
   }
 
   async poll() {
@@ -302,7 +318,8 @@ class Arm {   // an arm's pick service (/pick/* on the M3's bridge or the X3's),
   show() {
     const s = this.state;
     $('.name', this.el).textContent = this.label();
-    $('.nosignal', this.el).textContent = t('nosignal');
+    $('.nosignal', this.el).textContent = t(this.camOff ? 'cameraOff' : 'nosignal');
+    $('.cam', this.el).textContent = t(this.camOff ? 'camStart' : 'camStop');
     $('.camerr', this.el).textContent = this.camera?.error ? t('cameraStalled') : '';
     const doing = $('.doing', this.el), news = $('.news', this.el), counts = $('.counts', this.el);
     const detail = $('.detail', this.el), volts = $('.volts', this.el);

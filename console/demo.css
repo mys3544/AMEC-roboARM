@@ -51,6 +51,7 @@ body.visitor .operator { display: none !important; }
 .swatch { width: 14px; height: 14px; border-radius: 4px; background: var(--robot); }
 .head h2 { font-size: 20px; margin: 0; }
 .volts { margin-left: auto; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.head .cam { padding: 4px 12px; font-size: 14px; }
 .volts.low { color: #fff; background: var(--stop); padding: 1px 10px; border-radius: 999px; font-weight: 600; }
 .view { position: relative; min-height: 180px; background: #0e1116; border-radius: 10px; overflow: hidden; }
 .view .live { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
