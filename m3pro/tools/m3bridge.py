@@ -39,6 +39,9 @@ crosses the network -- what the console's M3 arm card drives and watches:
                               max, step, default, value}]; POST {key: value, ...} changes them
     GET  /api/metrics         where the time went (roboarm.metrics: one run a job)
 
+Every job is also kept as an episode a policy can learn from (roboarm.m3record): ten times a second
+the colour picture, the pose sent and the step, into out/episodes/<stamp>_<job>/.
+
 No authentication: the lab network only, as the X3's bridge.
 """
 
@@ -63,7 +66,7 @@ import cv2
 import numpy as np
 from roboshared import metrics, serve
 
-from roboarm import camera, m3arm, m3pick
+from roboarm import camera, m3arm, m3pick, m3record
 from roboarm.m3arm import ArmError
 from roboarm.web import bridge
 from roboarm.web.bridge import Server, send_json
@@ -72,6 +75,7 @@ HOST, PORT = "0.0.0.0", 8761
 STALE_S = 2.0   # a picture older than this is the camera stopped, not a slow frame (it sends ~15 a second):
                 # on 2026-10-12 its driver stopped mid-afternoon and Find worked on a picture from minutes before
 OUT = Path(__file__).resolve().parents[1] / "out" / "pick"
+EPISODES = OUT.parent / "episodes"
 DRIVER = ["ros2", "launch", "orbbec_camera", "dabai_dcw2.launch.py", "depth_registration:=true",
           # what nothing here uses, off: less over the camera's USB 2.0 link and on the CPU
           "enable_ir:=false", "enable_point_cloud:=false", "enable_colored_point_cloud:=false"]
@@ -98,6 +102,12 @@ class Frames:
         if stopped:
             raise ArmError(stopped)
         return color.copy(), depth.copy(), np.asarray(K, float).reshape(3, 3)
+
+    def colour(self):
+        """The newest colour picture (a copy) and its age in s; (None, None) before the first."""
+        with self.lock:
+            color = None if self.color is None else self.color.copy()
+        return color, self.ages()["colour"]
 
     def ages(self) -> dict:
         """Seconds since the newest colour and depth came, by kind; None for one not come yet."""
@@ -416,6 +426,11 @@ def main() -> int:
                            goto=lambda x, y, yaw: goto(node, x, y, yaw, stopping=lambda: picker.stopping()))
     if driver is not None:   # its restarts in the pick log, which the console shows
         threading.Thread(target=driver.watch, args=(picker.say,), daemon=True).start()
+    # the arm read directly: the bridge's call lock is held through a whole move
+    recorder = m3record.Recorder(picker.status, picker.log, frames.colour, lambda: the_bridge.arm.read(),
+                                 lambda: node.odom, EPISODES)
+    recording = threading.Event()
+    threading.Thread(target=recorder.run, args=(recording,), daemon=True).start()
     metrics.REGISTRY.log_path = OUT / "metrics.jsonl"
     OUT.mkdir(parents=True, exist_ok=True)
     server = Server((HOST, PORT), make_handler(the_bridge, frames, picker))
@@ -427,6 +442,7 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
+        recording.set()
         server.shutdown()
         the_bridge.close()   # the arm holds where it is, if it was ever engaged
         node.destroy_node()

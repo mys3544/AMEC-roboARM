@@ -1,4 +1,46 @@
-# Next -- the list (as of 2026-10-21, Wednesday)
+# Next -- the list (as of 2026-10-23, Friday)
+
+## Friday 2026-10-23: back in the lab after the event
+
+- [x] **Both robots back on IISLab-AMEC** (booted there: the M3 keeps the network it starts on), found
+      by name, bridges and the M3's detector up, batteries 11.4 / 11.6 V, settings as before the event.
+- [x] **A check clean-up on each:** the M3 **5 of 5, 0 missed**, all into the box (4 cubes out on its
+      left out of reach). The X3 **5 picked, 2 missed**, every drop on the line out on the right: **its
+      box was not seen** ("marker 10 not seen all round") -- the box nearer the arm (centre <= ~28 cm
+      out), marker to the arm. Its fingertip lands 8.1 mm short (median of 7 reach passes; 8.8 mm on
+      2026-10-21, 67 of them) and -5 mm left (1.1 then): the trip did not move its camera much.
+      Its log has no pick on 2026-10-22 -- the X3 not shown, or its clock wrong that day?
+- [x] **The M3's joints: none come back.** The board publishes no servo angle (`ros2 topic list`:
+      /arm6_joints and /arm_joint in only); Yahboom's /Curjoints is their apps' own echo of what they
+      sent. For the VLA the state is the last command (relative actions, as reports/ suggested), and
+      the camera is the only judge of where the arm is -- hence the probe below.
+- [x] **The M3's servos measured by its camera** (`m3pro/tools/m3_servo_probe.py`, run on the robot;
+      the ChArUco board flat in the pick zone, seen from J1 88, J2 105-115, J3 0-25, J4 0; one joint
+      turning turns the camera by its angle, so J1-J4 each alone; the PnP scale checked: board 312 mm
+      under the camera against the depth's 309). Results in m3pro/out/servo/ (laptop and robot):
+
+      | joint | backlash | repeat sd | gain, static (+-4..12 deg) | turned of a 15 deg sweep | lag | there after the commanded end |
+      |---|---|---|---|---|---|---|
+      | J1 | 0.36-0.38 deg (1.6 mm at 25 cm) | 0.01-0.02 deg | 0.91-0.94 | 13.1-13.3 (0.88) | 100-130 ms | 0.12-0.22 s, overshoot <= 0.26 deg |
+      | J2 | 0.47 deg (2.0 mm) | 0.09 deg | 0.92 | 13.0-13.1 (0.87) | 125-195 ms | 0.14-0.83 s, overshoot 0.4-0.9 deg (faster more) |
+      | J3 | 0.86-1.09 deg (3.7-4.8 mm) | 0.03-0.17 deg | 1.06 at J3 4, 1.15 at 25 | 13.8-14.2 (0.93) | 105-190 ms | 0.1-1.5 s (slow at 60-90 deg/s) |
+      | J4 | 0.57 deg (2.5 mm) | 0.05 deg | 0.91 | 7.1-7.9 of 8 | 140-160 ms | 0.1-0.3 s, overshoot <= 0.15 deg |
+
+      What it means: **the joints turn ~10 % less than commanded** (J3's small-swing gain is pose
+      dependent: gravity), backlash 0.4-1.1 deg, repeatable to ~0.1 deg, ~0.1-0.2 s behind the
+      command (the camera's own latency in it: its stamps wander -25..+108 ms against the robot's
+      clock), J2/J3 ringing up to ~1 s after fast moves. **For the simulator:** position drives
+      ~0.15 s behind, gains 0.85-1.0 and backlash 0.3-1.2 deg randomised per episode. **For the
+      picker** (not done): J1's 0.9 alone puts a piece 30 deg off straight ahead ~1 cm sideways at
+      20 cm -- part of what the taught aim corrects; a per-joint gain in m3arm needs each joint's
+      true zero too (measured against something fixed, not by a turn). J5/J6 are past the camera.
+- [x] **Every M3 job kept as an episode** (`m3pro/roboarm/m3record.py`, in the bridge, deployed):
+      10 times a second while a job runs the colour picture, the pose sent, the odometry and the
+      step, under the robot's ~/roboarm/out/episodes/<stamp>_<job>/ (ticks.jsonl, episode.json with
+      the log and each pick's record; the stamps in the robot's clock, Asia/Shanghai). A look job:
+      75 ticks in 7.8 s, every one with its picture, 5.2 MB (a 2-min clean-up ~80 MB; the oldest go
+      past 20 GB). Not yet: a clean-up recorded, and the converter to LeRobot (on the laptop/hekate).
+- [ ] The event itself: what failed, what the visitors liked (the user).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
@@ -269,7 +311,8 @@ Friday evening 2026-10-23: its 5090 and Isaac Sim 6.0).
 - [ ] **On the real M3:** a few dozen real episodes from the classical picker to fine-tune; the policy
       served from the laptop or the 5090 (LeRobot's async inference), a watchdog holding the arm when
       action chunks stop. Check first: the M3 reports the joints it was sent, not measured ones
-      (why PLAN.md D chose the X3) -- fine for the actions, to be seen for the state.
+      (why PLAN.md D chose the X3) -- fine for the actions, to be seen for the state. **Checked
+      2026-10-23:** nothing comes back at all; the servos measured by the camera instead (top).
 - [ ] **Then the X3:** its URDF's forearm is over twice too long (x3plus/roboarm/kinematics.py) -> its
       model from config.py's measured links; the same expert (x3pick) and recorder. One policy for both
       arms is a research question of its own (cross-embodiment).
