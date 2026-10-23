@@ -1,4 +1,4 @@
-# Next -- the list (as of 2026-10-23, Friday)
+# Next -- the list (as of 2026-10-23, Friday evening)
 
 ## Friday 2026-10-23: back in the lab after the event
 
@@ -137,6 +137,38 @@
       over the WiFi), the bridge's guard on every pose (floor 8 mm), steps capped at max-dps/10, J6 <= 150,
       STOP by Space/Esc, the console's STOP or Ctrl-C. Dry run against the M3: 9.4 steps/s, the picture 10 ms
       old (median), inference ~2 ms a step (a new chunk every 10). Not yet run moving.
+
+- [x] **ACT on the real M3** (the 30k checkpoint, `m3_policy.py run`, 2026-10-23 afternoon, a 30 mm cube in
+      the middle, the box on the right): two runs, 25 and 40 s. Both went through the whole pick's shape --
+      down to the table, the gripper shut to J6 ~134 (the picker's value for 30 mm), up, round to J1 ~170-180
+      (the box), down towards it -- and **missed the cube** both times (the user). The loop ran at ~5.5-6.5
+      steps/s, not 10 (each move waits for the bridge over the WiFi; some steps 1.9 s). Run 2 ended on an
+      HTTP 400 from the bridge at J1 ~166 that the client then did not read (now it does: the reason is said).
+- [x] **Three more rounds** (the user's new layouts): A 3/3 (pieces turned, on the left), B 8 counted (cubes
+      4-5 cm apart, a block standing) -- **one of them shoved 4.3 cm out of reach and counted "picked"**: the
+      picker looks only where the piece was (MATCH_M 3 cm) and its look after saw only the middle; C a sort,
+      4/4 (2 blocks onto the line). m3_episodes now marks such an attempt a miss (a piece of the kind
+      turning up within 8 cm of the target where no look before had one): the only one of the day.
+      The dataset rebuilt from all of the day's: m3pro/out/lerobot/m3_pick_20261023b, 58 episodes, 7955 frames
+      (33 the 30 mm cube, 10 the 40 mm, 11 a block into the box, 4 a block onto the line).
+- [ ] **The weekend's ACT run on Dionysos** (detached: weekend_act.ps1 creates it through WMI, so no SSH
+      session holds it): the new dataset, 100k steps, batch 8, eval every 5k, checkpoints every 20k ->
+      C:\Users\Hercules\roboarm-lerobot\m3_act_20261023b (+ .log there). Started 14:19: 50 episodes to train,
+      8 held out; ~10 steps/s alone on the GPU, ~3 h. The day's run (39 episodes) had eval loss 0.275 at 45k.
+
+## Monday 2026-10-26
+
+1. hekate (back Friday evening): its status script (CLAUDE.md) -- reachable, Isaac Sim's task, free VRAM.
+2. The weekend's ACT: `m3_policy.py eval` on its held-out episodes against today's 60k; then on the M3
+   again -- first the loop at a true 10 Hz (send without waiting for each move: the bridge's move_to
+   blocks; or run the policy beside the bridge on the robot).
+3. **The picker's "picked" check** (shared roboshared.task.pick): a piece shoved off is not picked --
+   look round (both sides) after an attempt and compare with the look before (as m3_episodes does now).
+   Both robots, tests, deploy.
+4. **The simulator** (m3pro/sim, Dionysos): the DCW2 on arm4 rendering at the hand-eye pose, the lab's
+   table and pieces (kit_synth.py's), then the expert's loop -- the picker on the true poses -- and the
+   recorder writing the same LeRobot format: thousands of episodes, the real 58 to fine-tune.
+5. The X3: re-teach its grips with the camera where it is now (still open).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
