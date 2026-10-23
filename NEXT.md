@@ -72,6 +72,32 @@
       frames (12-18 s each), 7.3 MB from 50 MB of JPEGs (1 min 20 s on the laptop's CPU); loaded back
       through LeRobotDataset: action = next state exactly, the pictures 0.7 % off the JPEGs (mean abs),
       the tasks right. On Windows torchcodec does not load (its FFmpeg DLLs): LeRobot falls back to PyAV.
+- [x] **Five rounds with the 40 mm cube on the M3** (the user setting the table, wood up twice, blue,
+      yellow, green in a sort): 34 attempts, 32 picked, every one recorded (rounds 1-4 clean-ups 8/9,
+      9/10, 5/5, 5/5; the sort 5/5, 2 blocks onto the line). The served detector missed the cube close
+      up wood up and painted alike, and called it a block blue up. **A labelling fault found on the
+      way** (kit_dataset.not_kit): anything yellow was dropped as the yellow cylinder -- the 40 mm cube
+      yellow up and a 30 mm cube with a yellow top too; now only a round yellow blob is the cylinder
+      (yellow_square: 4 corners, filling its rectangle; 18 labels back, the M3 test set unchanged).
+      The LeRobot set rebuilt from all of today's: **39 episodes, 5473 frames, 42 MB** (25 x "the 30 mm
+      cube", 6 x the 40 mm cube, 6 x the block into the box, 2 x the block onto the line).
+- [x] **The detector fine-tuned on today's looks** (M3 set 268 train / 63 val, 40 epochs on the
+      laptop's GPU, ~7 min each), judged on the M3's fixed test set (40 looks, 25 with the 40 mm cube;
+      "found" = cube40 at conf 0.25 with box IoU 0.5):
+
+      | model | mask mAP50 all / wide / close | cube40 mAP50 | 40 mm cube found wide, close |
+      |---|---|---|---|
+      | `lap_20261016_m3` (served until today) | 0.840 / 0.951 / 0.729 | 0.845 | 13/13, 8/12 |
+      | `dio_20261019_mix` | 0.861 / 0.979 / 0.760 | 0.888 | 11/13, 10/12 |
+      | `lap_20261023_m3` (from n_20261015b) | 0.855 / 0.972 / 0.737 | 0.887 | 13/13, 10/12 |
+      | **`lap_20261023_mixm3`** (from dio_20261019_mix) | **0.865 / 0.980 / 0.754** | **0.915** | 12/13, **11/12** |
+
+      **The M3 serves `lap_20261023_mixm3`** (2026-10-23): ~/roboarm/models/kit/yolo26n_kit.pt and its
+      FP16 engine built there (7.5 min); the one before kept as yolo26n_kit_20261016m3.{pt,onnx,engine}
+      (back: copy those over yolo26n_kit.*, `systemctl --user restart roboarm-vision`). Worse only on
+      blocks (0.839 against 0.886). Its engine on two of today's looks: the 40 mm cube wood up 0.85,
+      yellow up 0.67 (seen in training: a check that it runs, no more). Still the second opinion: the
+      depth decides. Judge it live on the next clean-ups ("kit detector:" lines).
 - [ ] The event itself: what failed, what the visitors liked (the user).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
