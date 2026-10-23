@@ -144,7 +144,9 @@
       (the box), down towards it -- and **missed the cube** both times (the user). The loop ran at ~5.5-6.5
       steps/s, not 10 (each move waits for the bridge over the WiFi; some steps 1.9 s). Run 2 ended on an
       HTTP 400 from the bridge at J1 ~166 that the client then did not read (now it does: the reason is said).
-      Held-out error over the 2 s chunk by checkpoint: 20k 8.61, 30k 8.28, 50k 8.01 deg (holding still 13.63).
+      Held-out error over the 2 s chunk by checkpoint: 20k 8.61, 30k 8.28, 50k 8.01, **60k (the end) 7.85 deg**
+      (holding still 13.63); a second ahead at 60k J1-J6 10.3 / 10.0 / 9.7 / 7.7 / 7.4 / 4.8; eval loss 0.267,
+      flattening. The checkpoints on the laptop: train/runs/act/m3_act_20261023{,_dio}/.
       A third run with the 50k (14:27): turned to J1 ~110, right of the cube in the middle, and was stopped
       after 8.6 s by the bridge's guard -- "the arm would reach 0.8 cm above the floor (x +0.19 m)": it went
       lower than the client's 8 mm floor (the picker's first try; it goes to 5 mm where nothing else plans).
