@@ -98,6 +98,24 @@
       blocks (0.839 against 0.886). Its engine on two of today's looks: the 40 mm cube wood up 0.85,
       yellow up 0.67 (seen in training: a check that it runs, no more). Still the second opinion: the
       depth decides. Judge it live on the next clean-ups ("kit detector:" lines).
+- [x] **The new detector live** (a clean-up, 5 of 5, the 40 mm cube wood up in the middle): it saw the
+      cube wide (0.83) and close (0.81). The log's "it missed cube40" that round was the depth's own
+      "40 mm cube" at the picture's right edge -- the box's rim -- rightly not called: the "agrees on"
+      count undersells it.
+- [x] **The M3's gripper measured** (the user, a ruler between the rubber fingertips' inner faces ~1 cm
+      from their ends; also as m3pro/data/m3_gripper_gap.json, on the laptop only: data/ is not in git):
+
+      | J6 | 0 | 30 | 60 | 90 | 120 | 150 | 165 | 170 |
+      |---|---|---|---|---|---|---|---|---|
+      | gap, mm | 61.5 | 61.5 | 56.5 | 49 | 33 | 15 | 4 | 0 (touching) |
+      | Yahboom's table | ~67* | ~67* | 59 | 51 | 37 | 21 | 11 | 7 |
+
+      (* m3kinematics.finger_span's carried-on line.) Open stop from J6 0 to 30; ~2 mm play between
+      the fingers (at 150: 15 free, 13 squeezed). Narrower than the table everywhere: the picker's
+      close (the table's J6 for the width) goes **~5 mm past touch on a 30 mm piece** (J6 134: ~25 mm)
+      and ~4 on the 40 mm cube (J6 115: ~36 mm) -- a firm grip, the servo pushing; the widest is 61.5
+      mm, not ~67 (the clearance checks think the fingers wider: on the safe side). Nothing changed in
+      the picker (it grips well); for the simulator, the measured table.
 - [ ] The event itself: what failed, what the visitors liked (the user).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
