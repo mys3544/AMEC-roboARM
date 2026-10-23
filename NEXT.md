@@ -116,7 +116,15 @@
       and ~4 on the 40 mm cube (J6 115: ~36 mm) -- a firm grip, the servo pushing; the widest is 61.5
       mm, not ~67 (the clearance checks think the fingers wider: on the safe side). Nothing changed in
       the picker (it grips well); for the simulator, the measured table.
-- [ ] The event itself: what failed, what the visitors liked (the user).
+- [x] The event itself (2026-10-22): it went well (the user, 2026-10-23).
+- [ ] **ACT on the 39 real episodes, the laptop's GPU** (2026-10-23, a test that our data trains -- not
+      a policy for the robot yet): LeRobot's venv got CUDA torch (2.11+cu128 from uv's cache) and
+      `lerobot[training]`; the RTX 2070 Super runs ACT (52M, resnet18) at ~7.8 steps/s, batch 8, AMP;
+      samples come at ~18 ms each (AV1 through PyAV: torchcodec's DLLs do not load on Windows).
+      lerobot-train's checkpoints/last symlink needs Developer Mode on Windows (WinError 1314):
+      `train/lerobot_train_win.py` writes checkpoints/last.txt instead. The run: chunk 20 (2 s), 10
+      executed, 60k steps, 10 % of the episodes held out (eval loss every 2000), checkpoints every
+      10k -> train/runs/act/m3_act_20261023 (+ .log). Smoke run: eval loss 0.646 -> 0.584 in 200 steps.
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
