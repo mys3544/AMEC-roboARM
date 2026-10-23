@@ -384,6 +384,21 @@ Friday evening 2026-10-23: its 5090 and Isaac Sim 6.0).
       (colour, depth too); the table and the lab's pieces from train/synth/kit_synth.py. **First check
       the grip physics** (friction, finger contact): a 30 mm cube gripped must lift, carry and drop --
       the hard part.
+  - [x] **Started 2026-10-23 on Dionysos (Isaac Sim 5.0): the grip physics works.** `m3pro/sim/isaac_m3.py`
+        (Isaac's python: `import` Yahboom's URDF -> m3pro.usd, base fixed; `play` a plan on a table, 120 Hz,
+        pictures at its marks) and `m3pro/tools/m3_sim.py` on the laptop (`setup`; `grip --x --y --yaw --size
+        --mass --friction [--close]`: the picker's own plan_grasp, without the real arm's SAG, servo degrees ->
+        URDF radians, J6 -> the finger joint through the gripper measured today; runs it there, ~35 s, summary +
+        a picture sheet in m3pro/out/sim/). The tool point lands where m3kinematics says (200 vs 202 mm).
+        What it took: the finger's URDF range opens 49.7 mm, the real one 61.5 (widened to -1.0..0.6 rad);
+        the linkage's joints driven stiffly each step to their share of where the finger IS -- PhysX's mimic
+        joints did not hold (the importer left the left side's without a reference; set by hand the links hung
+        free), and following the finger's target wedged the cube out; the arm's joints capped at 150 deg/s (a
+        target far ahead flung the cube); the plan rises to the look's height before turning (swung round low,
+        the cube hit the robot's front-right corner). **Then 7 of 7 picked, carried and let go:** 30 mm cubes
+        at friction 0.3-0.8, at (0.16, +0.13), (0.24, -0.08), turned 20-60 deg, the 40 mm cube turned 30.
+        Next: the camera (the DCW2 on arm4) and the lab's table and pieces (kit_synth.py's), then the expert's
+        loop and the recorder.
 - [ ] **The expert:** m3pick's own plan (IK, approach, grip, drop into the box) fed the simulator's
       true poses instead of the depth's; for DAgger, its next action from any state.
 - [ ] **Recorder and resets:** a LeRobotDataset per episode (the wrist image, the joints, the action =
