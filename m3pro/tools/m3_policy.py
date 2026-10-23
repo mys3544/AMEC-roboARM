@@ -28,6 +28,7 @@ import math
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -103,8 +104,11 @@ def evaluate(checkpoint: Path, dataset: Path) -> None:
 def call(method: str, *args, **kwargs):
     body = json.dumps({"method": method, "args": list(args), "kwargs": kwargs}).encode()
     req = urllib.request.Request(BRIDGE + "/arm/call", data=body, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=10) as r:
-        reply = json.load(r)
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            reply = json.load(r)
+    except urllib.error.HTTPError as exc:   # the bridge's refusals come as 400 with the reason in the body
+        reply = json.loads(exc.read() or b"{}") or {"error": f"HTTP {exc.code}"}
     if "error" in reply:
         raise RuntimeError(reply["error"])
     return reply.get("result")

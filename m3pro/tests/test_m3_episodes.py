@@ -36,6 +36,22 @@ def test_each_attempt_runs_from_its_pregrasp_to_the_end_of_its_look_after():
     assert m3_episodes.task_for(found[1]) == "pick up the 30 mm cube and put it on the line on the right"
 
 
+def test_a_piece_shoved_out_of_the_way_is_not_counted_as_picked():
+    """2026-10-23: a 30 mm cube shoved 4.3 cm out, past the next look's middle view, was "picked"."""
+    ticks, summary = job()
+    summary["attempts"][0] = {"kind": "block lying", "picked": True, "target": [0.20, 0.10, 0.015]}
+    summary["attempts"][1] = {"kind": "30 mm cube", "picked": True, "target": [0.18, 0.17, 0.015]}
+    summary["log"] += [
+        {"n": 3, "t": 1000.2, "text": "looked round: block lying at x 0.200 y +0.100, turned 5 deg; "
+                                      "30 mm cube at x 0.180 y +0.170, turned 9 deg; 30 mm cube at x 0.150 y +0.120, turned 0 deg"},
+        {"n": 4, "t": 1001.5, "text": "wide look: 30 mm cube at x 0.180 y +0.170, turned 9 deg; 30 mm cube at x 0.150 y +0.120, turned 0 deg"},
+        {"n": 5, "t": 1002.7, "text": "wide look: nothing"},
+        {"n": 6, "t": 1003.0, "text": "looked round: 30 mm cube at x 0.150 y +0.120, turned 0 deg; 30 mm cube at x 0.221 y +0.188, turned 0 deg"}]
+    found = m3_episodes.attempts(ticks, summary)
+    assert found[0]["record"]["picked"] is True            # its neighbour stayed where it was
+    assert found[1]["record"]["picked"] is False and found[1]["record"]["pushed_to"] == [0.221, 0.188]
+
+
 def test_records_and_attempts_that_do_not_match_are_not_paired_by_guess():
     ticks, summary = job()
     summary["attempts"] = summary["attempts"][:1]

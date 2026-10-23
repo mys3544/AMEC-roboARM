@@ -20,9 +20,13 @@ from __future__ import annotations
 import argparse
 import datetime
 import json
+import math
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 EPISODES = ROOT / "out" / "episodes"
@@ -66,11 +70,48 @@ def attempts(ticks: list[dict], summary: dict) -> list[dict]:
     t0 = started_unix(summary)
     drops = [(e["t"] - t0, "box" if e["text"].startswith("dropped into the box") else "line")
              for e in summary.get("log", []) if e["text"].startswith("dropped ")]
+    looks = [(e["t"] - t0, seen(e["text"])) for e in summary.get("log", [])
+             if e["text"].startswith(("looked round:", "wide look:"))]
     out = []
-    for (first, last), record in zip(whole, records):
+    for k, ((first, last), record) in enumerate(zip(whole, records)):
         inside = [where for t, where in drops if ticks[first]["t"] <= t <= ticks[last]["t"]]
+        until = ticks[whole[k + 1][0]]["t"] if k + 1 < len(whole) else math.inf
+        pushed = record.get("picked") and pushed_away(record, looks, ticks[first]["t"], ticks[last]["t"], until)
+        if pushed:
+            record = {**record, "picked": False, "pushed_to": pushed}
         out.append({"first": first, "last": last, "record": record, "drop": inside[0] if len(inside) == 1 else None})
     return out
+
+
+PIECE = re.compile(r"(30 mm cube|40 mm cube|block) (?:lying |standing )?at x ([-\d.]+) y ([-+\d.]+)")
+PUSH_M, SAME_M = 0.08, 0.015
+
+
+def seen(text: str) -> list[tuple[str, float, float]]:
+    """The kit pieces a look's log line names: (kind, x, y)."""
+    return [(k, float(x), float(y)) for k, x, y in PIECE.findall(text)]
+
+
+def pushed_away(record: dict, looks: list, start: float, end: float, until: float) -> list | None:
+    """Where the piece an attempt counted as picked turns up again: one of its kind within PUSH_M of the
+    target, in a look from the attempt's own look after to the next attempt, where no look before it had
+    one (SAME_M). The picker counts a piece gone from where it was as picked; on 2026-10-23 a 30 mm
+    cube shoved 4.3 cm out, past the next look's middle view, was "picked". None: not seen."""
+    if "target" not in record:
+        return None
+    kind = (record.get("kind") or "").replace(" lying", "").replace(" standing", "")
+    target = np.asarray(record["target"][:2], float)
+    before = [p for t, pieces in looks if t <= start + 0.5 for p in pieces]   # every look since the job began:
+    # the one just before may name a piece only "something" (a middle view, seen in part)
+    for t, pieces in looks:
+        if not end - 4.0 <= t <= until:
+            continue
+        for k, x, y in pieces:
+            here = np.array([x, y])
+            new = not any(np.linalg.norm(here - np.array([bx, by])) < SAME_M for _k, bx, by in before)
+            if k == kind and new and np.linalg.norm(here - target) < PUSH_M:
+                return [x, y]
+    return None
 
 
 def resample(ticks: list[dict], first: int, last: int, fps: float) -> list[int]:
@@ -115,7 +156,6 @@ def fetch() -> None:
 
 # ------------------------------------------------------------------------------- build --
 def build(out: Path, fps: float, keep_failed: bool, jobs: list[str] | None) -> None:
-    import numpy as np
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from PIL import Image
 
