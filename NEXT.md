@@ -10,6 +10,10 @@
       out), marker to the arm. Its fingertip lands 8.1 mm short (median of 7 reach passes; 8.8 mm on
       2026-10-21, 67 of them) and -5 mm left (1.1 then): the trip did not move its camera much.
       Its log has no pick on 2026-10-22 -- the X3 not shown, or its clock wrong that day?
+      **The X3's box moved nearer** (found at J1 180, x 0.116 y -0.248, 27 cm from the base): **8 of 8,
+      0 missed, all into the box**, 8-11 s a pick (22-24 s with a survey); the fingertip still
+      5-12 mm short by its reach passes, the grips good. Left: a block lying 25.4 cm out (past the X3's
+      reach) -- the job's last line then says "no kit cube or block in view (1 left ...)".
 - [x] **The M3's joints: none come back.** The board publishes no servo angle (`ros2 topic list`:
       /arm6_joints and /arm_joint in only); Yahboom's /Curjoints is their apps' own echo of what they
       sent. For the VLA the state is the last command (relative actions, as reports/ suggested), and
