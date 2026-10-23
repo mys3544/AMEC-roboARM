@@ -267,7 +267,19 @@ def test_a_cube_at_the_edge_of_reach_is_not_blamed_on_the_lidar():
     cube = {"kind": "cube", "centre": np.array([0.262, -0.092, 0.02]), "height": 0.04, "size": 0.04, "length": 0.04,
             "yaw": 66.0, "period": 90.0, "whole": True, "footprint": (0.04, 0.04)}
     said = picker.why_not([cube], [cube])
-    assert "edge of the arm's reach" in said and "lidar for the arm" not in said and "further left" in said, said
+    assert "edge of the arm's reach" in said and "lidar for the arm" not in said and "cm closer would reach it" in said, said
+
+
+def test_a_cube_at_the_edge_of_reach_on_the_left_is_not_blamed_on_the_body():
+    """2026-10-23, the user: why was this cube not picked? 24.0 cm from the arm's axis on the left, its
+    middle reached to 23.2: only a grip at its very top, the arm low over the chassis's corner -- "too
+    close to the robot's body". It is the reach, and 3 cm closer would do."""
+    picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
+    cube = {"kind": "cube", "centre": np.array([0.187, 0.184, 0.015]), "height": 0.03, "size": 0.03, "length": 0.03,
+            "yaw": 40.0, "period": 90.0, "whole": True, "footprint": (0.03, 0.03)}
+    said = picker.why_not([cube], [cube])
+    assert "edge of the arm's reach (only its top in reach from here): 30 mm cube at x 0.187" in said and "robot's body" not in said, said
+    assert "the robot 3 cm closer would reach it" in said and "may drive closer" in said, said
 
 
 def test_the_fetch_drives_up_to_a_cube_far_off_and_back_to_the_box_beside_it():

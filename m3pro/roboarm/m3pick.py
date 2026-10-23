@@ -161,6 +161,7 @@ BUMPER_GAP = 0.04
 # (base_link: the body, the wheels, the lidar) keeps roboshared.task.DRIVE_GAP from the drop-off box
 # -- its inside and BOX_WALL round it -- and from the line on the right it has dropped onto.
 SIDESTEP, SIDESTEP_MOST = 0.02, 0.12
+CLOSER_MOST = 0.10   # m: why_not says how much closer the robot would have to come, up to this
 ROBOT_X, ROBOT_Y = (-0.16, 0.13), 0.12
 
 
@@ -635,6 +636,15 @@ def slide_for(thing: dict, found: list[dict], most: float, floor_clear: float, p
         if plan_grasp(it["centre"], it["height"], floor_clear=floor_clear) is not None \
                 and (plan is None or plan(it, moved) is not None):
             return float(slide)
+    return None
+
+
+def closer_for(thing: dict, floor_clear: float, most: float = CLOSER_MOST) -> float | None:
+    """The least drive forward (m, a cm at a time up to `most`) after which `thing` has a plain plan:
+    how much closer the robot would have to come; None when driving forward does not do it."""
+    for dx in np.arange(0.01, most + 1e-9, 0.01):
+        if plan_grasp(thing["centre"] - [dx, 0.0, 0.0], thing["height"], floor_clear=floor_clear) is not None:
+            return round(float(dx), 2)
     return None
 
 
@@ -1175,10 +1185,12 @@ class Picker(Task):
 
     def why_not(self, kit: list[dict], found: list[dict]) -> str:
         """Why none of `kit` is picked from here, each: out of reach (no grip at all reaches it,
-        square or not -- 2026-10-02: two at the very edge were blamed on the fingers); too near the
-        right lidar (a plan from further left: the slide that would do); in reach but too close to
-        the robot's body (2026-10-05: a cube beside the left wheel, the elbow over the arm's base,
-        was "out of reach"); else the square grip."""
+        square or not -- 2026-10-02: two at the very edge were blamed on the fingers); at the edge of
+        the arm's reach, its middle past it, and how much closer the robot would have to come
+        (2026-10-23: a cube 24.0 cm out on the left, its middle reached to 23.2, was "too close to the
+        robot's body"); too near the right lidar (a plan from further left: the slide that would do);
+        in reach but too close to the robot's body (2026-10-05: a cube beside the left wheel, the
+        elbow over the arm's base, was "out of reach"); else the square grip."""
         base, floor = np.asarray(self.AXIS), min(self.floors())   # the lowest a plan tries
         far, lidar, edge, body, awkward = [], [], [], [], []
         for o in kit:
@@ -1187,28 +1199,32 @@ class Picker(Task):
                 far.append(o)
             elif plan_grasp(o["centre"], o["height"], floor_clear=floor) is not None:
                 awkward.append(o)
+            elif out > furthest(max(o["centre"][2], GRIP_Z_MIN)):   # its middle past the arm's reach, either
+                # side (2026-10-21: a 40 mm cube 24.6 cm out, its middle reached to 23.5, "near the lidar")
+                edge.append((o, closer_for(o, floor)))
             else:
                 slide = slide_for(o, found, SIDESTEP_MOST, floor) if o["centre"][1] < 0 else None
                 if slide is None:
                     body.append(o)
-                else:   # the slide brings it nearer the arm too: past its middle's reach that is why
-                    # (2026-10-21: a 40 mm cube 24.6 cm out, its middle reached to 23.5, "near the lidar")
-                    (edge if out > furthest(max(o["centre"][2], GRIP_Z_MIN)) else lidar).append((o, slide))
+                else:
+                    lidar.append((o, slide))
         parts = [f"out of reach: {describe(far)}"] if far else []
+        if edge:
+            parts.append("at the edge of the arm's reach (only its top in reach from here): " + "; ".join(
+                describe([o]) + (f" -- the robot {100 * closer:.0f} cm closer would reach it" if closer else "")
+                for o, closer in edge) + ("" if self.may_drive else " (may drive closer lets the base drive up)"))
         for o in body:   # the guard's own words for the grip from above
             grip = np.r_[o["centre"][:2], max(o["centre"][2], GRIP_Z_MIN)]
             poses = (m3kinematics.reach(grip, pitch, floor_clear=floor, guard=False) for pitch in (90, 70, 50))
             why = next((m3kinematics.problem(q, floor) for q in poses if q is not None), None)
             parts.append(f"in reach but too close to the robot's body for the arm: {describe([o])}" + (f" ({why})" if why else ""))
-        if lidar or edge:
+        if lidar:
             room = self.right_room()
             how = ("may drive closer lets the base slide right" if not self.may_drive
                    else f"the base may slide only {100 * room:.0f} cm right" + (", the drop-off box is there" if room < self.cfg["right_cm"] / 100 else ""))
-        for which, said in ((lidar, f"too near the right lidar for the arm (it keeps {100 * m3kinematics.LIDAR_ROOM:.1f} cm off it)"),
-                            (edge, "at the edge of the arm's reach (only its top in reach from here)")):
-            if which:
-                parts.append(f"{said}, " + "; ".join(f"{describe([o])} -- picked from {100 * slide:.0f} cm further left"
-                                                     for o, slide in which) + f" ({how})")
+            parts.append(f"too near the right lidar for the arm (it keeps {100 * m3kinematics.LIDAR_ROOM:.1f} cm off it), "
+                         + "; ".join(f"{describe([o])} -- picked from {100 * slide:.0f} cm further left" for o, slide in lidar)
+                         + f" ({how})")
         if awkward:
             parts.append("no square grip from here, a finger would come down on the table or over the bumper "
                          f"(turned so, at this distance): {describe(awkward)}")

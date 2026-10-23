@@ -44,6 +44,16 @@
       pick records in episode.json; the steps cut it into attempts (look.wide -> pregrasp ->
       look.close -> descend -> close -> lift -> drop -> look.after), the pictures right for each
       (a contact sheet checked by eye). Not yet: the converter to LeRobot (on the laptop/hekate).
+- [x] **Why that clean-up left a cube and the red block** (the user): both just past the arm's reach --
+      J1's axis is 3.3 cm ahead of the robot's middle, and at the grip's height (18 mm) the arm reaches
+      23.2 cm from it; the cube (x 0.187 y +0.184) was 24.0 cm out, the block (x 0.267 y -0.072) 24.4.
+      The cube was said to be "too close to the robot's body": its only pose, a grip at its very top at
+      pitch 50, had the arm 16 cm over the chassis's front-left corner (18 needed). Now why_not says
+      **"at the edge of the arm's reach ... -- the robot N cm closer would reach it"** for any piece
+      whose middle is past the reach, either side (m3pick.closer_for: the least drive forward with a
+      plan; the cube 3 cm, the block 1 cm), "(may drive closer lets the base drive up)" when driving is
+      off. So: **M3 pieces within ~22 cm of J1's axis** -- ~25 cm ahead of the robot's middle straight
+      out, less to the sides -- or "may drive closer" on.
 - [ ] The event itself: what failed, what the visitors liked (the user).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
