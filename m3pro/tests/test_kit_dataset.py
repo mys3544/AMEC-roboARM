@@ -24,6 +24,19 @@ def test_the_kit_s_pieces_are_named_and_the_rest_left_out():
     assert lines == ["0 0.00000 0.02083 1.00000 0.02083 0.50000 0.50000"]   # clipped to the picture
 
 
+def test_the_yellow_cylinder_is_left_out_but_a_cube_yellow_side_up_kept():
+    """2026-10-23: the 40 mm cube yellow side up went as the yellow cylinder: the cylinder's top is round."""
+    import cv2
+    import numpy as np
+    square = ((280, 200), (360, 200), (360, 280), (280, 280))
+    for draw, kept in ((lambda im: cv2.rectangle(im, (280, 200), (360, 280), (0, 220, 240), -1), True),
+                       (lambda im: cv2.circle(im, (320, 240), 40, (0, 220, 240), -1), False)):
+        picture = np.full((480, 640, 3), 235, np.uint8)
+        draw(picture)
+        lines = kit_dataset.label_lines({"found": [thing("cube", 0.04, 0.04, square)]}, bgr=picture)
+        assert bool(lines) == kept
+
+
 def test_a_scene_is_a_pick_s_wide_look_and_its_close_looks():
     stems = ["20261009_174744_wide", "20261009_174825_close", "20261009_175153_wide", "20261009_175201_close",
              "20261009_175214_wide", "20261009_175230_close", "20261009_175235_close"]   # picks in a row

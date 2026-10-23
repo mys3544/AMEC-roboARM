@@ -55,7 +55,30 @@ def not_kit(outline_px, hsv: np.ndarray) -> bool:
         return False
     if np.median(v) <= 70:
         return np.mean((s > 90) & (v > 40)) < 0.10 and np.mean(v > 150) < 0.15
-    return 18 <= np.median(h) <= 35 and np.median(s) >= 120
+    return 18 <= np.median(h) <= 35 and np.median(s) >= 120 and not yellow_square(inside, hsv)
+
+
+def yellow_square(inside: np.ndarray, hsv: np.ndarray) -> bool:
+    """Whether the yellow in (and just round) an outline is a cube's yellow face, not the yellow
+    cylinder's round top and side: its hull four corners, filling its rectangle, not round, about
+    square, and whole in the picture (2026-10-23: the 40 mm cube yellow side up and a 30 mm cube with a
+    yellow top had their labels taken for the cylinder's -- 18 that day). Measured on every yellow
+    label of 2026-10-20 and 23: the cylinder's blobs have 5-8 corners or are round (0.80-0.89), the
+    cubes' 4 and 0.22-0.80; one cylinder cut by the picture's edge looked square."""
+    near = cv2.dilate(inside, np.ones((15, 15), np.uint8)).astype(bool)
+    yellow = ((hsv[..., 0] >= 18) & (hsv[..., 0] <= 35) & (hsv[..., 1] >= 120) & (hsv[..., 2] > 70) & near)
+    blobs, _ = cv2.findContours(yellow.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not blobs:
+        return False
+    blob = max(blobs, key=cv2.contourArea)
+    x, y, w, h = cv2.boundingRect(blob)
+    if x <= 0 or y <= 0 or x + w >= hsv.shape[1] or y + h >= hsv.shape[0]:
+        return False
+    area, hull = cv2.contourArea(blob), cv2.convexHull(blob)
+    corners = len(cv2.approxPolyDP(hull, 0.04 * cv2.arcLength(hull, True), True))
+    (_c, (rw, rh), _a) = cv2.minAreaRect(blob)
+    round_ = 4 * np.pi * area / cv2.arcLength(blob, True) ** 2
+    return corners == 4 and area >= 0.86 * rw * rh and round_ < 0.81 and max(rw, rh) <= 1.35 * min(rw, rh)
 
 
 def label_lines(meta: dict, w: int = 640, h: int = 480, bgr: np.ndarray | None = None) -> list[str]:
