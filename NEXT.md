@@ -125,6 +125,18 @@
       `train/lerobot_train_win.py` writes checkpoints/last.txt instead. The run: chunk 20 (2 s), 10
       executed, 60k steps, 10 % of the episodes held out (eval loss every 2000), checkpoints every
       10k -> train/runs/act/m3_act_20261023 (+ .log). Smoke run: eval loss 0.646 -> 0.584 in 200 steps.
+      **Moved to Dionysos at 20k** (the user: as soon as possible): C:\Users\Hercules\roboarm-lerobot (uv venv,
+      torch 2.11+cu128, lerobot[training] 0.6.1; the same launcher), resumed from the laptop's 20k checkpoint
+      (its train_config.json's paths changed; workers 6, eval every 5000) at ~10.4 steps/s against the
+      laptop's ~6; over an SSH session held open from the laptop. Eval loss 0.297 (14k), 0.291 (20k), 0.287 (25k).
+      **The 20k checkpoint on the 6 held-out episodes** (`m3pro/tools/m3_policy.py eval`; mean |error|, deg,
+      J1-J6): a second ahead 11.3 / 10.7 / 10.3 / 8.1 / 7.9 / 6.1 against holding still's 12.4 / 25.7 / 16.3 /
+      15.0 / 5.3 / 10.0 (the whole 2 s chunk 8.6 against 13.6) -- it has learnt the motion, coarsely: 10 deg
+      of J1 is ~4 cm at 22 cm. **The robot client** (`m3_policy.py run CHECKPOINT [--max-dps 40] [--dry]`):
+      from the episodes' start (the wide look, J6 76), 10 Hz, the bridge's MJPEG stream (/rgbd took 57-532 ms
+      over the WiFi), the bridge's guard on every pose (floor 8 mm), steps capped at max-dps/10, J6 <= 150,
+      STOP by Space/Esc, the console's STOP or Ctrl-C. Dry run against the M3: 9.4 steps/s, the picture 10 ms
+      old (median), inference ~2 ms a step (a new chunk every 10). Not yet run moving.
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
