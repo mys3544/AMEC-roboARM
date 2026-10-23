@@ -43,7 +43,7 @@
       median 0.103 s, p99 0.149, max 0.37), every tick a picture (median 18 ms old), 50 MB, the 7
       pick records in episode.json; the steps cut it into attempts (look.wide -> pregrasp ->
       look.close -> descend -> close -> lift -> drop -> look.after), the pictures right for each
-      (a contact sheet checked by eye). Not yet: the converter to LeRobot (on the laptop/hekate).
+      (a contact sheet checked by eye). Into LeRobot: below.
 - [x] **Why that clean-up left a cube and the red block** (the user): both just past the arm's reach --
       J1's axis is 3.3 cm ahead of the robot's middle, and at the grip's height (18 mm) the arm reaches
       23.2 cm from it; the cube (x 0.187 y +0.184) was 24.0 cm out, the block (x 0.267 y -0.072) 24.4.
@@ -54,6 +54,20 @@
       plan; the cube 3 cm, the block 1 cm), "(may drive closer lets the base drive up)" when driving is
       off. So: **M3 pieces within ~22 cm of J1's axis** -- ~25 cm ahead of the robot's middle straight
       out, less to the sides -- or "may drive closer" on.
+- [x] **The recordings as a LeRobot dataset** (`m3pro/tools/m3_episodes.py`): `fetch` copies the
+      robot's finished episodes to m3pro/out/episodes/ (scp, the laptop's key); `build OUT`, run with
+      LeRobot's own python (`~/.roboarm/lerobot`: uv venv, `lerobot[dataset]==0.6.1`, CPU torch 2.11,
+      outside the workspace), makes one episode per pick attempt -- from its pregrasp to the end of
+      the look after it, matched in order to the job's pick records (a job where they do not match is
+      left out, not guessed); the ticks taken at 10 fps by the nearest; observation.images.wrist (AV1
+      video, 640 x 480), observation.state = J1..J6 as sent (servo degrees), action = the next frame's
+      state, task "pick up the 30 mm cube and put it in the box" (the drop from the log: box or line);
+      missed attempts out unless --keep-failed; OUT/m3_attempts.jsonl keeps each one's pick record.
+      The recorder keeps "started_unix" since (deployed): the log's times line up with the ticks;
+      before, the robot's local time (Asia/Shanghai) stands in. **Today's clean-up:** 7 episodes, 939
+      frames (12-18 s each), 7.3 MB from 50 MB of JPEGs (1 min 20 s on the laptop's CPU); loaded back
+      through LeRobotDataset: action = next state exactly, the pictures 0.7 % off the JPEGs (mean abs),
+      the tasks right. On Windows torchcodec does not load (its FFmpeg DLLs): LeRobot falls back to PyAV.
 - [ ] The event itself: what failed, what the visitors liked (the user).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)

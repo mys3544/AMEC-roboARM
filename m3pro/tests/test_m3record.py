@@ -62,7 +62,7 @@ def test_a_job_is_one_episode_with_a_picture_and_a_line_a_tick(tmp_path):
     assert [t["i"] for t in ticks] == [0, 1, 2, 3] and ticks[0]["step"] == "look.wide"
     assert sorted(f.name for f in episode.glob("*.jpg")) == [f"{i:06d}.jpg" for i in range(4)]
     summary = json.loads((episode / "episode.json").read_text())
-    assert summary["job"] == "clean_up" and summary["ticks"] == 4
+    assert summary["job"] == "clean_up" and summary["ticks"] == 4 and summary["started_unix"] == 1792760000.0
     assert [e["text"] for e in summary["log"]] == ["picked the 30 mm cube"]   # not what came before the job
     assert summary["attempts"] == [{"kind": "30 mm cube", "target": [0.2, 0.0, 0.015], "picked": True}]
 

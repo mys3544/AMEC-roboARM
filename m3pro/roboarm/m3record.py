@@ -8,8 +8,8 @@ nothing in the pick itself changes. Under out/episodes/<YYYYmmdd_HHMMSS>_<job>/:
     000000.jpg ...  the colour pictures, one a tick (JPEG 90, as the camera gives them)
     ticks.jsonl     a line a tick: {"i", "t" (s since the job began), "pose" [J1..J6], "step",
                     "odom" [x, y, yaw] | null, "frame_age" (s; null: no picture this tick)}
-    episode.json    {"job", "started", "seconds", "ticks", "log" [{"n", "t", "text"}],
-                    "attempts" [the pick records, "picked" among them]}
+    episode.json    {"job", "started", "started_unix", "seconds", "ticks", "log" [{"n", "t" (unix),
+                    "text"}], "attempts" [the pick records, "picked" among them]}
 
 The action to learn at a tick is the next tick's pose: the command as the board sweeps through it.
 The oldest episodes go once all of them pass KEEP_GB.
@@ -116,6 +116,7 @@ class Recorder:
         self._news(state)
         ep, self.episode = self.episode, None
         summary = {"job": ep["job"], "started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ep["started"])),
+                   "started_unix": round(ep["started"], 3),   # the ticks' t from it; the log's t is unix too
                    "seconds": round(self.clock() - ep["started"], 1), "ticks": ep["ticks"],
                    "error": state.get("error"), "log": ep["log"], "attempts": ep["attempts"]}
         if ep["ticks"] == 0:   # nothing moved that was known: nothing to learn from

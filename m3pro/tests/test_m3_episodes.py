@@ -1,0 +1,56 @@
+"""tools/m3_episodes.py's cutting of a recorded job, without LeRobot: each attempt from its pregrasp to
+the end of the look after it, matched to its pick record and drop; one refused on the way left out;
+the ticks taken at an even rate; the action the next frame's state; the task said."""
+
+import pathlib
+import sys
+
+import pytest
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
+import m3_episodes
+
+STEPS = (["look.box"] * 2 + ["look.wide"] * 3
+         + ["pregrasp"] * 2 + ["look.close", "descend", "descend", "close", "lift", "drop", "drop"] + ["look.after"] * 2
+         + ["pregrasp"] * 2 + ["home"]                       # refused on the way: no look after, no record
+         + ["pregrasp", "look.close", "descend", "close", "lift", "drop"] + ["look.after"] * 3 + ["home"])
+
+
+def job():
+    ticks = [{"i": i, "t": round(0.1 * i, 3), "pose": [90 + i, 100, 10, 0, 90, 0], "step": step}
+             for i, step in enumerate(STEPS)]
+    summary = {"job": "clean_up", "started": "2026-10-23 15:55:03", "started_unix": 1000.0,
+               "attempts": [{"kind": "block lying", "picked": True}, {"kind": "30 mm cube", "picked": False}],
+               "log": [{"n": 1, "t": 1001.35, "text": "dropped into the box at x 0.138 y -0.197"},
+                       {"n": 2, "t": 1002.45, "text": "dropped 261 mm out on the right"}]}
+    return ticks, summary
+
+
+def test_each_attempt_runs_from_its_pregrasp_to_the_end_of_its_look_after():
+    ticks, summary = job()
+    found = m3_episodes.attempts(ticks, summary)
+    assert [(a["first"], a["last"]) for a in found] == [(5, 15), (19, 27)]
+    assert [a["record"]["kind"] for a in found] == ["block lying", "30 mm cube"]
+    assert [a["drop"] for a in found] == ["box", "line"]
+    assert m3_episodes.task_for(found[0]) == "pick up the block and put it in the box"
+    assert m3_episodes.task_for(found[1]) == "pick up the 30 mm cube and put it on the line on the right"
+
+
+def test_records_and_attempts_that_do_not_match_are_not_paired_by_guess():
+    ticks, summary = job()
+    summary["attempts"] = summary["attempts"][:1]
+    with pytest.raises(ValueError, match="not matched"):
+        m3_episodes.attempts(ticks, summary)
+
+
+def test_the_ticks_are_taken_evenly_and_the_action_is_the_next_state():
+    ticks = [{"t": t, "pose": [k, 0, 0, 0, 0, 0], "step": "descend"} for k, t in enumerate([0.0, 0.1, 0.32, 0.4, 0.5])]
+    chosen = m3_episodes.resample(ticks, 0, 4, 10)
+    assert chosen == [0, 1, 1, 2, 3, 4]   # 0.2 s has no tick: the nearest, 0.1, again
+    out = m3_episodes.frames(ticks, chosen)
+    assert [a[0] for _i, _s, a in out] == [1, 1, 2, 3, 4, 4]   # the last holds
+
+
+def test_a_recording_from_before_started_unix_is_dated_by_the_robots_clock():
+    # 15:55:03 in Shanghai is 07:55:03 UTC
+    assert m3_episodes.started_unix({"started": "2026-10-23 15:55:03"}) == pytest.approx(1792742103.5)
