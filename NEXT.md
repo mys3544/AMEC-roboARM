@@ -38,8 +38,12 @@
       10 times a second while a job runs the colour picture, the pose sent, the odometry and the
       step, under the robot's ~/roboarm/out/episodes/<stamp>_<job>/ (ticks.jsonl, episode.json with
       the log and each pick's record; the stamps in the robot's clock, Asia/Shanghai). A look job:
-      75 ticks in 7.8 s, every one with its picture, 5.2 MB (a 2-min clean-up ~80 MB; the oldest go
-      past 20 GB). Not yet: a clean-up recorded, and the converter to LeRobot (on the laptop/hekate).
+      75 ticks in 7.8 s, every one with its picture, 5.2 MB (the oldest go past 20 GB). **The first
+      recorded clean-up** (20261023_155503_clean_up): 7 picked, 0 missed, 1152 ticks in 122 s (dt
+      median 0.103 s, p99 0.149, max 0.37), every tick a picture (median 18 ms old), 50 MB, the 7
+      pick records in episode.json; the steps cut it into attempts (look.wide -> pregrasp ->
+      look.close -> descend -> close -> lift -> drop -> look.after), the pictures right for each
+      (a contact sheet checked by eye). Not yet: the converter to LeRobot (on the laptop/hekate).
 - [ ] The event itself: what failed, what the visitors liked (the user).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
