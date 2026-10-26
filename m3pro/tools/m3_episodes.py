@@ -1,6 +1,7 @@
 """The M3's recorded jobs (roboarm/m3record.py: out/episodes/ on the robot) as a LeRobot dataset a
-VLA trains on (NEXT.md, "After the event"): every pick attempt one episode, from the arm leaving the
-look pose for the piece (the step "pregrasp") to it back at the look after the drop ("look.after").
+VLA trains on (NEXT.md, "After the event"): every pick attempt one episode, from the arm about to leave
+the look pose for the piece (LEAD ticks before the step "pregrasp") to its arrival back there after the
+drop (the look after's first tick at that pose: attempts()).
 
     python tools/m3_episodes.py fetch                  # the robot's episodes not here yet -> out/episodes/
     <LeRobot's python> tools/m3_episodes.py build OUT [--fps 10] [--keep-failed] [--jobs clean_up sort ...]
@@ -48,13 +49,19 @@ def started_unix(summary: dict) -> float:
     return local.timestamp() + 0.5   # the string drops the fraction
 
 
+LEAD = 3   # ticks kept before an attempt's pregrasp, the arm still standing at the look pose
+
+
 def attempts(ticks: list[dict], summary: dict) -> list[dict]:
     """The job's pick attempts: {"first", "last" (tick indices, inclusive), "record", "drop" ("box",
-    "line" or None)} -- each from its pregrasp to the end of the look after it. One that never got
-    to its look after (a move refused on the way) has no record and is left out; the rest are the
-    records in order."""
+    "line" or None)} -- each from LEAD ticks before its pregrasp (the arm standing at the look pose, as
+    long as it stood) to the arm back at that pose after the drop: the first tick of the look after
+    there. The rest of that look -- the arm standing while the picker looks, 6-64 ticks -- is left out:
+    kept until 2026-10-26, it outnumbered the departures from the look pose 718 to 25, and ACT learnt to
+    stay there (a run on the M3 never left it). One that never got to its look after (a move refused
+    on the way) has no record and is left out; the rest are the records in order."""
     starts = [i for i, t in enumerate(ticks) if t["step"] == "pregrasp" and (i == 0 or ticks[i - 1]["step"] != "pregrasp")]
-    whole = []
+    whole = []   # (pregrasp, look after's first tick, its last)
     for k, first in enumerate(starts):
         stop = starts[k + 1] if k + 1 < len(starts) else len(ticks)
         after = [i for i in range(first, stop) if ticks[i]["step"] == "look.after"]
@@ -63,7 +70,7 @@ def attempts(ticks: list[dict], summary: dict) -> list[dict]:
         last = after[0]
         while last + 1 < stop and ticks[last + 1]["step"] == "look.after":
             last += 1
-        whole.append((first, last))
+        whole.append((first, after[0], last))
     records = summary.get("attempts", [])
     if len(records) != len(whole):
         raise ValueError(f"{len(whole)} attempts in the ticks, {len(records)} records: not matched")
@@ -72,14 +79,19 @@ def attempts(ticks: list[dict], summary: dict) -> list[dict]:
              for e in summary.get("log", []) if e["text"].startswith("dropped ")]
     looks = [(e["t"] - t0, seen(e["text"])) for e in summary.get("log", [])
              if e["text"].startswith(("looked round:", "wide look:"))]
-    out = []
-    for k, ((first, last), record) in enumerate(zip(whole, records)):
+    out, kept = [], -1   # kept: the last tick of the episode before
+    for k, ((first, look, last), record) in enumerate(zip(whole, records)):
         inside = [where for t, where in drops if ticks[first]["t"] <= t <= ticks[last]["t"]]
         until = ticks[whole[k + 1][0]]["t"] if k + 1 < len(whole) else math.inf
         pushed = record.get("picked") and pushed_away(record, looks, ticks[first]["t"], ticks[last]["t"], until)
         if pushed:
             record = {**record, "picked": False, "pushed_to": pushed}
-        out.append({"first": first, "last": last, "record": record, "drop": inside[0] if len(inside) == 1 else None})
+        rest, lead = ticks[first - 1]["pose"] if first else None, first
+        while first - lead < LEAD and lead - 2 > kept and ticks[lead - 1]["pose"] == rest == ticks[lead - 2]["pose"]:
+            lead -= 1
+        back = next(i for i in range(look, last + 1) if ticks[i]["pose"] == ticks[last]["pose"])
+        out.append({"first": lead, "last": back, "record": record, "drop": inside[0] if len(inside) == 1 else None})
+        kept = back
     return out
 
 

@@ -1,6 +1,7 @@
-"""tools/m3_episodes.py's cutting of a recorded job, without LeRobot: each attempt from its pregrasp to
-the end of the look after it, matched to its pick record and drop; one refused on the way left out;
-the ticks taken at an even rate; the action the next frame's state; the task said."""
+"""tools/m3_episodes.py's cutting of a recorded job, without LeRobot: each attempt from a few ticks
+standing before its pregrasp to its arrival back at the look pose, matched to its pick record and drop;
+one refused on the way left out; the ticks taken at an even rate; the action the next frame's state;
+the task said."""
 
 import pathlib
 import sys
@@ -10,15 +11,20 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tools"))
 import m3_episodes
 
-STEPS = (["look.box"] * 2 + ["look.wide"] * 3
-         + ["pregrasp"] * 2 + ["look.close", "descend", "descend", "close", "lift", "drop", "drop"] + ["look.after"] * 2
+STEPS = (["look.box"] * 2 + ["look.wide"] * 4
+         + ["pregrasp"] * 2 + ["look.close", "descend", "descend", "close", "lift", "drop", "drop"] + ["look.after"] * 4
          + ["pregrasp"] * 2 + ["home"]                       # refused on the way: no look after, no record
          + ["pregrasp", "look.close", "descend", "close", "lift", "drop"] + ["look.after"] * 3 + ["home"])
+LOOK = [90, 105, 10, 0, 90, 76]   # where the wide look and the look after stand
 
 
 def job():
-    ticks = [{"i": i, "t": round(0.1 * i, 3), "pose": [90 + i, 100, 10, 0, 90, 0], "step": step}
-             for i, step in enumerate(STEPS)]
+    """The arm standing at LOOK through the wide look and the look after (but its first tick, on the
+    way back), moving everywhere else."""
+    ticks = []
+    for i, step in enumerate(STEPS):
+        standing = step in ("look.box", "look.wide") or step == "look.after" and STEPS[i - 1] == "look.after"
+        ticks.append({"i": i, "t": round(0.1 * i, 3), "pose": LOOK if standing else [i, 100, 10, 0, 90, 0], "step": step})
     summary = {"job": "clean_up", "started": "2026-10-23 15:55:03", "started_unix": 1000.0,
                "attempts": [{"kind": "block lying", "picked": True}, {"kind": "30 mm cube", "picked": False}],
                "log": [{"n": 1, "t": 1001.35, "text": "dropped into the box at x 0.138 y -0.197"},
@@ -26,10 +32,12 @@ def job():
     return ticks, summary
 
 
-def test_each_attempt_runs_from_its_pregrasp_to_the_end_of_its_look_after():
+def test_each_attempt_runs_from_just_before_it_leaves_the_look_pose_to_its_arrival_back_there():
     ticks, summary = job()
     found = m3_episodes.attempts(ticks, summary)
-    assert [(a["first"], a["last"]) for a in found] == [(5, 15), (19, 27)]
+    # the first: 3 ticks standing before its pregrasp (6), to its look after's first tick at LOOK (16 of 15-18);
+    # the second: none before its pregrasp (22) -- the arm was moving (the refused one's home) --, to 29 of 28-30
+    assert [(a["first"], a["last"]) for a in found] == [(3, 16), (22, 29)]
     assert [a["record"]["kind"] for a in found] == ["block lying", "30 mm cube"]
     assert [a["drop"] for a in found] == ["box", "line"]
     assert m3_episodes.task_for(found[0]) == "pick up the block and put it in the box"
