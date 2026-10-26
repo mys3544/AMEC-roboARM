@@ -234,6 +234,15 @@ def test_a_neighbour_left_where_it_was_is_not_the_shoved_target():
     assert state["picked"] == 1 and state["missed"] == 0 and "pushed_to" not in state["last"]
 
 
+def test_a_piece_there_all_along_is_not_taken_for_a_shoved_one_by_a_look_round():
+    """2026-10-26, round 2: the pick planned on the middle look alone (the last one's look after), its look
+    round after showed a cube that had lain at the side since the job began -- "shoved 6.3 cm", wrongly."""
+    robot = Shoving([thing(0.18, 0.0), thing(0.18, 0.06), thing(0.15, 0.13)])   # the last outside the middle
+    state = run("clean_up", robot)
+    assert state["picked"] == 3 and state["missed"] == 0
+    assert robot.looks[:4] == ["round", "middle", "middle", "round"]   # the second pick's look after went round
+
+
 def test_where_the_look_after_may_miss_a_shoved_piece_it_looks_round():
     robot = Shoving([thing(0.18, 0.06)], by=(0.0, 0.06))   # shoved out of the middle look
     state = run("pick_once", robot)

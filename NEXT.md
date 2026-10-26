@@ -228,6 +228,18 @@
      weekend's settings: 100k steps, batch 8, eval every 5k, checkpoints every 20k, 50 train / 8 held out) ->
      C:\Users\Hercules\roboarm-lerobot\m3_act_20261023c (+ .log there). Then: each checkpoint from START on
      today's frames (m3pro/out/policy/frames/000072.jpg, 000150.jpg: a fresh scene), then on the M3.
+     Eval loss 0.274 (10k), 0.264 (15k), 0.261 (20k) -- not comparable with b's (its easy standing frames gone).
+     **The 20k leaves START:** on today's frames 26 deg in its first second (J1 90 -> 64, J2 105 -> 80, J4 0 ->
+     20), where b's 100k moved 0.6 -- the cut was it. But it heads ~30 deg left of the cube (the clean-up
+     gripped it at J1 94): the recordings' mean way out, or the pliers on the left -- to be seen on the M3,
+     where it looks again every chunk.
+     **The 20k on the M3** (18:31, pliers off the table, the 30 mm cube in the middle; its engine 0.63 deg from
+     LeRobot, 6.6 ms): it left START at once and kept turning left and down -- J1 90 -> 69 -> 56 -> 47 -> 37, J2
+     105 -> 56 -- until the guard refused it after 3.0 s ("16 cm above the floor over the chassis", J1 37); the
+     arm held. 9.9 ticks a second, 0 late. Not towards the cube (J1 94): **the recordings lean left** -- the
+     grips' J1 median 75.5 (quartiles 54-98), 55 % of the departures go left, 6 of 58 targets in the middle
+     (x 0.20-0.26, y +-3 cm). Next: the later checkpoints from START on today's frames (do they head for J1
+     ~94?), and more episodes with pieces in the middle and on the right (clean-ups; or the simulator).
 3. **The picker's "picked" check** (shared roboshared.task.pick): a piece shoved off is not picked --
    look round (both sides) after an attempt and compare with the look before (as m3_episodes does now).
    Both robots, tests, deploy. **Done 2026-10-26:** where the gripper cannot tell (the M3; the X3 when its
@@ -240,7 +252,17 @@
    against the middle's 2.3 s; the X3 never, its look after is its map's); it then serves the next pick too.
    Also fixed on the way: the look after was compared with the grip's spot in the base frame from before the
    drop's drive back (only matters after a drive). Tests: shared 31, X3 358, M3 153; deployed to both
-   (their copies matched git first), both bridges restarted. Not yet seen live.
+   (their copies matched git first), both bridges restarted. **Live on the M3** (a clean-up, the cube straight
+   ahead at x 0.238 y -0.016): picked into the box in 18 s, the look after the middle one only (no look round
+   there), "picked" with no pushed_to -- the new path runs clean.
+   **More episodes for the middle and the right** (the user's layouts, 2026-10-26 afternoon): round 1 7 of 8
+   (156 s) -- **a real shove caught**: "NOT picked: shoved 6.5 cm off its spot" (a 30 mm cube pushed from
+   0.233/-0.034 to 0.213/-0.092, the arm carried nothing to the box; the next pick took it); round 2 7 of 13
+   (273 s, misses mostly "still there": the cube far left at 0.12/+0.19, a block twice) -- and **a false
+   shove**: a cube lying at the side since the job began, which the pick's planning look (the middle one,
+   the last pick's look after) had not seen, turned up in the look round after it as "new". Fixed: the
+   check now takes everything this job has seen (Task.seen, in the job's start frame; the target's own
+   readings out) -- a test repeats round 2's case; shared 32, X3 358, M3 153; deployed to both, bridges restarted.
 4. **The simulator** (m3pro/sim, Dionysos): the DCW2 on arm4 rendering at the hand-eye pose, the lab's
    table and pieces (kit_synth.py's), then the expert's loop -- the picker on the true poses -- and the
    recorder writing the same LeRobot format: thousands of episodes, the real 58 to fine-tune.

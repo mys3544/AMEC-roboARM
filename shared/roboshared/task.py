@@ -102,9 +102,9 @@ def name(o: dict) -> str:
 
 def shoved(spot, target: dict, before: list[dict], after: list[dict]) -> dict | None:
     """The target where a pick shoved it, if `after` (a look after the pick) shows it: a piece of its
-    kind (a cube of its size) MATCH_M to PUSH_M off its `spot` that no thing of `before` (the look the
-    pick planned on, the target left out) accounts for -- within MATCH_M of one, PART_M of one seen cut
-    short. All in one base frame."""
+    kind (a cube of its size) MATCH_M to PUSH_M off its `spot` that no thing of `before` (what the job
+    saw before the grip, the target's own readings left out) accounts for -- within MATCH_M of one,
+    PART_M of one seen cut short. All in one base frame."""
     for o in after:
         like = o["kind"] == target["kind"] and (o["kind"] != "cube" or abs(o["size"] - target["size"]) < 0.007)
         if not like or not MATCH_M <= float(np.linalg.norm(o["centre"][:2] - spot[:2])) < PUSH_M:
@@ -165,6 +165,9 @@ class Task:
         self.to_line: str | None = None         # a sort's: the kind that goes on the line, the box or not
         self.skip: list[np.ndarray] = []        # spots this job has given up (pick's `skip`): looked past
         self.unplannable: list[dict] = []       # things this job found no plan for, the base where it is
+        self.seen: list[tuple[np.ndarray, bool]] = []   # this job's readings of things: (centre in the frame the
+        # job began in, seen whole) -- what a shoved piece must be new to (shoved): the look a pick planned on
+        # may be the middle one alone, and a look round after it showed a cube there all along as new (2026-10-26)
         self.offset = np.zeros(2)   # m the base has driven since the job began (forward, left): the drop-off
                                     # box stays where it was, so the base goes back before a drop
         self.cfg = {key: spec[5] for key, spec in self.SETTINGS.items()}
@@ -268,6 +271,7 @@ class Task:
                 return {"error": f"busy: {self.state['job']} ({self.state['step']})"}
             self._stop.clear()
             self.state.update(job=job, step="starting", since=time.time(), busy=True, error=None)
+            self.seen = []
         self._thread = threading.Thread(target=self._run, args=(job, work, kwargs), daemon=True)
         self._thread.start()
         return {"ok": True, "job": job}
@@ -447,6 +451,7 @@ class Task:
                 if at is not None:
                     at = at - went
                 found = self.wide_look()
+        self.saw(found)
         gripped_at = self.offset.copy()   # the drop drives the base back to where the job began
         grip = self.grip(target, planned, found)   # down to it, shut on it, back up: the robot's own way
         held = grip.get("held")   # True / False where the robot can tell (the X3's gripper); None: the look after says
@@ -459,16 +464,23 @@ class Task:
         centre = grip["centre"]
         shift = np.r_[self.offset - gripped_at, 0.0]   # the grip's base frame -> the look after's
         spot = np.asarray(centre, float) - shift
-        before = [{**o, "centre": np.asarray(o["centre"], float) - shift} for o in found if o is not target]
+        # everything this job saw before the grip, in the look after's frame -- but the target's own readings
+        aimed = np.asarray(target["centre"], float)[:2] + gripped_at
+        before = [{"centre": c - np.r_[self.offset, 0.0], "whole": whole} for c, whole in self.seen
+                  if np.linalg.norm(c[:2] - aimed) >= (MATCH_M if whole else PART_M)]
 
         def judged(seen):   # (what is still on the spot, the target shoved off it)
             left = [o for o in seen if np.linalg.norm(o["centre"][:2] - spot[:2]) < MATCH_M]
             return left, None if left or held is not None else shoved(spot, target, before, seen)
         left, pushed = judged(after)
+        looks = [after]
         if held is None and not left and pushed is None and self.round_sees_more(spot, PUSH_M):
             with self.step("look.after"):   # where it may have been shoved to, the look after did not see
                 after = self.wide_look(sides=True)
+            looks.append(after)
             left, pushed = judged(after)
+        for look in looks:
+            self.saw(look)
         picked = (not left and pushed is None) if held is None else bool(held)
         reading = grip["reading"]
         record = {"when": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.monotonic() - started, 1),
@@ -489,6 +501,11 @@ class Task:
         else:
             self.say(f"picked the {name(reading)}: {record['seconds']:.0f} s from the wide look to the next")
         return record, after
+
+    def saw(self, things: list[dict]) -> None:
+        """`things` (a look's, in the base's frame now) kept in this job's memory, `seen`."""
+        here = np.r_[self.offset, 0.0]
+        self.seen += [(np.asarray(o["centre"], float) + here, bool(o.get("whole", True))) for o in things]
 
     # ------------------------------------------------------------------------ the drop --
     def drop(self, back=None, kind: str | None = None) -> None:
