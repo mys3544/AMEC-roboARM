@@ -906,6 +906,16 @@ def test_the_drop_spots_keep_off_the_standing_lid_and_clear_of_the_walls():
     assert len(m3pick.box_spots(box)) >= 6   # room to spread the drops still
 
 
+def test_after_a_pick_out_at_the_sides_it_looks_round_for_a_shoved_piece_not_by_the_bumper():
+    """The look after is LOOK's alone; a piece shoved 8 cm out of it at the sides is seen only by a look
+    round (roboshared.task.shoved), which costs ~4.4 s -- not where the side looks see no more of the ring."""
+    picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
+    for x, y in ((0.20, 0.15), (0.22, -0.12), (0.16, 0.10)):
+        assert picker.round_sees_more(np.array([x, y, 0.015]), 0.08), (x, y)
+    for x, y in ((0.25, 0.0), (0.20, 0.0), (0.30, 0.05)):   # straight ahead: LOOK, or nothing, sees it all
+        assert not picker.round_sees_more(np.array([x, y, 0.015]), 0.08), (x, y)
+
+
 def test_the_taught_aim_follows_the_grips_near_a_thing_and_their_mean_far_from_them():
     taught = ((0.20, 0.00, 0.020, 0.010), (0.20, -0.10, 0.008, -0.004))
     mean = np.array([0.014, 0.003])

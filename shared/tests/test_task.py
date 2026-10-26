@@ -192,6 +192,59 @@ def test_a_spot_missed_twice_is_left_and_the_job_goes_on():
     assert any("missed twice" in e["text"] for e in robot.log())
 
 
+class Shoving(Pretend):
+    """Its grip shoves the target `by` (x, y m) instead of taking it, once (None: takes it); its middle
+    look (wide_look()) sees only what lies within MIDDLE of y 0, its look round everything."""
+
+    MIDDLE = 0.10
+
+    def __init__(self, table, by=None, **kw):
+        super().__init__(table, **kw)
+        self.by, self.looks = by, []
+
+    def grip(self, target, planned, found):
+        out = super().grip(target, planned, found)
+        if self.by is not None:
+            self.table.append({**target, "centre": target["centre"] + np.r_[self.by, 0.0]})
+            self.by = None
+        return out
+
+    def wide_look(self, sides=False):
+        self.looks.append("round" if sides else "middle")
+        seen = super().wide_look(sides)
+        return seen if sides else [o for o in seen if abs(o["centre"][1]) <= self.MIDDLE]
+
+    def round_sees_more(self, spot, radius):
+        return abs(spot[1]) + radius > self.MIDDLE
+
+
+def test_a_piece_shoved_off_its_spot_is_not_picked():
+    """2026-10-23: a 30 mm cube shoved 4.3 cm out was counted picked -- its spot was clear."""
+    robot = Shoving([thing(0.18, 0.02)], by=(0.043, 0.0))
+    state = run("pick_once", robot)
+    assert state["picked"] == 0 and state["missed"] == 1
+    assert state["last"]["picked"] is False and state["last"]["pushed_to"] == [0.223, 0.02]
+    assert any("shoved 4.3 cm" in e["text"] for e in robot.log())
+    assert robot.looks == ["round", "middle"]   # the middle look after saw it: no look round
+
+
+def test_a_neighbour_left_where_it_was_is_not_the_shoved_target():
+    robot = Shoving([thing(0.18, 0.02), thing(0.18, 0.07)])   # 5 cm apart, as in 2026-10-23's round B
+    state = run("pick_once", robot)
+    assert state["picked"] == 1 and state["missed"] == 0 and "pushed_to" not in state["last"]
+
+
+def test_where_the_look_after_may_miss_a_shoved_piece_it_looks_round():
+    robot = Shoving([thing(0.18, 0.06)], by=(0.0, 0.06))   # shoved out of the middle look
+    state = run("pick_once", robot)
+    assert state["missed"] == 1 and state["last"]["pushed_to"] == [0.18, 0.12]
+    assert robot.looks == ["round", "middle", "round"]
+    robot = Shoving([thing(0.18, 0.06)])   # near the middle look's edge, taken: picked, after a look round
+    assert run("pick_once", robot)["picked"] == 1 and robot.looks == ["round", "middle", "round"]
+    robot = Shoving([thing(0.18, 0.0)])    # in the middle: its ring all in the middle look, no look round
+    assert run("pick_once", robot)["picked"] == 1 and robot.looks == ["round", "middle"]
+
+
 def test_a_box_gone_at_the_drop_means_what_is_held_goes_back():
     robot = Pretend([thing(0.18, 0.02)], box_at=(180, (0.0, -0.30)))
 

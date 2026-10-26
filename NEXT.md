@@ -230,7 +230,17 @@
      today's frames (m3pro/out/policy/frames/000072.jpg, 000150.jpg: a fresh scene), then on the M3.
 3. **The picker's "picked" check** (shared roboshared.task.pick): a piece shoved off is not picked --
    look round (both sides) after an attempt and compare with the look before (as m3_episodes does now).
-   Both robots, tests, deploy.
+   Both robots, tests, deploy. **Done 2026-10-26:** where the gripper cannot tell (the M3; the X3 when its
+   read-back has no word), picked = nothing left on the spot AND not `task.shoved()`: a piece of the target's
+   kind (a cube of its size, +-7 mm) turning up 3-8 cm (MATCH_M-PUSH_M) off the spot that nothing of the look
+   before accounts for (within 3 cm, 6 cm of one seen cut short; the target left out) -> "NOT picked: shoved
+   N cm off its spot", the record "pushed_to" as m3_episodes marks it. A look round only when it would see
+   some of the 8 cm ring the middle look after does not (`round_sees_more`: the M3's by m3teach.in_view on
+   LOOK and WIDE_SIDES -- out at the sides yes, straight ahead and by the bumper no; a look round is 6.7 s
+   against the middle's 2.3 s; the X3 never, its look after is its map's); it then serves the next pick too.
+   Also fixed on the way: the look after was compared with the grip's spot in the base frame from before the
+   drop's drive back (only matters after a drive). Tests: shared 31, X3 358, M3 153; deployed to both
+   (their copies matched git first), both bridges restarted. Not yet seen live.
 4. **The simulator** (m3pro/sim, Dionysos): the DCW2 on arm4 rendering at the hand-eye pose, the lab's
    table and pieces (kit_synth.py's), then the expert's loop -- the picker on the true poses -- and the
    recorder writing the same LeRobot format: thousands of episodes, the real 58 to fine-tune.

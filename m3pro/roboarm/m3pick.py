@@ -924,6 +924,16 @@ class Picker(Task):
         self.say(("looked round: " if sides else "wide look: ") + describe(found))
         return found
 
+    def round_sees_more(self, spot, radius: float) -> bool:
+        """Whether WIDE_SIDES' looks see some of the ring `radius` round `spot` that LOOK's does not --
+        in the picture's inner 85 % (m3teach.in_view), of what a wide look keeps (before J1's axis, within
+        SEARCH_FAR). By the bumper neither sees it (no look round, ~4.4 s); out at the sides they do."""
+        axis = np.asarray(self.AXIS)
+        ring = [np.r_[spot[0] + radius * math.cos(a), spot[1] + radius * math.sin(a), spot[2]]
+                for a in np.linspace(0, 2 * math.pi, 12, endpoint=False)]
+        ring = [p for p in ring if p[0] >= axis[0] and float(np.hypot(*(p[:2] - axis))) <= SEARCH_FAR]
+        return any(not m3teach.in_view(LOOK, p) and any(m3teach.in_view(side, p) for side in WIDE_SIDES) for p in ring)
+
     def grip(self, target: dict, planned, found: list[dict]) -> dict:
         """The close look, the aim corrected, the turn read, the grip replanned -- down the line, shut,
         back up it (Task.grip)."""

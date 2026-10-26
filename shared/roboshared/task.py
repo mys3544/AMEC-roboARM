@@ -48,6 +48,8 @@ from roboshared import box as boxes
 from roboshared import metrics
 
 MATCH_M = 0.03   # the close look's thing is the wide look's when within this
+PUSH_M = 0.08    # a piece like the target turning up new this near its spot after a pick is the target, shoved
+                 # off: 2026-10-23 the M3 counted a 30 mm cube shoved 4.3 cm out as picked (its spot was clear)
 SAME_SPOT_M, SAME_TURN_DEG = 0.01, 8.0   # a thing no plan reached is the same while this near and turned
 BOX_TRIES, BOX_AGAIN_S = 3, 0.4   # looks for the box's marker from one place, and the pause between them
 PART_M = 0.06    # a thing one look saw cut by the picture's edge is another look's whole one within this
@@ -96,6 +98,21 @@ def name(o: dict) -> str:
     if o["kind"] == "cube":
         return f"{o['size'] * 1000:.0f} mm cube"
     return "block " + ("lying" if o["length"] > o["size"] else "standing")
+
+
+def shoved(spot, target: dict, before: list[dict], after: list[dict]) -> dict | None:
+    """The target where a pick shoved it, if `after` (a look after the pick) shows it: a piece of its
+    kind (a cube of its size) MATCH_M to PUSH_M off its `spot` that no thing of `before` (the look the
+    pick planned on, the target left out) accounts for -- within MATCH_M of one, PART_M of one seen cut
+    short. All in one base frame."""
+    for o in after:
+        like = o["kind"] == target["kind"] and (o["kind"] != "cube" or abs(o["size"] - target["size"]) < 0.007)
+        if not like or not MATCH_M <= float(np.linalg.norm(o["centre"][:2] - spot[:2])) < PUSH_M:
+            continue
+        if not any(np.linalg.norm(o["centre"][:2] - b["centre"][:2]) < (MATCH_M if b.get("whole", True) else PART_M)
+                   for b in before):
+            return o
+    return None
 
 
 def describe(found: list[dict]) -> str:
@@ -383,7 +400,9 @@ class Task:
         drop it off and look again from the wide look: (the record of the attempt, what that look
         found -- the next pick's wide look). `found`: the wide look already taken, the arm there
         and the gripper open. Things at the `skip` spots are left; a move the arm refuses on the
-        way to the grip raises Refused."""
+        way to the grip raises Refused. Where the gripper cannot tell, picked means: nothing left on
+        the spot and the target not shoved off it (shoved(); a look round first when the look after
+        may have missed where it went: round_sees_more)."""
         started = time.monotonic()
         self.skip = [np.asarray(spot, float)[:2] for spot in skip]
         looked_round = found is None
@@ -428,6 +447,7 @@ class Task:
                 if at is not None:
                     at = at - went
                 found = self.wide_look()
+        gripped_at = self.offset.copy()   # the drop drives the base back to where the job began
         grip = self.grip(target, planned, found)   # down to it, shut on it, back up: the robot's own way
         held = grip.get("held")   # True / False where the robot can tell (the X3's gripper); None: the look after says
         if held is False:
@@ -437,17 +457,35 @@ class Task:
         with self.step("look.after"):   # the next pick's wide look, too
             after = self.wide_look()
         centre = grip["centre"]
-        left = [o for o in after if np.linalg.norm(o["centre"][:2] - centre[:2]) < MATCH_M]
-        picked = (not left) if held is None else bool(held)
+        shift = np.r_[self.offset - gripped_at, 0.0]   # the grip's base frame -> the look after's
+        spot = np.asarray(centre, float) - shift
+        before = [{**o, "centre": np.asarray(o["centre"], float) - shift} for o in found if o is not target]
+
+        def judged(seen):   # (what is still on the spot, the target shoved off it)
+            left = [o for o in seen if np.linalg.norm(o["centre"][:2] - spot[:2]) < MATCH_M]
+            return left, None if left or held is not None else shoved(spot, target, before, seen)
+        left, pushed = judged(after)
+        if held is None and not left and pushed is None and self.round_sees_more(spot, PUSH_M):
+            with self.step("look.after"):   # where it may have been shoved to, the look after did not see
+                after = self.wide_look(sides=True)
+            left, pushed = judged(after)
+        picked = (not left and pushed is None) if held is None else bool(held)
         reading = grip["reading"]
         record = {"when": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.monotonic() - started, 1),
                   "kind": name(reading), "target": np.round(centre, 4).tolist(), "size_mm": round(reading["size"] * 1000),
                   "yaw_deg": round(reading["yaw"], 1), **grip.get("record", {}), "picked": picked}
+        if pushed is not None:
+            record["pushed_to"] = np.round(pushed["centre"][:2], 4).tolist()   # as m3_episodes marks it
         self._remember(record)
         with self._lock:
             self.state["picked" if picked else "missed"] += 1
-        if not picked:
-            self.say(f"NOT picked: still there -- {describe(left)}" if left else "NOT picked: closed on nothing")
+        if not picked and left:
+            self.say(f"NOT picked: still there -- {describe(left)}")
+        elif not picked and pushed is not None:
+            far = float(np.linalg.norm(pushed["centre"][:2] - spot[:2]))
+            self.say(f"NOT picked: shoved {100 * far:.1f} cm off its spot -- {describe([pushed])}")
+        elif not picked:
+            self.say("NOT picked: closed on nothing")
         else:
             self.say(f"picked the {name(reading)}: {record['seconds']:.0f} s from the wide look to the next")
         return record, after
@@ -691,6 +729,12 @@ class Task:
     def why_not(self, kit: list[dict], found: list[dict]) -> str:
         """Why none of `kit` is picked from here."""
         return f"none in reach: {describe(kit)}"
+
+    def round_sees_more(self, spot, radius: float) -> bool:
+        """Whether a look round (wide_look(sides=True)) would see some of the ring `radius` round `spot`
+        (base x, y, z) that the look after (wide_look()) does not -- where a shoved piece may lie unseen.
+        By default no: a robot whose look after may miss it says so (the M3's middle look)."""
+        return False
 
     def view(self):
         """The picture from where the arm is: (image BGR, K, camera base <- optical 4 x 4, anything
