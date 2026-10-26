@@ -146,15 +146,31 @@ def pose_at(keys: list, t: float) -> dict:
     return keys[-1][1]
 
 
+# The real arm against its model (m3kinematics.SAG), degrees a joint sits further: the fingertip touches of
+# 2026-10-26 (tools/m3_touch.py, ten over the ChArUco board, reach 16-27 cm, the fingers 55-90 deg down) put the
+# tips 12 mm short and 19 mm low of the model, nearly alike in every pose. J2 2.9 deg further down (and the shut
+# fingertips 9 mm longer) explains them to 5.3 mm held out (13.8 before), keeps the camera's readings
+# (m3_twin_gap.py) at 4.4 mm and foretells the look's camera 6 mm low -- the depth saw it 7 mm low. The short part
+# is the real picker's taught aim (m3aim: 8-22 mm further out). Each card's offsets centre on it, so the simulated
+# arm is the real one and the expert compensates it as that aim does; zero once m3kinematics.SAG takes it.
+TWIN_SAG = {2: -2.9}
+
+
+def true_sag() -> dict[int, float]:
+    """Degrees the real arm sits off its commands: the model's SAG and the twin's offset."""
+    return {j: m3kinematics.SAG.get(j, 0.0) + TWIN_SAG.get(j, 0.0) for j in sorted({*m3kinematics.SAG, *TWIN_SAG})}
+
+
 def draw_card(rng) -> dict:
     """A robot card (RESEARCH.md 9.3): how this episode's simulated M3 differs from its model -- the servos'
     delay, gain round 90 and zero, backlash, the gripper's zero, the camera's mount. The expert compensates the
     joints' part (compensated(): the arm lands where planned, the commands recorded carry the card), the camera's
     shows in the pictures. Ranges from the servo probe of 2026-10-23 (lag 0.10-0.20 s, backlash 0.36-1.09 deg,
-    15 deg moves turning 0.87-0.93 of the command) until the ChArUco measurement narrows them."""
+    15 deg moves turning 0.87-0.93 of the command); the joints' zeros round the real arm's (TWIN_SAG)."""
     return {"delay_s": round(float(rng.uniform(0.10, 0.20)), 3),
             "gain": {j: round(float(rng.uniform(0.86, 1.0)), 4) for j in (1, 2, 3, 4)},
-            "offset_deg": {j: round(float(rng.normal(0, 1.5)), 2) for j in (1, 2, 3, 4, 5)},
+            "offset_deg": {j: round(float(rng.normal(TWIN_SAG.get(j, 0.0), 1.5)), 2) for j in (1, 2, 3, 4, 5)},
+            "twin_sag": dict(TWIN_SAG),
             "backlash_deg": {j: round(float(rng.uniform(0.3, 1.2)), 2) for j in (1, 2, 3, 4)},
             "gripper_offset_deg": round(float(rng.normal(0, 2.0)), 2),
             "camera": {"shift_m": np.round(np.clip(rng.normal(0, 0.008, 3), -0.02, 0.02), 4).tolist(),
@@ -597,14 +613,15 @@ def evaluate(args) -> None:
     cells = grid_cells(box)[: args.trials]
     trials = [{"pieces": [{"centre": [float(x), float(y), 0.015], "yaw": float(rng.uniform(0, 90))}], "seconds": args.seconds}
               for x, y in cells]
-    held = {**{j: START[j] + m3kinematics.SAG.get(j, 0.0) for j in range(1, 6)}, 6: START[6]}
+    sag = true_sag()   # the policy's commands move an arm that sits as the real one does
+    held = {**{j: START[j] + sag.get(j, 0.0) for j in range(1, 6)}, 6: START[6]}
     plan = {"keys": [{"t": 0.0, "q": urdf_targets(held)}], "settle_s": 0.0, "friction": 0.7,
             "pieces": [{"size": [0.03] * 3, "centre": trials[0]["pieces"][0]["centre"], "yaw": 0.0, "mass": 0.015,
                         "faces": green_cube()}],
             "statics": box_parts(box), "table": TABLE, "pictures": wrist_view(),
             "policy": {"url": POLICY_URL, "n_action_steps": 10, "hz": HZ, "max_dps": args.max_dps},
             "start": START, "trials": trials,
-            "servo_map": {"sag": {str(j): v for j, v in m3kinematics.SAG.items()}, "mirrored": list(m3kinematics.MIRRORED),
+            "servo_map": {"sag": {str(j): v for j, v in sag.items()}, "mirrored": list(m3kinematics.MIRRORED),
                           "j6": [list(p) for p in J6_TO_FINGER]}}
     stamp = time.strftime("%Y%m%d_%H%M%S")
     OUT.mkdir(parents=True, exist_ok=True)

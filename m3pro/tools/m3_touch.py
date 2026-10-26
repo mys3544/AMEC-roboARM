@@ -4,7 +4,9 @@ at it (the look pose), finds its corners in base_link through roboarm/m3kinemati
 camera mounting -- the camera's height and tilt taken from the floor the depth sees (m3vision) -- then holds the grip point a few cm above a corner while someone measures the miss.
 
     python tools/m3_touch.py look            # the arm moves to the look pose; -> out/touch/look.json
-    python tools/m3_touch.py go N [--up 0.05]   # the grip point to --up m above corner N, and holds
+    python tools/m3_touch.py go N [--up 0.02]   # the fingertips --up m above corner N, and holds
+        the fingers as steep as the arm allows (--pitch, the first that reaches) and shut to 5 mm: one point
+        to sight down from (2026-10-26: at 75 deg and open, nobody could tell where the arm pointed)
     python tools/m3_touch.py home
 
 The corners are numbered as `look` prints them, nearest first. Through the bridge (tools/m3bridge.py);
@@ -32,6 +34,7 @@ from roboarm import m3arm, m3kinematics, m3vision
 
 LOOK = {"1": 88, "2": 105, "3": 25, "4": 0, "5": 90}   # the board in the pick zone fills the view
 STATE = ROOT / "out" / "touch" / "look.json"
+SHUT_MM = 5   # the fingers' gap while touching: the tips one point, the servo not stalled
 
 
 def look() -> None:
@@ -74,24 +77,30 @@ def look() -> None:
         print(f"  corner {n:2d}: x {c[0]:.3f}  y {c[1]:+.3f}  z {c[2]:+.3f}")
 
 
-def go(n: int, up: float) -> None:
+def go(n: int, up: float, pitches: list[float], gap: float = SHUT_MM) -> None:
     corners = json.loads(STATE.read_text())["corners"]
     corner = np.asarray(corners[n])
-    target = corner + np.array([0.0, 0.0, up])
-    for pitch in (75, 65, 55, 85, 45):
-        pose = m3kinematics.reach(target, pitch)
+    level = corner[:2] / np.linalg.norm(corner[:2])   # the arm's plane, from the base to the corner
+    for pitch in pitches:   # the grip point back from the tips by FINGERS along the fingers
+        along = np.r_[level * np.cos(np.radians(pitch)), -np.sin(np.radians(pitch))]
+        pose = m3kinematics.reach(corner + np.array([0.0, 0.0, up]) - m3kinematics.FINGERS * along, pitch)
         if pose:
             break
     else:
-        raise SystemExit(f"corner {n} at {corner.round(3)}: no allowed pose puts the grip {up * 100:.0f} cm above it")
+        raise SystemExit(f"corner {n} at {corner.round(3)}: no allowed pose puts the fingertips {up * 100:.1f} cm above it")
+    pose[6] = m3arm.gripper_angle(gap)
     reply = he.http("/arm/call", {"method": "move_to", "args": [{str(j): v for j, v in pose.items()}],
                                   "kwargs": {"speed_dps": 20}})
     if "error" in reply:
         raise SystemExit(f"refused: {reply['error']}")
     point, real_pitch = m3kinematics.grip(pose)
-    print(f"corner {n} at x {corner[0]:.3f} y {corner[1]:+.3f}: the grip point should now be {up * 100:.0f} cm "
-          f"straight above it, the fingers {real_pitch:.0f} deg below level (pose {pose}; model grip "
-          f"{np.round(point, 3).tolist()})")
+    f = m3kinematics.frames(pose)
+    along = (point - f["arm5"][:3, 3]) / np.linalg.norm(point - f["arm5"][:3, 3])
+    tip = point + m3kinematics.FINGERS * along
+    off = 1000 * (tip - corner)
+    print(f"corner {n} at x {corner[0]:.3f} y {corner[1]:+.3f}: the fingertips should now be {off[2]:.0f} mm above it, "
+          f"{off[0]:+.0f} mm forward, {off[1]:+.0f} mm left (the model's rounding), the fingers {real_pitch:.0f} deg "
+          f"below level (pose {pose})")
 
 
 def main() -> int:
@@ -100,13 +109,16 @@ def main() -> int:
     sub.add_parser("look")
     g = sub.add_parser("go")
     g.add_argument("n", type=int)
-    g.add_argument("--up", type=float, default=0.05)
+    g.add_argument("--up", type=float, default=0.02, help="m from the board to the fingertips")
+    g.add_argument("--pitch", type=float, nargs="+", default=[90, 85, 80, 75, 70, 65, 55],
+                   help="the fingers' angle below level, tried in turn")
+    g.add_argument("--gap", type=float, default=SHUT_MM, help="mm between the fingers (a pick's descent: 40)")
     sub.add_parser("home")
     args = parser.parse_args()
     if args.cmd == "look":
         look()
     elif args.cmd == "go":
-        go(args.n, args.up)
+        go(args.n, args.up, args.pitch, args.gap)
     else:
         print(he.http("/arm/call", {"method": "move_to", "args": [dict(zip("123456", m3arm.POSES["home"]))],
                                     "kwargs": {"speed_dps": 25}}))

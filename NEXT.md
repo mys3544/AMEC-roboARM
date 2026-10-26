@@ -389,6 +389,27 @@ the fingertips on known points (tools/m3_touch.py's touch test), not the camera.
 -- /rgbd handed out one picture for all three** (40-62 mm "errors"): the tool now takes only a picture newer
 than the last one. out/twin/20261026_143116.json (+ each pose's picture).
 
+**The fingertip touches (2026-10-26 ~15:00-15:40, `tools/m3_touch.py`, the user with a ruler):** the look found 24
+corners (camera 310 mm over the floor by depth, 313 by the board -- and 7 mm lower, 1.5 deg steeper than the
+model has it at the look); `go N` now aims the FINGERTIPS (not the grip point) --up over corner N, the fingers as
+steep as the arm reaches (90 near, 75-80 middle, 55 far) and shut to 5 mm (`--gap`) -- slanted and open, nobody
+could tell where the arm pointed. Ten readings (the slanted ones by the finger line extended with a ruler, the
+point under the tips worked out), out/touch/touches.jsonl: **the tips sit 12 mm short, 4 mm right and 19 mm low
+of the model (rms 13.8 mm), nearly alike in every pose** -- reach 16-27 cm, J1 67-111, fingers 55-90 deg. The
+short part is the taught aim's (m3aim: grips taught 8-22 mm further out, +5 left, 2026-10-09) -- measured
+again, independently. Open 40 mm vs shut 5 mm at one pose: the shut tips 6 mm lower, 3 mm nearer (the fingers
+swing), so most of the 19 mm is the arm. Fits (scratch: touch + camera readings together): **J2 2.9 deg
+further down than SAG has it (SAG J2 4.0 -> 1.1) and the shut tips 9 mm longer: 5.3 mm held out, the camera's
+twin readings unchanged at 4.4 mm, and it foretells the look's camera 6 mm low (the depth: 7)** -- three
+measurements agreeing. Trading J2 against J3 (-10/+9) fits the touches as well but spoils the camera's (8.8);
+a plain xyz bias 4.5 (no physics). J1 can't take the 4 mm sideways (no SAG on a mirrored joint; within the
+readings' noise). **In the sim now** (m3_sim.TWIN_SAG {2: -2.9}): every card's J2 zero centres on it, so the
+expert's recorded commands are what the REAL arm needs (as the taught aim makes the picker's), and `evaluate`'s
+arm sits as the real one; `m3_episodes build` leaves out sim episodes made before (card without twin_sag) -- the
+~20 of this afternoon. **Not yet in m3kinematics.SAG** (the robot's model): the picker's aim table and grip
+heights were taught on top of the old one -- adopting it moves the real grips ~15 mm higher and doubles the aim
+unless m3aim's table is re-derived; wants a live check (user's call).
+
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning

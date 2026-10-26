@@ -176,6 +176,9 @@ def build(out: Path, fps: float, keep_failed: bool, jobs: list[str] | None, epis
         ticks, summary = load(folder)
         if jobs and summary["job"] not in jobs:
             continue
+        if "robot_card" in summary and "twin_sag" not in summary["robot_card"]:   # m3_sim.TWIN_SAG: 2026-10-26
+            print(f"{folder.name}: left out -- simulated before the real arm's offset was known", flush=True)
+            continue
         try:
             found = attempts(ticks, summary)
         except ValueError as exc:
