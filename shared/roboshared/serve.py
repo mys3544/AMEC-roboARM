@@ -12,6 +12,8 @@ x3plus/tools/x3bridge.py) -- what the console's arm card drives and watches:
     POST /pick/teach_scan {"name": str, "stamp": str|null}   the M3 only: learn it from a scan made
     POST /pick/find     name what is on the table in front    POST /pick/named {"name"}: pick it
                         (m3pro/roboarm/m3teach.py)
+    POST /pick/policy   {"seconds", "max_dps", "dry"}   the M3 only: a trained policy drives the arm ten
+                        times a second (m3pro/roboarm/m3policy.py)
     GET  /pick/state    the job, its step, the counts, the last attempt, what the last look found
     GET  /pick/log?since=N    the narrated steps after N
     GET  /pick/frame.jpg      the last look, marked
@@ -128,6 +130,9 @@ def reply(picker, interrupt, method: str, path: str, body: bytes = b"") -> tuple
         answer = picker.start("find")
     elif url.path == "/pick/named" and "pick_named" in picker.jobs():
         answer = picker.start("pick_named", name=str(params.get("name") or ""), drive=bool(params.get("drive")))
+    elif url.path == "/pick/policy" and "policy" in picker.jobs():
+        given = {k: float(params[k]) for k in ("seconds", "max_dps") if params.get(k) is not None}
+        answer = picker.start("policy", **given, dry=bool(params.get("dry")))
     elif url.path == "/pick/settings":
         try:
             answer = {"settings": picker.set_settings(params)}

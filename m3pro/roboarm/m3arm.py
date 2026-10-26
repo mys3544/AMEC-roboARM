@@ -202,6 +202,17 @@ class M3Arm:
             self._sleep(0.25)
         return goal
 
+    def step_to(self, targets: Pose, seconds: float, floor_clear: float | None = None) -> Pose:
+        """One command to `targets` over `seconds`, checked as move_to's, and NOT waited for: a policy's
+        step (roboarm.m3policy), the next sent while this one is under way -- the board takes the
+        newest, as follow() relies on. read() believes it on the way; hold() stops it."""
+        if not 0.02 <= seconds <= 2.0:
+            raise ArmError(f"a step of {seconds} s: 0.02-2 s")
+        start, goal = self._plan(targets, floor_clear)
+        self._steps(start, goal, floor_clear)
+        self._send(goal, int(1000 * seconds))
+        return goal
+
     def follow(self, poses: list[Pose], speed_dps: float = 30.0, floor_clear: float | None = None,
                settle: bool = False) -> Pose:
         """Through `poses` (partial poses allowed) one after another without stopping at each: the

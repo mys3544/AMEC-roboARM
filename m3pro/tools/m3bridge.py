@@ -31,6 +31,8 @@ crosses the network -- what the console's M3 arm card drives and watches:
     POST /pick/cleanup  {"kind": ..., "drive": bool}   every kit thing in reach, one by one
                         "drive": the base may drive up to what is out of reach -- forward and
                         sideways, 10 cm at most a go at 5 cm/s, on /odom_raw (off unless asked)
+    POST /pick/policy   {"seconds": 30, "max_dps": 100, "dry": bool}   a trained policy drives the arm ten
+                        times a second (roboarm.m3policy; its model: tools/policy_service.py)
     POST /pick/home     POST /pick/stop (the arm holds where it is, at once)
     GET  /pick/state    the job, its step, the counts, the last attempt, what the last look found
     GET  /pick/log?since=N    the narrated steps after N
@@ -423,7 +425,8 @@ def main() -> int:
     picker = m3pick.Picker(serve.arm_caller(the_bridge, lambda: picker), lambda: snapshot(the_bridge, frames), OUT,
                            drive=lambda dx, dy, v: drive(node, dx, dy, v, lambda: picker.stopping()),
                            battery=lambda: node.volts, odom=lambda: node.odom,
-                           goto=lambda x, y, yaw: goto(node, x, y, yaw, stopping=lambda: picker.stopping()))
+                           goto=lambda x, y, yaw: goto(node, x, y, yaw, stopping=lambda: picker.stopping()),
+                           colour=frames.colour)
     if driver is not None:   # its restarts in the pick log, which the console shows
         threading.Thread(target=driver.watch, args=(picker.say,), daemon=True).start()
     # the arm read directly: the bridge's call lock is held through a whole move

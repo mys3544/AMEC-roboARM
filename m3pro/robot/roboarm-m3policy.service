@@ -1,0 +1,18 @@
+# The M3 Pro's policy (ACT in TensorRT) on 127.0.0.1:8763 (tools/policy_service.py), asked by the
+# bridge's policy job (POST /pick/policy). A systemd user unit, installed by robot/setup.sh but NOT
+# enabled: `m3_policy.py robot` (the laptop) starts it for a run, so its GPU memory is taken only then.
+# `systemctl --user status roboarm-m3policy`, `journalctl --user -u roboarm-m3policy -f`.
+[Unit]
+Description=RoboARM M3 Pro policy (127.0.0.1:8763)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/roboarm
+Environment=PYTHONUNBUFFERED=1
+# .venv-ml sees JetPack's CUDA torch and TensorRT (tools/ml_env.sh)
+ExecStart=%h/roboarm/.venv-ml/bin/python tools/policy_service.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

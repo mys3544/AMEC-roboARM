@@ -37,7 +37,7 @@ JPEG_QUALITY = 80
 # Everything a caller may invoke on the arm. Anything else is a 400, so a bug on
 # the laptop cannot reach into the object behind it.
 ALLOWED = frozenset({
-    "read", "move_to", "follow", "home", "set_gripper", "open_gripper", "close_gripper",
+    "read", "move_to", "step_to", "follow", "home", "set_gripper", "open_gripper", "close_gripper",
     "hold", "engage", "battery",
 })
 

@@ -23,6 +23,7 @@ systemctl --user daemon-reload
 systemctl --user enable roboarm-m3bridge.service
 systemctl --user enable roboarm-m3teach.service   # the teach's YOLOE, from .venv-ml (tools/ml_env.sh first)
 systemctl --user enable roboarm-vision.service    # the kit detector's second opinion (m3kit), from .venv-ml
+# roboarm-m3policy (the policy job's model, from .venv-ml) is installed, not enabled: m3_policy.py robot starts it
 if ! cmp -s robot/jetson-clocks.service /etc/systemd/system/jetson-clocks.service; then
     echo "the clocks at maximum at every boot, once: sudo cp robot/jetson-clocks.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now jetson-clocks"
 fi

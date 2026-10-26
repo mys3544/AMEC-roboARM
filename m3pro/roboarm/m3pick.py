@@ -70,7 +70,7 @@ from roboshared.task import (  # noqa: F401
     refusable,
 )
 
-from roboarm import m3aim, m3arm, m3kinematics, m3kit, m3scan, m3teach, m3vision
+from roboarm import m3aim, m3arm, m3kinematics, m3kit, m3policy, m3scan, m3teach, m3vision
 
 LOOK = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90}   # the wide look: the floor from the bumper (12 cm) to 45 cm
                                              # ahead, +-17 cm aside at the near edge; a 40 mm top there is
@@ -695,16 +695,23 @@ class Picker(Task):
     DROP_OUT, DROP_SPREAD = DROP_OUT, DROP_SPREAD
     BOX_LOOKS = BOX_LOOKS
 
-    def __init__(self, *args, odom=None, goto=None, **kwargs):
+    def __init__(self, *args, odom=None, goto=None, colour=None, **kwargs):
         """Task's, and for the scan: `odom()` -> the wheel odometry's (x, y, yaw) of the base, and
-        `goto(x, y, yaw)` driving it there (moving and turning at once); None: it cannot."""
+        `goto(x, y, yaw)` driving it there (moving and turning at once); None: it cannot. For the
+        policy: `colour()` -> the newest colour picture (BGR) and its age, s."""
         super().__init__(*args, **kwargs)
-        self.odom, self.goto = odom, goto
+        self.odom, self.goto, self.colour = odom, goto, colour
         self.floor_m: float | None = None   # this pick's fingertips over the table (plan, grip); None: the first
 
     def jobs(self) -> dict:
         return {**super().jobs(), "scan": self.scan, "teach": self.teach, "teach_scan": self.teach_scan,
-                "find": self.find, "pick_named": self.pick_named}
+                "find": self.find, "pick_named": self.pick_named, "policy": self.policy}
+
+    def policy(self, seconds: float = 30.0, max_dps: float = m3policy.MAX_DPS, dry: bool = False) -> None:
+        """A trained policy drives the arm ten times a second for `seconds` (m3policy.run)."""
+        if self.colour is None:
+            raise RuntimeError("no camera here for a policy")
+        m3policy.run(self, self.colour, seconds, max_dps, dry)
 
     def teach(self, name: str) -> None:
         """Learn the thing alone in front as `name`, from views round it (m3teach.teach)."""

@@ -148,3 +148,24 @@ def test_a_move_planned_on_the_measured_floor_may_come_closer_to_it_but_not_too_
     above = m3kinematics.reach((0.224, 0.007, 0.08), 70)
     arm.move_to(above)                                   # from just above, a short way down
     assert arm.move_to(low, floor_clear=0.003)[2] == low[2]
+
+
+def test_a_policy_step_is_one_command_not_waited_for_believed_on_the_way_and_checked():
+    board = Board()
+    arm = board.arm()
+    arm.engage(SURVEY)
+    board.sent.clear()
+    t0 = board.t
+    step = {**SURVEY, 1: 100, 2: 115}
+    assert arm.step_to(step, 0.1) == step
+    assert board.t == t0 and board.sent == [(step, 100)]   # sent, and back at once
+    board.t += 0.05
+    assert arm.read()[1] == 95                              # half way through it
+    nxt = {**step, 1: 110}
+    arm.step_to(nxt, 0.1)                                   # the next, before the last has ended
+    assert board.sent[-1] == (nxt, 100) and arm.read()[1] == 95
+    with pytest.raises(ArmError, match="safe range"):
+        arm.step_to({**nxt, 3: 200}, 0.1)
+    with pytest.raises(ArmError, match="0.02-2 s"):
+        arm.step_to(nxt, 5.0)
+    assert len(board.sent) == 2                             # nothing refused was sent
