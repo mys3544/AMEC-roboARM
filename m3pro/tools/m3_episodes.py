@@ -167,12 +167,12 @@ def fetch() -> None:
 
 
 # ------------------------------------------------------------------------------- build --
-def build(out: Path, fps: float, keep_failed: bool, jobs: list[str] | None) -> None:
+def build(out: Path, fps: float, keep_failed: bool, jobs: list[str] | None, episodes: Path = EPISODES) -> None:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from PIL import Image
 
     chosen = []   # (folder, ticks, summary, attempt)
-    for folder in sorted(p for p in EPISODES.iterdir() if (p / "episode.json").exists()):
+    for folder in sorted(p for p in episodes.iterdir() if (p / "episode.json").exists()):
         ticks, summary = load(folder)
         if jobs and summary["job"] not in jobs:
             continue
@@ -183,7 +183,7 @@ def build(out: Path, fps: float, keep_failed: bool, jobs: list[str] | None) -> N
             continue
         chosen += [(folder, ticks, summary, a) for a in found if keep_failed or a["record"].get("picked")]
     if not chosen:
-        raise SystemExit(f"no attempts in {EPISODES}: fetch first?")
+        raise SystemExit(f"no attempts in {episodes}: fetch first?")
     height, width = np.asarray(Image.open(chosen[0][0] / f"{chosen[0][3]['first']:06d}.jpg")).shape[:2]
     features = {
         "observation.images.wrist": {"dtype": "video", "shape": (height, width, 3), "names": ["height", "width", "channels"]},
@@ -220,11 +220,13 @@ def main() -> int:
     b.add_argument("--fps", type=float, default=10.0)
     b.add_argument("--keep-failed", action="store_true")
     b.add_argument("--jobs", nargs="+", help="only these jobs (clean_up, sort, pick, named ...)")
+    b.add_argument("--episodes", type=Path, default=EPISODES,
+                   help="the recordings' folder (out/sim_episodes: the simulator's, m3_sim.py episode)")
     args = parser.parse_args()
     if args.cmd == "fetch":
         fetch()
     else:
-        build(args.out, args.fps, args.keep_failed, args.jobs)
+        build(args.out, args.fps, args.keep_failed, args.jobs, args.episodes)
     return 0
 
 

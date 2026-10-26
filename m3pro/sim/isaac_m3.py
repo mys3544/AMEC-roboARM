@@ -57,6 +57,8 @@ TABLE_GREY = (0.74, 0.74, 0.72)   # the lab's desk round the paper (kit_synth.py
 PAPER_M = 0.6                     # m, the side textures/paper.png covers
 WARMUP_RENDERS = 60   # renders before the first picture: the first ones came out black while the materials'
                       # shaders compiled (2026-10-26; kit_synth.py drops 30 after every move)
+RECORD_SUBFRAMES = 2   # path-tracing passes a recorded picture (a moving arm; 8 for the still looks)
+JPEG_QUALITY = 90      # as roboarm.m3record keeps the real ones
 
 from isaacsim import SimulationApp  # before any omni import: the app loads them
 
@@ -302,12 +304,17 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
     for i, piece in enumerate(plan["pieces"]):
         add_box(stage, f"/World/piece{i}", piece["size"], piece["centre"], piece.get("yaw", 0.0),
                 piece.get("mass", 0.015), piece.get("colour", (0.9, 0.3, 0.2)), wood, piece.get("faces"))
+    for i, part in enumerate(plan.get("statics", [])):   # the drop-off box's floor, walls and lid
+        add_static(stage, f"/World/static{i}", part)
     scene = UsdPhysics.Scene.Get(stage, "/physicsScene") if stage.GetPrimAtPath("/physicsScene") else None
     if scene is not None:
         physx = PhysxSchema.PhysxSceneAPI.Apply(scene.GetPrim())
         physx.CreateSolverTypeAttr("TGS")
     robot = world.scene.add(SingleArticulation("/World/m3", name="m3"))
     shots = sorted(plan.get("marks", {}).items(), key=lambda kv: kv[1]) if plan.get("pictures") else []
+    record = plan.get("record")   # {"dir", "hz"}: the wrist camera's pictures, a tick each, as the real recorder
+    if record:
+        shots = shots or [("recording", math.inf)]
     # one run in three renders black all through, the camera made before the reset or after it (2026-10-26, Dionysos,
     # an ACT training on the same GPU): _picture says so, and the laptop runs it again
     annotator = _camera(plan["pictures"]) if shots else None
@@ -330,6 +337,12 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
         world.render()
     controller = robot.get_articulation_controller()
     samples, t, next_sample = [], 0.0, 0.0
+    ticks, next_tick = 0, 0.0
+    if record:
+        import omni.replicator.core as rep
+
+        os.makedirs(record["dir"], exist_ok=True)
+        _picture(world, annotator, rep)   # not black: else the laptop runs it again
     end = keys[-1]["t"] + plan.get("settle_s", 1.0)
     while t <= end + 1e-9:
         q = targets_at(keys, t)
@@ -338,7 +351,13 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
         controller.apply_action(ArticulationAction(joint_positions=np.array([q[j] for j in q]),
                                                    joint_indices=np.array([index[j] for j in q])))
         shoot = bool(shots) and t >= shots[0][1]
-        world.step(render=shoot)
+        tick = bool(record) and t >= next_tick - 1e-9
+        world.step(render=shoot or tick)
+        if tick:
+            rep.orchestrator.step(rt_subframes=RECORD_SUBFRAMES, delta_time=0.0, pause_timeline=False)
+            _save_jpeg(os.path.join(record["dir"], f"{ticks:06d}.jpg"), np.asarray(annotator.get_data())[..., :3])
+            ticks += 1
+            next_tick += 1.0 / record.get("hz", 10)
         t += 1.0 / PHYSICS_HZ
         if shoot:
             import omni.replicator.core as rep
@@ -362,8 +381,30 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
                             "grip": _pose(grip)[:3]})
             next_sample += SAMPLE_S
     with open(result_path, "w") as f:
-        json.dump({"plan": plan, "dofs": names, "samples": samples}, f)
-    print(f"{len(samples)} samples over {t:.1f} s -> {result_path}", flush=True)
+        json.dump({"plan": plan, "dofs": names, "samples": samples, "ticks": ticks}, f)
+    print(f"{len(samples)} samples, {ticks} pictures over {t:.1f} s -> {result_path}", flush=True)
+
+
+def _save_jpeg(path: str, rgb) -> None:
+    from PIL import Image
+
+    Image.fromarray(rgb.astype("uint8")).save(path, quality=JPEG_QUALITY)
+
+
+def add_static(stage, path: str, part: dict) -> None:
+    """A fixed box (a collider, no body): {"T": 4 x 4 its middle and turn (column vectors), "size": [x, y, z],
+    "colour": rgb | "faces": six looks as add_box's}."""
+    if part.get("faces"):
+        geom = box_mesh(stage, path, FACES, [look_material(stage, f"{path}_look{i}", f.get("texture"), f.get("colour"))
+                                             for i, f in enumerate(part["faces"])])
+    else:
+        geom = UsdGeom.Cube.Define(stage, path)
+        geom.CreateSizeAttr(1.0)
+        geom.CreateDisplayColorAttr([Gf.Vec3f(*part.get("colour", (0.03, 0.03, 0.03)))])
+    xf = UsdGeom.Xformable(geom)
+    xf.AddTransformOp().Set(Gf.Matrix4d([[float(part["T"][r][c]) for r in range(4)] for c in range(4)]))
+    xf.AddScaleOp().Set(Gf.Vec3f(*part["size"]))
+    UsdPhysics.CollisionAPI.Apply(geom.GetPrim())
 
 
 def _camera(view: dict):

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import itertools
 import json
 import math
 import subprocess
@@ -50,6 +51,261 @@ TEXTURES = "C:/Users/Hercules/roboarm-synth/textures"   # train/synth/textures, 
 TABLE = {"textures": TEXTURES, "paper": [0.12, -0.105, 0.0], "paper_texture": "paper_faint.png",
          "dome": 250.0, "sun": 700.0, "sun_from": [0.5, 0.4, 0.8]}   # its shadows fall towards the robot, right
 GREEN = (0.23, 0.46, 0.23)          # the lab's green picture cube's paint (kit_synth.py's CUBE_PAINT)
+
+
+CUBE_PAINT = {"yellow": (0.85, 0.72, 0.15), "green": GREEN, "red": (0.72, 0.16, 0.19), "blue": (0.22, 0.41, 0.70)}
+PICTURES = {"yellow": ("chopsticks", "cigarette", "peach", "toilet"), "green": ("apple", "egg", "fish", "melon"),
+            "red": ("batteries", "cosmetics", "tablets", "tablets"), "blue": ("bag", "book", "can", "news")}
+SIDES40 = [(0.80, 0.60, 0.26), (0.15, 0.45, 0.22), (0.85, 0.26, 0.30), (0.12, 0.42, 0.62)]   # the 40 mm cube's paint
+EPISODES = ROOT / "out" / "sim_episodes"   # the simulated recordings, in roboarm.m3record's layout
+HZ = 10
+# where a pick attempt is, by its step: what the hand-back gate learns to predict (RESEARCH.md 9.4, 9.7)
+STAGES = {"pregrasp": 0.1, "look.close": 0.25, "descend": 0.4, "close": 0.55, "lift": 0.7, "drop": 0.85,
+          "look.after": 1.0}
+
+
+def piece_faces(piece: dict, rng) -> list[dict]:
+    """The lab's look for a piece (kit_synth.py's): a 30 mm picture cube (paint top and bottom, its colour's
+    pictures round), the 40 mm cube (wood ends, four paints), a block (red, a tag on an end, or blue)."""
+    if piece["name"] == "cube30":
+        colour = str(rng.choice(list(CUBE_PAINT)))
+        paint = {"colour": CUBE_PAINT[colour]}
+        return [paint, paint] + [{"texture": f"{TEXTURES}/pic_{colour}_{p}.png"} for p in rng.permutation(PICTURES[colour])]
+    if piece["name"] == "cube40":
+        return [{"texture": f"{TEXTURES}/wood_a.png"}, {"texture": f"{TEXTURES}/wood_b.png"}] + [{"colour": c} for c in SIDES40]
+    if rng.random() < 0.5:
+        red = {"colour": (0.69, 0.13, 0.15)}
+        return [red, red, {"texture": f"{TEXTURES}/tag_{rng.choice(list('abcde'))}.png"}, red, red, red]
+    return [{"colour": (0.18, 0.38, 0.66)}] * 6
+
+
+def frame_of(origin, x_axis, z_axis=(0.0, 0.0, 1.0)) -> np.ndarray:
+    """A 4 x 4 (column vectors) at `origin`, x along `x_axis`, z as near `z_axis` as square allows."""
+    x = np.asarray(x_axis, float) / np.linalg.norm(x_axis)
+    y = np.cross(np.asarray(z_axis, float), x)
+    y /= np.linalg.norm(y)
+    m = np.eye(4)
+    m[:3, :3] = np.c_[x, y, np.cross(x, y)]
+    m[:3, 3] = origin
+    return m
+
+
+def box_parts(box: dict, lean_deg: float = 20.0) -> list[dict]:
+    """The drop-off box as fixed parts (isaac_m3.py's add_static): a floor, four walls round roboshared.box's
+    inside, and the lid standing up from the hinge on the far side, leaning back, marker 10 inside it."""
+    from roboshared import box as boxes
+
+    along_m, across_m, wall_h = boxes.BOX_INSIDE
+    t = boxes.BOX_WALL
+    c = np.r_[box["centre"], 0.0]
+    a, i = np.r_[box["along"], 0.0], np.r_[box["into"], 0.0]
+    dark = (0.03, 0.03, 0.03)
+    parts = [{"T": frame_of(c + [0, 0, 0.002], a).tolist(), "size": [along_m + 2 * t, across_m + 2 * t, 0.004], "colour": dark}]
+    for side in (-1, 1):
+        parts.append({"T": frame_of(c + i * side * (across_m + t) / 2 + [0, 0, wall_h / 2], a).tolist(),
+                      "size": [along_m + 2 * t, t, wall_h], "colour": dark})
+        parts.append({"T": frame_of(c + a * side * (along_m + t) / 2 + [0, 0, wall_h / 2], a).tolist(),
+                      "size": [t, across_m + 2 * t, wall_h], "colour": dark})
+    lean = math.radians(lean_deg)
+    up = math.cos(lean) * np.array([0, 0, 1.0]) - math.sin(lean) * i   # leaning back, away from the robot
+    hinge = c - i * (across_m / 2 + t) + [0, 0, wall_h]
+    lid_h = 0.12
+    marker = {"texture": f"{TEXTURES}/box_lid_marker10.png"}
+    parts.append({"T": frame_of(hinge + up * lid_h / 2, a, z_axis=up).tolist(), "size": [along_m + 2 * t, 0.004, lid_h],
+                  # +z -z +x +y -x -y: the marker on its face towards the robot (-y of a frame whose y is up x along)
+                  "faces": [{"colour": dark}, {"colour": dark}, {"colour": dark}, {"colour": dark}, {"colour": dark}, marker]})
+    return parts
+
+
+def board_keys(sends: list) -> list[tuple[float, dict]]:
+    """The board's sweeps as straight-line keys (t, servo pose): each command from where the arm is believed
+    then (M3Arm.read) to its pose over its ms -- cut short by the next command, as the board does."""
+    keys, cur = [], None
+    for k, (t, pose, ms) in enumerate(sends):
+        if cur is None:
+            here = {int(j): float(v) for j, v in pose.items()}
+        else:
+            start, goal, t0, dur = cur
+            f = 1.0 if dur <= 0 else min(max((t - t0) / dur, 0.0), 1.0)
+            here = {j: start[j] + f * (goal[j] - start[j]) for j in goal}
+        goal = {**here, **{int(j): float(v) for j, v in pose.items()}}
+        keys.append((t, here))
+        cur = (here, goal, t, ms / 1000)
+        if t + ms / 1000 < (sends[k + 1][0] if k + 1 < len(sends) else math.inf):
+            keys.append((t + ms / 1000, goal))
+    return keys
+
+
+def pose_at(keys: list, t: float) -> dict:
+    if t <= keys[0][0]:
+        return keys[0][1]
+    for (t0, p0), (t1, p1) in itertools.pairwise(keys):
+        if t <= t1:
+            f = (t - t0) / max(t1 - t0, 1e-9)
+            return {j: p0[j] + f * (p1[j] - p0[j]) for j in p1}
+    return keys[-1][1]
+
+
+def draw_card(rng) -> dict:
+    """A robot card (RESEARCH.md 9.3): how this episode's simulated M3 differs from its model -- the servos'
+    delay, gain round 90 and zero, backlash, the gripper's zero, the camera's mount. The expert compensates the
+    joints' part (compensated(): the arm lands where planned, the commands recorded carry the card), the camera's
+    shows in the pictures. Ranges from the servo probe of 2026-10-23 (lag 0.10-0.20 s, backlash 0.36-1.09 deg,
+    15 deg moves turning 0.87-0.93 of the command) until the ChArUco measurement narrows them."""
+    return {"delay_s": round(float(rng.uniform(0.10, 0.20)), 3),
+            "gain": {j: round(float(rng.uniform(0.86, 1.0)), 4) for j in (1, 2, 3, 4)},
+            "offset_deg": {j: round(float(rng.normal(0, 1.5)), 2) for j in (1, 2, 3, 4, 5)},
+            "backlash_deg": {j: round(float(rng.uniform(0.3, 1.2)), 2) for j in (1, 2, 3, 4)},
+            "gripper_offset_deg": round(float(rng.normal(0, 2.0)), 2),
+            "camera": {"shift_m": np.round(np.clip(rng.normal(0, 0.008, 3), -0.02, 0.02), 4).tolist(),
+                       "turn_deg": np.round(np.clip(rng.normal(0, 1.5, 3), -3, 3), 2).tolist()}}
+
+
+def sim_keys(keys: list, card: dict) -> list[dict]:
+    """The board's keys as the simulated arm follows them (isaac_m3.py's keys): where the plan has the arm
+    sit -- its commands plus SAG, the robot's model -- the card's delay late. The rest of the card is in the
+    commands recorded (compensated): the expert knows its arm, as the real picker's taught aim does."""
+    return [{"t": round(t + card["delay_s"], 4),
+             "q": urdf_targets({**{j: pose[j] + m3kinematics.SAG.get(j, 0.0) for j in range(1, 6)}, 6: pose[6]})}
+            for t, pose in keys]
+
+
+def compensated(keys: list, card: dict) -> list[tuple[float, dict]]:
+    """The commands an arm with `card` must be sent to sit where the plan has it (command + SAG): its gain
+    round 90 and its zero undone, half its backlash added the way each joint last moved, the gripper's zero
+    taken off -- what a simulated episode records as the state, as the real recorder records what was sent."""
+    out, last, way = [], None, dict.fromkeys(range(1, 7), 0.0)
+    for t, pose in keys:
+        if last is not None:
+            for j in way:
+                if abs(pose[j] - last[j]) > 1e-6:
+                    way[j] = math.copysign(1.0, pose[j] - last[j])
+        sent = {}
+        for j in range(1, 6):
+            sits = pose[j] + m3kinematics.SAG.get(j, 0.0)
+            sent[j] = (90 + (sits - 90 - card["offset_deg"].get(j, 0.0) + way[j] * card["backlash_deg"].get(j, 0.0) / 2)
+                       / card["gain"].get(j, 1.0) - m3kinematics.SAG.get(j, 0.0))
+        sent[6] = pose[6] - card["gripper_offset_deg"]
+        out.append((t, sent))
+        last = pose
+    return out
+
+
+def carded_view(card: dict) -> dict:
+    """The wrist camera with the card's mount: shifted and turned in the DCW2 link's frame."""
+    view = wrist_view()
+    off = np.eye(4)
+    rx, ry, rz = np.radians(card["camera"]["turn_deg"])
+    off[:3, :3] = (np.array([[math.cos(rz), -math.sin(rz), 0], [math.sin(rz), math.cos(rz), 0], [0, 0, 1]])
+                   @ np.array([[math.cos(ry), 0, math.sin(ry)], [0, 1, 0], [-math.sin(ry), 0, math.cos(ry)]])
+                   @ np.array([[1, 0, 0], [0, math.cos(rx), -math.sin(rx)], [0, math.sin(rx), math.cos(rx)]]))
+    off[:3, 3] = card["camera"]["shift_m"]
+    view["T"] = (off @ np.array(view["T"])).tolist()
+    return view
+
+
+def first_afters(steps: list) -> list[float]:
+    """When each attempt's look after began: the first after each pregrasp (a look round may follow it)."""
+    starts = [t for t, s in steps if s == "pregrasp"]
+    return [next((t for t, s in steps if s == "look.after" and t > t0), math.inf) for t0 in starts]
+
+
+def verdicts(plan: dict, played: dict, pieces: list[dict], box: dict, delay: float) -> list[bool]:
+    """Per pick record: did the simulated arm put its piece in the box -- that piece (the layout's nearest the
+    record's target) over the box's inside and low, half a second after its attempt's look after began."""
+    from roboshared import box as boxes
+
+    afters = first_afters(plan["steps"])
+    samples = played["samples"]
+    out = []
+    for k, record in enumerate(plan["records"]):
+        target = np.asarray(record["target"][:2])
+        which = min(range(len(pieces)), key=lambda i: float(np.hypot(*(pieces[i]["centre"][:2] - target))))
+        when = min(afters[k] if k < len(afters) else math.inf, samples[-1]["t"] - delay - 0.5) + delay + 0.5
+        s = min(samples, key=lambda x: abs(x["t"] - when))
+        x, y, z = s["pieces"][which][:3]
+        out.append(bool(boxes.inside(box, (x, y)) and z < 0.06))
+    return out
+
+
+def episode(args) -> None:
+    """One simulated clean-up recorded as the real recorder keeps one (roboarm.m3record): a layout drawn, the
+    picker told it (m3_expert), its commands played with a robot card drawn, the wrist camera ten times a
+    second -> out/sim_episodes/<stamp>_clean_up/ (000000.jpg ..., ticks.jsonl, episode.json), its pick records
+    marked picked or not by what the simulated pieces did. tools/m3_episodes.py build --episodes out/sim_episodes."""
+    import cv2
+    import m3_expert
+
+    rng = np.random.default_rng(args.seed)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    box = m3_expert.facing_box(np.array(m3_expert.BOX_AT) + rng.uniform(-0.02, 0.02, 2), rng.uniform(-10, 10))
+    pieces = m3_expert.layout(rng, args.pieces, box)
+    began = time.time()
+    plan = m3_expert.plan_episode(pieces, box, args.seed)
+    print(f"planned: {plan['seconds']} s, {len(plan['records'])} picks ({time.time() - began:.0f} s); "
+          f"error {plan['error']}", flush=True)
+    if not plan["records"]:
+        raise SystemExit("nothing picked in the plan: another seed")
+    card = draw_card(rng)
+    if args.card == "zero":   # the arm exactly as its model: whether the plan itself picks
+        card = {"delay_s": 0.0, "gain": {}, "offset_deg": {}, "backlash_deg": {}, "gripper_offset_deg": 0.0,
+                "camera": {"shift_m": [0.0, 0.0, 0.0], "turn_deg": [0.0, 0.0, 0.0]}}
+    keys = board_keys(plan["sends"])
+    table = {**TABLE, "paper": [TABLE["paper"][0] + rng.uniform(-0.03, 0.03), TABLE["paper"][1] + rng.uniform(-0.03, 0.03),
+                                rng.uniform(-5, 5)],
+             "dome": float(rng.uniform(150, 350)), "sun": float(rng.uniform(400, 1000)),
+             "sun_from": [float(rng.uniform(0.2, 0.7)), float(rng.uniform(-0.2, 0.6)), 0.8]}
+    name = f"{stamp}_clean_up"
+    sim_plan = {"keys": sim_keys(keys, card), "settle_s": 0.5, "friction": float(rng.uniform(0.5, 0.8)),
+                "pieces": [{"size": [p["size"], p["length"], p["height"]], "centre": [float(v) for v in p["centre"]],
+                            "yaw": p["yaw"], "mass": 0.015,   # its width (x) along yaw, as in_picture has it
+                            "faces": piece_faces(p, rng)} for p in pieces],
+                "statics": box_parts(box), "table": table, "pictures": carded_view(card),
+                "record": {"dir": name, "hz": HZ}}
+    OUT.mkdir(parents=True, exist_ok=True)
+    plan_path, result = OUT / f"episode_{stamp}.json", f"episoderesult_{stamp}.json"
+    plan_path.write_text(json.dumps(sim_plan))
+    put(plan_path, ROOT / "sim" / "isaac_m3.py")
+    remote(f"{ISAAC} isaac_m3.py play m3pro.usd {plan_path.name} {result}", f"episode_{stamp}.log")
+    subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"cd /d {REMOTE.replace('/', chr(92))} && tar -czf {name}.tgz {name}"],
+                   check=True)
+    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{result}", str(OUT / result)], check=True)
+    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{name}.tgz", str(OUT / f"{name}.tgz")], check=True)
+    played = json.loads((OUT / result).read_text())
+    folder = EPISODES / name
+    folder.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["tar", "-xzf", str(OUT / f"{name}.tgz"), "-C", str(EPISODES)], check=True)
+    picked = verdicts(plan, played, pieces, box, card["delay_s"])
+    # the ticks as the real recorder writes them: the pose the arm was sent (believed), the job's step
+    steps, records = plan["steps"], plan["records"]
+    starts = [t for t, s in steps if s == "pregrasp"]
+    afters = first_afters(steps)
+    sent = compensated(keys, card)
+    began_unix = time.time()
+    with open(folder / "ticks.jsonl", "w", encoding="utf-8") as f:
+        for i in range(played["ticks"]):
+            t = i / HZ
+            step = next((s for t0, s in reversed(steps) if t0 <= t + 1e-9), "engage")
+            k = next((k for k, t0 in enumerate(starts) if t0 <= t + 1e-9 and (k + 1 >= len(starts) or t < starts[k + 1])), None)
+            within = k is not None and k < len(records) and (k >= len(afters) or t < afters[k] + 3.0)
+            f.write(json.dumps({"i": i, "t": round(t, 3), "pose": [round(pose_at(sent, t)[j]) for j in range(1, 7)],
+                                "step": step, "odom": None, "frame_age": 0.0,
+                                "progress": STAGES.get(step) if within else None,
+                                "verdict": picked[k] if within else None}) + "\n")
+    log = [{"n": n + 1, "t": round(began_unix + t, 3), "text": text} for n, (t, text) in enumerate(plan["said"])]
+    (folder / "episode.json").write_text(json.dumps({
+        "job": "clean_up", "started": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(began_unix)),
+        "started_unix": round(began_unix, 3), "seconds": plan["seconds"], "ticks": played["ticks"], "error": plan["error"],
+        "log": log, "attempts": [{**r, "picked": bool(ok), "planned_picked": r.get("picked")} for r, ok in zip(records, picked, strict=True)],
+        "robot_card": card, "sim": {"seed": args.seed, "box": {k: np.asarray(v).tolist() for k, v in box.items() if k != "items"},
+                                    "layout": [{**p, "centre": np.asarray(p["centre"]).tolist()} for p in pieces]}},
+        indent=1, default=lambda v: v.tolist() if isinstance(v, np.ndarray) else float(v)), encoding="utf-8")
+    sheet_path = OUT / f"{name}_sheet.jpg"
+    frames = sorted(folder.glob("*.jpg"))
+    tiles = [cv2.resize(cv2.imread(str(frames[int(i)])), (320, 240)) for i in np.linspace(0, len(frames) - 1, 8)]
+    cv2.imwrite(str(sheet_path), np.vstack([np.hstack(tiles[:4]), np.hstack(tiles[4:])]))
+    print(f"{played['ticks']} pictures, picks {sum(picked)} of {len(picked)} in the box (planned {len(records)}) "
+          f"-> {folder}; sheet {sheet_path}", flush=True)
 
 
 def green_cube() -> list[dict]:
@@ -307,11 +563,17 @@ def main() -> int:
     lk.add_argument("--size", type=float, default=0.03)
     lk.add_argument("--real", type=Path, help="a real frame taken at that pose, to lay beside and over it")
     lk.add_argument("--table", help='JSON over TABLE\'s keys, e.g. {"sun": 0, "paper_texture": "paper.png"}')
+    ep = sub.add_parser("episode")
+    ep.add_argument("--seed", type=int, default=1)
+    ep.add_argument("--pieces", type=int, default=4)
+    ep.add_argument("--card", choices=["drawn", "zero"], default="drawn")
     a = ap.parse_args()
     if a.cmd == "setup":
         setup()
     elif a.cmd == "look":
         look(a)
+    elif a.cmd == "episode":
+        episode(a)
     else:
         grip(a)
     return 0
