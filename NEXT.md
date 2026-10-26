@@ -360,6 +360,16 @@ takes the right). **First run, the real-only fine-tune's 10k on 3 middle cells: 
 lifted, J1 after 1.2 s 62-73 where the cubes were at 80-100** -- the left lean shows in the sim too. ~100 s a
 20 s trial with two night workers and a training on the GPU.
 
+**The twin's gap, measured (2026-10-26 14:25, `tools/m3_twin_gap.py`, the board flat in the pick zone):** 16 poses
+round the servo probe's look (J1 78/88/98, J2 108-122, J3 0-12, J4 0-10), 12 saw the board (2 refused by the guard
+over the chassis, 2 did not see it). Through the twin's model (command + SAG, the URDF's DCW2 mount) the board
+lands **2.5 mm apart median, 7.4 mm at most (rms 3.9) on the table, 1.2 deg turned (median), its corners
+reprojected 5.5 px** (median); the same look at the start and the end 1.4 mm apart (repeatability). The card's
+camera turn (sd 1.5 deg) fits; its shift (sd 8 mm) is wider than the 4 mm rms -- kept wide as randomisation.
+What this does not see: an offset common to every pose (absorbed into the board's mean -- the grips' ~1.5 cm
+short without the taught aim is one), and the low grip poses (all 12 are looks, the camera 25-30 cm up).
+out/twin/20261026_142531.json.
+
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning
