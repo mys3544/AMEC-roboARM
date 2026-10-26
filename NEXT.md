@@ -369,6 +369,17 @@ camera turn (sd 1.5 deg) fits; its shift (sd 8 mm) is wider than the 4 mm rms --
 What this does not see: an offset common to every pose (absorbed into the board's mean -- the grips' ~1.5 cm
 short without the taught aim is one), and the low grip poses (all 12 are looks, the camera 25-30 cm up).
 out/twin/20261026_142531.json.
+**Low, as the grips (`m3_twin_gap.py --low <that run>`, 14:31):** 8 poses from m3kinematics.reach (the grip
+point 8-11 cm over the board, 65/75 deg down, the camera 19-22 cm up; the board then shows ~3 x 3 squares, 6-10
+corners, PnP 0.1-0.4 px), 7 seen. Against the high looks' board: **on the table 3-14 mm (median ~5), but +7 to
++17 mm in height (median ~+11), 1.9-4.0 deg** -- where the LOOK in the same run read +3 mm and 0.4 deg (and 7 mm
+along x: the board moved a little between the runs, or backlash from below; most low poses share that x).
+So the twin's constant SAG (J2 +4, J3 -8.5) leaves ~1 cm in the low, reaching shapes -- where the grips are;
+the grips' ~1.5 cm short without the taught aim says the same. Next for the twin: a pose-dependent sag fitted
+on these readings (and more low poses), then the card's offsets round it. Two traps found on the way: from
+19-22 cm the detector finds 6-7 corners (MIN_CORNERS 8 -> 6), and **the DCW2's driver stalled for three poses
+-- /rgbd handed out one picture for all three** (40-62 mm "errors"): the tool now takes only a picture newer
+than the last one. out/twin/20261026_143116.json (+ each pose's picture).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
