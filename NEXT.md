@@ -332,6 +332,24 @@ the real frame (its place from the grip target, not ground truth); the sim's gre
 renders after new MDL materials are black (60 warm-up renders now), and **one run in three renders black all
 through** with the ACT training on the same GPU -- `remote()` reruns it (up to 3).
 
+**The sim expert and recorder (done Monday afternoon):** `tools/m3_expert.py` -- the real m3pick.Picker told the
+table (its looks give the pieces the camera at that pose would see, whole or cut; the box when its middle is in the
+picture), its arm an M3Arm whose board is a recorder on a clock of its own: a clean-up of a drawn layout plans in
+~15 s as the board's commands (pose, ms) with the job's steps, log and pick records. `m3_sim.py episode [--seed]
+[--pieces] [--card drawn|zero]` -- layout (pieces uniform over 11-25 cm from J1's axis, x >= the bumper + 3 cm, 6 cm
+apart, clear of the box; 30 mm picture cubes 60 %, the 40 mm cube 20 %, blocks 20 %), the box near where the real
+one stands (marker 10 on its lid), the paper and light drawn, a **robot card** (delay 0.10-0.20 s, gain 0.86-1.0
+round 90, zero +-1.5 deg, backlash 0.3-1.2 deg, gripper zero, the camera's mount +-2 cm / 3 deg); the expert
+**compensates the card's joint part** (the arm lands as planned; the commands recorded carry it -- an open-loop plan
+under the card dropped 3 of 3, compensated it picks), the sim plays the board's sweeps the card's delay late and
+records 10 Hz JPEGs -> out/sim_episodes/<stamp>_s<seed>_clean_up/ in m3record's layout, ticks with `progress` and
+`verdict` per tick, episode.json with `robot_card` and each attempt judged by where the simulated piece ended
+(in the box and low). **First batch: 15 of 16 picks into the box**, ~3.3 min an episode (~0.3 s a picture) with
+an ACT training beside it. `m3_episodes.py build OUT --episodes out/sim_episodes` builds from it unchanged (18
+attempts from 8 episodes). **Night run from 14:10:** `tools/m3_sim_night.sh W now|wait` x3 (workers 2 and 3 after
+the ACT fine-tune; seeds 100000*W on), logs out/sim/night_w*.log; stop: `touch m3pro/out/sim/STOP`. The laptop must
+stay awake (lid open, on power).
+
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning

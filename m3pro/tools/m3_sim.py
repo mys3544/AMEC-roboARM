@@ -186,6 +186,8 @@ def compensated(keys: list, card: dict) -> list[tuple[float, dict]]:
             sent[j] = (90 + (sits - 90 - card["offset_deg"].get(j, 0.0) + way[j] * card["backlash_deg"].get(j, 0.0) / 2)
                        / card["gain"].get(j, 1.0) - m3kinematics.SAG.get(j, 0.0))
         sent[6] = pose[6] - card["gripper_offset_deg"]
+        # inside the servos' range, as a real command is (a gain round 90 sends a folded J4 below 0)
+        sent = {j: min(max(v, m3arm.SAFE_LIMITS[j][0]), m3arm.SAFE_LIMITS[j][1]) for j, v in sent.items()}
         out.append((t, sent))
         last = pose
     return out
@@ -237,7 +239,7 @@ def episode(args) -> None:
     import m3_expert
 
     rng = np.random.default_rng(args.seed)
-    stamp = time.strftime("%Y%m%d_%H%M%S")
+    stamp = time.strftime("%Y%m%d_%H%M%S") + f"_s{args.seed}"   # the seed in it: workers side by side never share a name
     box = m3_expert.facing_box(np.array(m3_expert.BOX_AT) + rng.uniform(-0.02, 0.02, 2), rng.uniform(-10, 10))
     pieces = m3_expert.layout(rng, args.pieces, box)
     began = time.time()
@@ -275,6 +277,9 @@ def episode(args) -> None:
     folder = EPISODES / name
     folder.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(["tar", "-xzf", str(OUT / f"{name}.tgz"), "-C", str(EPISODES)], check=True)
+    (OUT / f"{name}.tgz").unlink()
+    subprocess.run(["ssh", "-o", "BatchMode=yes", HOST,   # its pictures are here now: Dionysos keeps only the logs
+                    f"cd /d {REMOTE.replace('/', chr(92))} && rmdir /s /q {name} & del {name}.tgz {plan_path.name}"], check=False)
     picked = verdicts(plan, played, pieces, box, card["delay_s"])
     # the ticks as the real recorder writes them: the pose the arm was sent (believed), the job's step
     steps, records = plan["steps"], plan["records"]
