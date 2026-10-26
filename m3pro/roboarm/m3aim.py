@@ -11,6 +11,10 @@ PRIOR: it foretold each left-out grip to 5.6 mm (rms; the mean alone 7.3).
 
 To teach more: tools/m3_hover.py look, tools/m3_teach.py, then `python -m roboarm.m3aim
 out/teach/points.jsonl` prints the table below anew.
+
+2026-10-26: the table re-derived for m3kinematics.SAG's J2 1.1 (was 4.0) -- the same taught poses and seen
+places, each through the new model (the seen places 3 mm further out with the wide look's camera): the
+offsets 8-22 mm out shrink to -3..+10 (most of them were the model's J2), the left ones stay (+1..+10).
 """
 
 from __future__ import annotations
@@ -22,15 +26,15 @@ from pathlib import Path
 import numpy as np
 
 # (seen x, seen y, aim dx, dy): m in base_link -- out/teach/points.jsonl
-TAUGHT = (
-    (0.2383, -0.0592, +0.0187, +0.0036),   # 2026-10-09 12:20 cube
-    (0.1814, -0.0478, +0.0101, +0.0053),   # 2026-10-09 12:21 cube
-    (0.2150, +0.0107, +0.0182, +0.0102),   # 2026-10-09 12:22 cube
-    (0.1718, -0.0261, +0.0134, +0.0046),   # 2026-10-09 12:29 cube
-    (0.1666, +0.0553, +0.0136, +0.0075),   # 2026-10-09 12:30 cube
-    (0.2277, +0.0155, +0.0181, +0.0106),   # 2026-10-09 12:32 cube
-    (0.1992, -0.1002, +0.0083, -0.0035),   # 2026-10-09 13:47 block, by the right front
-    (0.2057, +0.0085, +0.0220, +0.0114),   # 2026-10-09 13:49 block (taught 1 cm high: the floor guard)
+TAUGHT = (   # re-derived 2026-10-26 for SAG J2 1.1 (the 2026-10-09 offsets were 8-22 mm out)
+    (0.2413, -0.0592, +0.0065, +0.0059),   # 2026-10-09 12:20 cube
+    (0.1844, -0.0478, -0.0021, +0.0078),   # 2026-10-09 12:21 cube
+    (0.2180, +0.0107, +0.0057, +0.0092),   # 2026-10-09 12:22 cube
+    (0.1748, -0.0261, +0.0009, +0.0059),   # 2026-10-09 12:29 cube
+    (0.1696, +0.0553, +0.0018, +0.0038),   # 2026-10-09 12:30 cube
+    (0.2307, +0.0155, +0.0057, +0.0094),   # 2026-10-09 12:32 cube
+    (0.2022, -0.1002, -0.0026, +0.0013),   # 2026-10-09 13:47 block, by the right front
+    (0.2087, +0.0085, +0.0098, +0.0104),   # 2026-10-09 13:49 block (taught 1 cm high: the floor guard)
 )
 SIGMA = 0.03   # m: how far a taught grip speaks for its neighbours
 PRIOR = 0.3    # the mean's weight, as many taught grips right on the spot

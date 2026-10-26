@@ -15,6 +15,11 @@ SAG: the arm sits lower than it is told, the more so leaning out: the touch test
 steeper than the URDF has them. A J2 4.0 deg and a J3 -8.5 deg off what was commanded explains the
 camera to 2 mm and 1.3 deg and the three touches to 0-10 mm forward, 5 sideways, 8-13 up. Fitted to
 ruler readings: a working correction, not a measurement (the arm also repeats only to ~1-2 deg).
+J2 4.0 -> 1.1 on 2026-10-26: ten fingertip touches over the ChArUco board (the tips aimed, the fingers
+steep and shut; reach 16-27 cm, 55-90 deg down) put the tips 12 mm short and 19 mm low of the model in
+every pose; J2 2.9 deg further down fits them to 5.3 mm held out (with the shut tips 9 mm past FINGERS),
+keeps 38 camera readings of the board (tools/m3_twin_gap.py) at 4.4 mm and foretells the look's camera
+6 mm low, as the depth saw it (NEXT.md). The aim table (m3aim) re-derived with it.
 
 SIGNS: J1 turns the other way than the URDF's axis -- a bigger J1 turns the arm to the right (-y).
 Found by the hand-eye pictures (2026-09-30): through the URDF's sign the board seen from J1 76..104
@@ -44,6 +49,12 @@ CHAIN = (
 CAMERA = ((-0.0483883323542816, 0.00245180097510241, 0.0671900000306381),
           (1.84287098025439, -1.57079631189374, -1.81447538896515))   # arm4 -> DCW2
 GRIPPING = ((-0.00062499, 0.00023987, 0.093235), (-0.041648, -1.5708, 0.041619))   # arm5 ->
+# The DCW2 sits CAMERA_TILT degrees less steep on arm4 than the URDF has it (2026-10-26, with SAG J2 1.1): the
+# depth's floor at the touch test's look saw the camera 1.5 deg steeper than the old model (the new one: 2.9),
+# the survey's 34.9 deg (camcheck, 2026-09-30) says 35.9 with it (37.4 without), the board's readings
+# (tools/m3_twin_gap.py) hold to 4.9 mm (4.4). Turned about the camera's own left-right axis, up.
+CAMERA_TILT = 1.5
+CAMERA_TURN = cv2.Rodrigues(np.array([0.0, -math.radians(CAMERA_TILT), 0.0]))[0]   # in the DCW2 link: its -y
 # The Gripping point is Yahboom's tool point -- the camera sits 100 mm behind it and 48 mm above
 # (their EndToCamMat), where the object sits between the fingertips; the pads reach a little
 # past it. Provisional: the touch test measures it.
@@ -78,7 +89,7 @@ FLOOR_CLEAR = 0.015   # m above the floor the fingertips stay, with the SAG's ~1
                       # for moves planned on this model alone; a move planned on the floor the
                       # depth just measured (the last descent of a place or a pick) may ask less
 MIN_FLOOR_CLEAR = 0.002   # m: never less, whoever asks
-SAG = {2: 4.0, 3: -8.5}   # degrees the joints really sit off their command (see SAG above)
+SAG = {2: 1.1, 3: -8.5}   # degrees the joints really sit off their command (see SAG above)
 MIRRORED = (1,)           # joints that turn against the URDF's axis (see SIGNS above)
 
 # The steps above keep a line through the joints out of the chassis; the arm is thicker than that:
@@ -136,7 +147,7 @@ def _axis(axis) -> tuple[np.ndarray, np.ndarray]:
 # on the robot).
 _ORIGINS = [_frame(xyz, _rpy(*rpy)) for xyz, rpy, _ in CHAIN]
 _AXES = [_axis(axis) for *_, axis in CHAIN]
-_TO_CAMERA = _frame(CAMERA[0], _rpy(*CAMERA[1]))
+_TO_CAMERA = _frame(CAMERA[0], _rpy(*CAMERA[1]) @ CAMERA_TURN)
 _TO_GRIPPING = _frame(GRIPPING[0], _rpy(*GRIPPING[1]))
 
 # The shell and what it keeps clear of (see LIDARS): each cell of the body's height map holds the
@@ -221,10 +232,10 @@ OPTICAL = np.array([[0, 0, 1], [-1, 0, 0], [0, -1, 0]], float)   # the DCW2 link
 
 
 def camera_optical() -> np.ndarray:
-    """arm4 -> the camera's optical frame, as the URDF has it: the one in use (the hand-eye fit of
-    the mount was degenerate, 2026-09-30; the depth's floor levels whatever it gets wrong)."""
+    """arm4 -> the camera's optical frame, as the URDF has it turned by CAMERA_TILT: the one in use (the
+    hand-eye fit of the mount was degenerate, 2026-09-30; the depth's floor levels whatever it gets wrong)."""
     m = np.eye(4)
-    m[:3, :3] = _rpy(*CAMERA[1]) @ OPTICAL
+    m[:3, :3] = _rpy(*CAMERA[1]) @ CAMERA_TURN @ OPTICAL
     m[:3, 3] = CAMERA[0]
     return m
 

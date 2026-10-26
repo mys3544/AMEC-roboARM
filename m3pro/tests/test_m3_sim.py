@@ -44,10 +44,10 @@ def test_the_expert_sends_what_puts_the_real_arm_where_the_plan_has_it():
     card = m3_sim.draw_card(np.random.default_rng(0))
     assert card["twin_sag"] == m3_sim.TWIN_SAG
     keys = [(0.0, {1: 90, 2: 40, 3: 30, 4: 40, 5: 90, 6: 30}), (1.0, {1: 90, 2: 30, 3: 30, 4: 40, 5: 90, 6: 30})]
-    (_, first), (_, sent) = m3_sim.compensated(keys, card)
+    _, (_, sent) = m3_sim.compensated(keys, card)
     for j in (2, 3, 4):   # the arm with the card sits off its commands by its gain, zero and half its backlash
         way = 0.0 if j != 2 else -1.0
         sits = 90 + (sent[j] + m3kinematics.SAG.get(j, 0.0) - 90) * card["gain"][j] + card["offset_deg"][j]             - way * card["backlash_deg"][j] / 2
         assert sits == pytest.approx(keys[1][1][j] + m3kinematics.SAG.get(j, 0.0))
-    assert m3_sim.true_sag()[2] == pytest.approx(m3kinematics.SAG.get(2, 0.0) + m3_sim.TWIN_SAG[2])
+    assert m3_sim.true_sag()[2] == pytest.approx(m3kinematics.SAG.get(2, 0.0) + m3_sim.TWIN_SAG.get(2, 0.0))
 

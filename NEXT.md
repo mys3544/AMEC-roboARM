@@ -406,9 +406,13 @@ a plain xyz bias 4.5 (no physics). J1 can't take the 4 mm sideways (no SAG on a 
 readings' noise). **In the sim now** (m3_sim.TWIN_SAG {2: -2.9}): every card's J2 zero centres on it, so the
 expert's recorded commands are what the REAL arm needs (as the taught aim makes the picker's), and `evaluate`'s
 arm sits as the real one; `m3_episodes build` leaves out sim episodes made before (card without twin_sag) -- the
-~20 of this afternoon. **Not yet in m3kinematics.SAG** (the robot's model): the picker's aim table and grip
-heights were taught on top of the old one -- adopting it moves the real grips ~15 mm higher and doubles the aim
-unless m3aim's table is re-derived; wants a live check (user's call).
+~20 of this afternoon. **Then in the robot's model too (the user's: "zapracuj opravu J2 do m3kinematics.SAG,
+prepočítaj tabuľku zamierenia m3aim a otestujeme to živým clean-upom"): SAG J2 4.0 -> 1.1, TWIN_SAG back to
+{}**; m3aim's table re-derived -- the same taught poses and seen places through the new model (the wide look's
+camera 3 mm further out, 6 mm lower): its offsets 8-22 mm out became -3..+10, the left ones stay +1..+10 (the J2
+fit can't take them). What it changes on the robot: the aim (horizontal) about the same, the descent ~9 mm
+higher for the real tips (the shut tips' 9 mm not taken: FINGERS stays, fingertips_mm stays 8) -- the grips sit
+higher on the piece; if they slip, fingertips_mm lower (a setting, live).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 

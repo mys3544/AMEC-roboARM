@@ -262,9 +262,10 @@ def test_out_of_reach_it_drives_up_when_allowed_and_only_then():
 
 def test_a_cube_at_the_edge_of_reach_is_not_blamed_on_the_lidar():
     """2026-10-21, the user: "why is the cube too near the lidar? both are out of reach" -- a 40 mm cube
-    24.6 cm from the arm's axis, its middle reached to 23.5: a slide right brings it nearer, not off the lidar."""
+    24.6 cm from the arm's axis, its middle reached to 23.5: a slide right brings it nearer, not off the lidar.
+    (25.6 cm since 2026-10-26: the model's arm with SAG J2 1.1 reaches its middle 0.6 cm further.)"""
     picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
-    cube = {"kind": "cube", "centre": np.array([0.262, -0.092, 0.02]), "height": 0.04, "size": 0.04, "length": 0.04,
+    cube = {"kind": "cube", "centre": np.array([0.271, -0.096, 0.02]), "height": 0.04, "size": 0.04, "length": 0.04,
             "yaw": 66.0, "period": 90.0, "whole": True, "footprint": (0.04, 0.04)}
     said = picker.why_not([cube], [cube])
     assert "edge of the arm's reach" in said and "lidar for the arm" not in said and "cm closer would reach it" in said, said
@@ -273,19 +274,21 @@ def test_a_cube_at_the_edge_of_reach_is_not_blamed_on_the_lidar():
 def test_a_cube_at_the_edge_of_reach_on_the_left_is_not_blamed_on_the_body():
     """2026-10-23, the user: why was this cube not picked? 24.0 cm from the arm's axis on the left, its
     middle reached to 23.2: only a grip at its very top, the arm low over the chassis's corner -- "too
-    close to the robot's body". It is the reach, and 3 cm closer would do."""
+    close to the robot's body". It is the reach, and 3 cm closer would do. (24.6 cm since 2026-10-26: the
+    model's arm with SAG J2 1.1 reaches its top 0.6 cm further.)"""
     picker = m3pick.Picker(lambda *a, **k: None, None, settle_s=0.0)
-    cube = {"kind": "cube", "centre": np.array([0.187, 0.184, 0.015]), "height": 0.03, "size": 0.03, "length": 0.03,
+    cube = {"kind": "cube", "centre": np.array([0.191, 0.189, 0.015]), "height": 0.03, "size": 0.03, "length": 0.03,
             "yaw": 40.0, "period": 90.0, "whole": True, "footprint": (0.03, 0.03)}
     said = picker.why_not([cube], [cube])
-    assert "edge of the arm's reach (only its top in reach from here): 30 mm cube at x 0.187" in said and "robot's body" not in said, said
+    assert "edge of the arm's reach (only its top in reach from here): 30 mm cube at x 0.191" in said and "robot's body" not in said, said
     assert "the robot 3 cm closer would reach it" in said and "may drive closer" in said, said
 
 
 def test_the_fetch_drives_up_to_a_cube_far_off_and_back_to_the_box_beside_it():
     """2026-10-21, the event's fetch (the user's): a cube 42 cm out, the box at the front-left out of the
-    base's way -- driven up to it in moves of nudge_cm, picked, driven back, dropped into the box."""
-    world = World([(0.42, 0.0, 0, 0.03, 0.03)])
+    base's way -- driven up to it in moves of nudge_cm, picked, driven back, dropped into the box. (41 cm since
+    2026-10-26: the wide look's far edge is 43.3 cm with the camera as the depth sees it, not 45.)"""
+    world = World([(0.41, 0.0, 0, 0.03, 0.03)])
     picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
     left = {"centre": np.array([0.13, 0.23]), "along": np.array([1.0, 0.0]), "into": np.array([0.0, -1.0]),
             "turn": 0.0, "items": []}   # its lid along x on the far (left) side
@@ -303,7 +306,7 @@ def test_the_fetch_drives_up_to_a_cube_far_off_and_back_to_the_box_beside_it():
 def test_the_fetch_never_drives_into_the_box_the_depth_does_not_see():
     """The box's black walls give the depth nothing: a box ahead in the base's way stops the drive short
     of it (the footprint DRIVE_GAP off), wherever the cube is -- 2026-10-21, the fetch."""
-    world = World([(0.42, 0.06, 0, 0.03, 0.03)])
+    world = World([(0.41, 0.06, 0, 0.03, 0.03)])
     picker = m3pick.Picker(world.call, world.snapshot, settle_s=0.0, rng=np.random.default_rng(0), drive=world.drive)
     ahead = {**box_here(), "centre": np.array([0.30, -0.10])}   # its walls y -0.165 to -0.035: in the way
     picker.see_box = lambda tag: ahead
@@ -610,13 +613,16 @@ def test_left_out_of_reach_by_the_lidar_without_a_square_grip_and_by_the_body_is
     (its square grip puts a finger over it) raised ValueError -- `in` compared the dicts' arrays.
     All four said at once: out of reach; too near the right lidar; a block at the left edge with no
     square grip; a cube beside the left wheel too close to the body -- "out of reach" until 2026-10-05.
-    (Those blocks by the bumper of 2026-10-02 have the careful grip since.)"""
-    world = World([(0.40, 0.0, 0, 0.03, 0.03), (0.169, -0.115, 0, 0.03, 0.03), (0.15, 0.12, 90, 0.06, 0.03),
+    (Those blocks by the bumper of 2026-10-02 have the careful grip since. The far cube 39 cm out since
+    2026-10-26: the wide look's far edge is 43.3 cm with the camera as the depth sees it; the one by the lidar
+    0.7 cm nearer it -- with SAG J2 1.1 the careful grip kept 1 cm off it at 16.9 cm.)"""
+    world = World([(0.39, 0.0, 0, 0.03, 0.03), (0.162, -0.118, 0, 0.03, 0.03), (0.15, 0.12, 90, 0.06, 0.03),
                    (0.09, 0.19, 0, 0.03, 0.03)])
     picker = run(world, "clean_up")
     said = picker._log[-1]["text"]
     assert picker.state["error"] is None, picker.state["error"]
-    assert "out of reach: 30 mm cube at x 0.400" in said and "too near the right lidar" in said, said
+    assert "out of reach: 30 mm cube at x 0.3" in said and "too near the right lidar" in said, said   # 0.388: seen
+    # by its top only, at the picture's far edge
     assert "no square grip" in said and "too close to the robot's body for the arm: 30 mm cube at x 0.090" in said, said
     assert len(world.boxes) == 4 and not world.dropped
 

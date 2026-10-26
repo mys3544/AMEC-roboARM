@@ -152,8 +152,10 @@ def pose_at(keys: list, t: float) -> dict:
 # fingertips 9 mm longer) explains them to 5.3 mm held out (13.8 before), keeps the camera's readings
 # (m3_twin_gap.py) at 4.4 mm and foretells the look's camera 6 mm low -- the depth saw it 7 mm low. The short part
 # is the real picker's taught aim (m3aim: 8-22 mm further out). Each card's offsets centre on it, so the simulated
-# arm is the real one and the expert compensates it as that aim does; zero once m3kinematics.SAG takes it.
-TWIN_SAG = {2: -2.9}
+# arm is the real one and the expert compensates it as that aim does; zero once m3kinematics.SAG takes it --
+# which it did the same day (SAG J2 4.0 -> 1.1): the episodes of 16:00-17:00 carry {2: -2.9} on the old SAG,
+# the same arm.
+TWIN_SAG: dict[int, float] = {}
 
 
 def true_sag() -> dict[int, float]:
@@ -338,9 +340,9 @@ FLIP = np.diag([1.0, -1.0, -1.0])  # the optical frame (x right, y down, z ahead
 
 def wrist_view() -> dict:
     """The simulated wrist camera as the robot's model has it: on the URDF's DCW2 link, at its optical frame
-    (m3kinematics.camera_optical -- the hand-eye fit of 2026-09-30 was degenerate and is not used)."""
+    turned by CAMERA_TILT (m3kinematics.camera_optical -- the hand-eye fit of 2026-09-30 was degenerate)."""
     T = np.eye(4)
-    T[:3, :3] = m3kinematics.OPTICAL @ FLIP
+    T[:3, :3] = m3kinematics.CAMERA_TURN @ m3kinematics.OPTICAL @ FLIP
     return {"mount": "DCW2", "T": T.tolist(), "K": list(K), "size": [640, 480]}
 
 
