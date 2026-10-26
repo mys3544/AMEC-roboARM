@@ -4,8 +4,9 @@ Plans: PLAN.md (both robots), x3plus/PLAN.md, m3pro/PLAN.md. What is left from t
 
 ## GPU PC "hekate" (Windows 11, RTX 5090)
 
-- Reached as `ssh hekate`: `Host hekate` in `~/.ssh/config` is its lab LAN address 192.168.73.88
-  (works only on IISLab-AMEC; the host key is kept under the old .87). No Tailscale needed (2026-10-20).
+- Reached as `ssh hekate`: `Host hekate` in `~/.ssh/config` is its lab LAN address 192.168.73.11
+  since 2026-10-26 (DHCP: it was .87, then .88 -- if ssh times out, ask the user for the new one; works
+  only on IISLab-AMEC; the host key is kept under the old .87). No Tailscale needed (2026-10-20).
 - Run a command there: `ssh hekate "<PowerShell command>"` (the remote shell is Windows PowerShell).
 - Project folder there: `C:\Users\daniel\Desktop\Sim Arm 2026` (it has its own CLAUDE.md with the rules for that machine).
 - Status (GPU, Isaac Sim, ports, log), read-only:

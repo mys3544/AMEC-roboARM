@@ -157,17 +157,77 @@
       turning up within 8 cm of the target where no look before had one): the only one of the day.
       The dataset rebuilt from all of the day's: m3pro/out/lerobot/m3_pick_20261023b, 58 episodes, 7955 frames
       (33 the 30 mm cube, 10 the 40 mm, 11 a block into the box, 4 a block onto the line).
-- [ ] **The weekend's ACT run on Dionysos** (detached: weekend_act.ps1 creates it through WMI, so no SSH
+- [x] **The weekend's ACT run on Dionysos** (detached: weekend_act.ps1 creates it through WMI, so no SSH
       session holds it): the new dataset, 100k steps, batch 8, eval every 5k, checkpoints every 20k ->
       C:\Users\Hercules\roboarm-lerobot\m3_act_20261023b (+ .log there). Started 14:19: 50 episodes to train,
       8 held out; ~10 steps/s alone on the GPU, ~3 h. The day's run (39 episodes) had eval loss 0.275 at 45k.
+      **Finished** (2 h 48 min, ~11 steps/s): eval loss 0.275 (5k), 0.227 (30k), 0.218 (60k), 0.211 (75k),
+      **0.210 (100k)** -- flat from ~75k. The 100k's pretrained_model and the log on the laptop:
+      train/runs/act/m3_act_20261023b/checkpoints/100000, train/runs/act/m3_act_20261023b.log.
+      **Judged (2026-10-26) on its 8 held-out episodes** -- all from the evening's rounds, none seen by Friday's
+      run either, so a fair duel (`m3_policy.py eval CKPT --dataset out/lerobot/m3_pick_20261023b`, 1037 frames):
+
+      | checkpoint | whole 2 s chunk | 1 s ahead J1-J6 (deg) | next step J1-J6 |
+      |---|---|---|---|
+      | hold still | 13.29 | 13.6 / 26.0 / 13.3 / 15.7 / 4.8 / 9.9 | 1.4 / 2.7 / 1.6 / 1.8 / 0.4 / 0.9 |
+      | Friday's 60k (39 episodes) | 7.79 | 11.4 / 9.6 / 8.4 / 7.5 / 7.4 / 4.0 | 5.8 / 3.3 / 2.8 / 3.3 / 3.9 / 2.0 |
+      | **weekend 100k (50 episodes)** | **6.05** | **8.5 / 6.9 / 7.4 / 5.9 / 5.7 / 3.1** | 3.6 / 2.9 / 2.2 / 2.3 / 1.8 / 1.5 |
+
+      Better on every joint (J1 a second ahead 11.4 -> 8.5 deg: ~3.3 cm at 22 cm, still coarse). Its first step
+      is still worse than holding still (J1 3.6 against 1.4): the first move of each chunk jumps.
 
 ## Monday 2026-10-26
 
 1. hekate (back Friday evening): its status script (CLAUDE.md) -- reachable, Isaac Sim's task, free VRAM.
-2. The weekend's ACT: `m3_policy.py eval` on its held-out episodes against today's 60k; then on the M3
+   **Back, at a new address: 192.168.73.11** (DHCP; .88 timed out, the user gave the new one; ~/.ssh/config
+   and CLAUDE.md say so). Status 2026-10-26 09:45: up 36 min, the 5090 idle (31.6 of 32.6 GB free), no Isaac
+   Sim or Python running (the log's "Loaded: yes" is from 10-12), screen locked; the script says no one is
+   logged on, yet AMEC-PC's apps run -- the scheduled tasks need a logged-on user, check before
+   `schtasks /run /tn IsaacSimStreaming`. Its Remote Control session "hekate" is offline.
+2. The weekend's ACT: `m3_policy.py eval` on its held-out episodes against today's 60k (**done**, above: 100k
+   6.05 deg against 7.79); then on the M3
    again -- first the loop at a true 10 Hz (send without waiting for each move: the bridge's move_to
    blocks; or run the policy beside the bridge on the robot).
+   **The loop on the robot (2026-10-26, the user chose it over sending without waiting from the laptop):**
+   - the bridge's policy job, `roboarm/m3policy.py` (POST /pick/policy {seconds, max_dps, dry}; a Picker job,
+     so the console's STOP, busy, the log and the recorder work as for a pick): a fixed 10 Hz clock, the newest
+     colour picture (<= 0.5 s old) and the believed pose -- as the recorder kept them --, the service asked
+     once a chunk (10 of 20), each step held to max_dps / 10 a joint (J6 <= 150) and sent as one command over
+     0.1 s NOT waited for (`M3Arm.step_to`, the guard on every pose: 1.8 ms on the Orin); STOP, a refusal or a
+     stale picture ends it, the arm holds; a line a tick in out/policy/run_STAMP.jsonl;
+   - the model: `tools/policy_service.py` on 127.0.0.1:8763 (.venv-ml, unit roboarm-m3policy, installed, not
+     enabled), ACT as ONNX -> TensorRT FP16 built there (139 s), checked against LeRobot's chunks on 4 held-out
+     frames: **max 0.19 deg, 5.9 ms an inference**. TensorRT 10.7 could not build the graph as exported
+     (Myelin "should never be called on mod_t tensors"): `export` slims it (onnxslim) and then it builds;
+   - from the laptop: `m3_policy.py export CKPT` (ONNX with the normalisation inside; ONNX Runtime = LeRobot
+     to 3e-5 deg) and `m3_policy.py robot CKPT [--seconds 30] [--max-dps 100] [--dry]` (exports and uploads
+     when new, builds and checks there, starts the service, runs the job, shows its log, Space/Esc/Ctrl-C =
+     STOP, the run's log back into m3pro/out/policy/). The LeRobot venv got onnx, onnxruntime, onnxslim;
+   - **max_dps 100 by default: the recordings' own speed.** The picker moves J1-J5 at up to 100 deg/s (10 deg
+     a tick; 90th percentile J1 70, J2 90 deg/s) and J6 160: Friday's 40 deg/s cap ran the policy at under
+     half its training speed in the fast parts -- a second mismatch beside the 5 Hz;
+   - **dry run on the M3, 15 s: 150 ticks, 10.0 a second, 0 late** (ticks 0.099-0.101 s apart), the service
+     answered in 12 ms (median, JPEG + HTTP included), the pictures 47 ms old (median, max 91). Deployed by scp
+     (the robot's copies matched git HEAD first), the bridge restarted.
+   - **The first moving run (100k, 30 s, 100 deg/s; a 30 mm cube green up in the middle, the box on the right,
+     pliers top left -- 17:35):** the loop perfect (300 ticks, 10.0 a second, 0 late, the policy 12 ms), but
+     **the arm never left START**: wanted START +-1 deg the whole run. Not the engine or the loop: LeRobot's
+     own PyTorch on today's frames (from the run's recorded episode, 20261026_173550_policy) from START moves
+     0.6 deg in a second with the 100k, 1.0-1.2 with Friday's 50k/60k, 3.8 with Friday's 30k -- while on the
+     recordings' own first frames every checkpoint swings 57-72 deg towards the piece (memorised).
+     **The cause is in the episodes:** of the 743 training frames at START (<= 1 deg) only 25 move within a
+     second, 718 stay -- each episode ends with the whole look after the drop (6-64 frames standing at START,
+     m3_episodes cuts "to the end of the look after") and starts already on its way (0-1 frames at START). L1
+     learns the median: at START, stay. On Friday the less trained 30k still crept off it.
+     **Fixed in m3_episodes (2026-10-26):** an episode now runs from LEAD = 3 ticks before its pregrasp (only
+     ticks the arm stood still in, after the episode before) to its arrival back at the look pose (the look
+     after's first tick there); the pick checks (drop, pushed away) still use the whole attempt. Rebuilt as
+     **m3pro/out/lerobot/m3_pick_20261023c**: the same 58 attempts in the same order, 7481 frames (7955), at
+     START now **223 move within a second, 39 stay** (33 of them an episode's last frame) -- was 25 / 718.
+     **Training on Dionysos** (started 2026-10-26 ~10:53 its clock, detached: act_20261023c.ps1 -> .cmd, the
+     weekend's settings: 100k steps, batch 8, eval every 5k, checkpoints every 20k, 50 train / 8 held out) ->
+     C:\Users\Hercules\roboarm-lerobot\m3_act_20261023c (+ .log there). Then: each checkpoint from START on
+     today's frames (m3pro/out/policy/frames/000072.jpg, 000150.jpg: a fresh scene), then on the M3.
 3. **The picker's "picked" check** (shared roboshared.task.pick): a piece shoved off is not picked --
    look round (both sides) after an attempt and compare with the look before (as m3_episodes does now).
    Both robots, tests, deploy.
