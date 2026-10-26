@@ -419,8 +419,11 @@ geometry (45b1bb9; the wide look's far edge is now 43.3 cm, not 45; the fused sc
 was fitted on the old camera, refit it on the next real scan). **Live, 2026-10-26 evening (deployed 45b1bb9):**
 the first clean-up gripped the 30 mm cube and put it back -- the box stood 4 cm behind J1's axis (x -0.006),
 every spot in it past J1 180 (the old model the same); the box 5 cm forward: **picked into the box, 18 s, the
-close look moved the aim 5.9 mm, grip at pitch 80, J5 76, the look after empty**. One pick: more over the
-table (left, right, far, the 40 mm cube, a block) before calling it.
+close look moved the aim 5.9 mm, grip at pitch 80, J5 76, the look after empty**. Then the user spread the kit
+over the table (left by the wheel, right, further; the 40 mm cube, a block): **one clean-up picked 8 of 8 into the
+box, 0 missed, 12-21 s a pick** -- the block (J5 145), six 30 mm cubes (x 0.10-0.24, y -0.05..+0.18), the 40 mm
+cube; the close looks moved the aim 1.2-5.9 mm, once 25.6 (a cube the wide look saw only in part, at its edge).
+Left on the floor: a block 40 cm out on the left (out of reach) and things not in the kit. The new model holds.
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
