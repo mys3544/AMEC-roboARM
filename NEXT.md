@@ -412,7 +412,15 @@ prepočítaj tabuľku zamierenia m3aim a otestujeme to živým clean-upom"): SAG
 camera 3 mm further out, 6 mm lower): its offsets 8-22 mm out became -3..+10, the left ones stay +1..+10 (the J2
 fit can't take them). What it changes on the robot: the aim (horizontal) about the same, the descent ~9 mm
 higher for the real tips (the shut tips' 9 mm not taken: FINGERS stays, fingertips_mm stays 8) -- the grips sit
-higher on the piece; if they slip, fingertips_mm lower (a setting, live).
+higher on the piece; if they slip, fingertips_mm lower (a setting, live). J2 alone tilted the model's camera
+2.9 deg steeper at the look (the depth: 1.5) and 37.4 at the survey (camcheck 34.9): **CAMERA_TILT 1.5 deg**
+turns the DCW2 back up on arm4 (35.9; the board's readings 4.9 mm against 4.4). Eight tests moved with the
+geometry (45b1bb9; the wide look's far edge is now 43.3 cm, not 45; the fused scan box 4.8 mm off -- SIGHT_PUSH
+was fitted on the old camera, refit it on the next real scan). **Live, 2026-10-26 evening (deployed 45b1bb9):**
+the first clean-up gripped the 30 mm cube and put it back -- the box stood 4 cm behind J1's axis (x -0.006),
+every spot in it past J1 180 (the old model the same); the box 5 cm forward: **picked into the box, 18 s, the
+close look moved the aim 5.9 mm, grip at pitch 80, J5 76, the look after empty**. One pick: more over the
+table (left, right, far, the 40 mm cube, a block) before calling it.
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
