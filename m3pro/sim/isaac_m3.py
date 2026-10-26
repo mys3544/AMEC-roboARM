@@ -16,6 +16,7 @@ gripper's measured opening -- is m3pro/tools/m3_sim.py, which also copies this o
 """
 
 import argparse
+import contextlib
 import itertools
 import json
 import math
@@ -313,7 +314,7 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
     robot = world.scene.add(SingleArticulation("/World/m3", name="m3"))
     shots = sorted(plan.get("marks", {}).items(), key=lambda kv: kv[1]) if plan.get("pictures") else []
     record = plan.get("record")   # {"dir", "hz"}: the wrist camera's pictures, a tick each, as the real recorder
-    if record:
+    if record or plan.get("policy"):
         shots = shots or [("recording", math.inf)]
     # one run in three renders black all through, the camera made before the reset or after it (2026-10-26, Dionysos,
     # an ACT training on the same GPU): _picture says so, and the laptop runs it again
@@ -336,6 +337,12 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
     for _ in range(WARMUP_RENDERS if shots else 0):   # the materials' shaders compiled, the picture settled
         world.render()
     controller = robot.get_articulation_controller()
+    if plan.get("policy"):   # a trained policy drives the arm, trial after trial (m3_sim.py evaluate)
+        trials = run_policy(world, robot, controller, index, annotator, pieces, grip, plan)
+        with open(result_path, "w") as f:
+            json.dump({"plan": {k: v for k, v in plan.items() if k != "trials"}, "trials": trials}, f)
+        print(f"{len(trials)} trials -> {result_path}", flush=True)
+        return
     samples, t, next_sample = [], 0.0, 0.0
     ticks, next_tick = 0, 0.0
     if record:
@@ -383,6 +390,109 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
     with open(result_path, "w") as f:
         json.dump({"plan": plan, "dofs": names, "samples": samples, "ticks": ticks}, f)
     print(f"{len(samples)} samples, {ticks} pictures over {t:.1f} s -> {result_path}", flush=True)
+
+
+def servo_to_q(pose: dict, servo_map: dict) -> dict:
+    """Servo degrees {1..6} -> the joints' targets, rad: where the arm sits (the command + the model's sag),
+    J1 mirrored, 90 the URDF's zero; J6 -> the finger through the gripper as measured (m3_sim.py's mapping)."""
+    import numpy as np
+
+    q = {}
+    for j in range(1, 6):
+        v = pose[j] + servo_map["sag"].get(str(j), 0.0)
+        q[ARM[j - 1]] = math.radians(90 - v if j in servo_map["mirrored"] else v - 90)
+    q[FINGER] = float(np.interp(pose[6], *zip(*servo_map["j6"])))
+    return q
+
+
+def _ask(url: str, payload: dict | None = None, wait_s: float = 120.0) -> dict:
+    """The policy server's answer, waited for while it is still loading."""
+    import urllib.request
+
+    deadline = time.time() + wait_s
+    while True:
+        try:
+            request = urllib.request.Request(url, data=None if payload is None else json.dumps(payload).encode(),
+                                             headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(request, timeout=30) as reply:
+                return json.loads(reply.read())
+        except OSError:
+            if time.time() > deadline:
+                raise
+            time.sleep(2.0)
+
+
+def run_policy(world, robot, controller, index, annotator, pieces, grip, plan: dict) -> list[dict]:
+    """Each trial: the arm at the start pose, the pieces where the trial has them, then a policy (its server at
+    plan["policy"]["url"]) drives the arm ten times a second for the trial's seconds, as the bridge's policy job
+    does on the robot -- the newest picture and the pose sent, a chunk every n_action_steps ticks, each step held
+    to max_dps / hz a joint (J6 <= 150) and swept over the tick as the board does. What each tick saw and sent,
+    and where the pieces and the tool point were -> the trial's record."""
+    import base64
+    import io
+
+    import numpy as np
+    import omni.replicator.core as rep
+    from isaacsim.core.utils.types import ArticulationAction
+    from PIL import Image
+
+    pol, servo_map = plan["policy"], plan["servo_map"]
+    hz, n = pol.get("hz", 10), pol["n_action_steps"]
+    most = pol.get("max_dps", 100.0) / hz
+    limits = {1: (0, 180), 2: (0, 180), 3: (0, 180), 4: (0, 180), 5: (0, 270), 6: (0, 150)}
+    print("policy:", _ask(pol["url"] + "/health"), flush=True)
+    _picture(world, annotator, rep)   # not black: else the laptop runs it again
+
+    def drive(pose):
+        q = servo_to_q(pose, servo_map)
+        finger_now = float(robot.get_joint_positions()[index[FINGER]])
+        q = {**q, **{j: share * finger_now for j, share in LINKAGE.items()}}
+        controller.apply_action(ArticulationAction(joint_positions=np.array([q[j] for j in q]),
+                                                   joint_indices=np.array([index[j] for j in q])))
+
+    out = []
+    for number, trial in enumerate(plan["trials"]):
+        cmd = {int(j): float(v) for j, v in plan["start"].items()}
+        start = robot.get_joint_positions()
+        q0 = servo_to_q(cmd, servo_map)
+        for j, v in {**q0, **{j: share * q0[FINGER] for j, share in LINKAGE.items()}}.items():
+            start[index[j]] = v
+        robot.set_joint_positions(start)
+        for prim, piece in zip(pieces, trial["pieces"], strict=False):
+            yaw = math.radians(piece.get("yaw", 0.0))
+            prim.set_world_pose(position=np.array(piece["centre"]), orientation=np.array([math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]))
+        for _ in range(int(0.5 * PHYSICS_HZ)):   # settled: the arm held at the start, the pieces down
+            drive(cmd)
+            world.step(render=False)
+        queue, ticks, sheet = [], [], []
+        for tick in range(int(trial["seconds"] * hz)):
+            world.step(render=True)
+            rep.orchestrator.step(rt_subframes=RECORD_SUBFRAMES, delta_time=0.0, pause_timeline=False)
+            rgb = np.asarray(annotator.get_data())[..., :3].astype("uint8")
+            if tick % (2 * hz) == 0:
+                sheet.append(tick)
+                Image.fromarray(rgb).save(f"trial{number:02d}_{tick:04d}.jpg", quality=80)
+            if not queue:
+                buf = io.BytesIO()
+                Image.fromarray(rgb).save(buf, format="JPEG", quality=JPEG_QUALITY)
+                answer = _ask(pol["url"] + "/act", {"state": [cmd[j] for j in range(1, 7)],
+                                                    "jpeg": base64.b64encode(buf.getvalue()).decode()})
+                queue = answer["chunk"][:n]
+            wanted = queue.pop(0)
+            step = {j: min(max(cmd[j] + float(np.clip(wanted[j - 1] - cmd[j], -most, most)), limits[j][0]), limits[j][1])
+                    for j in range(1, 7)}
+            sweeps = int(PHYSICS_HZ / hz)
+            for k in range(sweeps):   # the board sweeps from the last command to this one over the tick
+                drive({j: cmd[j] + (k + 1) / sweeps * (step[j] - cmd[j]) for j in range(1, 7)})
+                world.step(render=False)
+            cmd = step
+            ticks.append({"t": round(tick / hz, 2), "sent": [round(cmd[j], 1) for j in range(1, 7)],
+                          "pieces": [_pose(p) for p in pieces], "grip": _pose(grip)[:3]})
+        out.append({"trial": number, "pieces": trial["pieces"], "ticks": ticks, "sheet": sheet})
+        print(f"trial {number}: {len(ticks)} ticks", flush=True)
+    with contextlib.suppress(OSError):
+        _ask(pol["url"] + "/quit", wait_s=1.0)
+    return out
 
 
 def _save_jpeg(path: str, rgb) -> None:

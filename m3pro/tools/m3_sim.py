@@ -550,6 +550,110 @@ def summary(result: dict) -> None:
           + ("PICKED AND CARRIED" if lifted > 0.03 and carried > 0.03 else "NOT carried"), flush=True)
 
 
+LEROBOT_PY = r"C:\Users\Hercules\roboarm-lerobot\.venv\Scripts\python.exe"   # LeRobot's venv on Dionysos
+POLICY_URL = "http://127.0.0.1:8764"   # tools/policy_http.py there
+START = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90, 6: 76}   # where every recorded episode begins (m3policy.START)
+
+
+def grid_cells(box: dict) -> list[np.ndarray]:
+    """The evaluation grid: a 30 mm cube at three distances from J1's axis, every 10 deg of bearing -- those a
+    pick reaches, clear of the chassis' front and of the box -- 20 of them, spread evenly."""
+    from roboshared import box as boxes
+    from roboshared import task as shared_task
+
+    axis = np.asarray(m3pick.Picker.AXIS)
+    cells = []
+    for r in (0.16, 0.19, 0.22):
+        for bearing in range(-60, 61, 10):
+            at = axis + r * np.array([math.cos(math.radians(bearing)), math.sin(math.radians(bearing))])
+            if at[0] >= m3pick.BUMPER_X + 0.03 and r <= m3pick.furthest(0.03) \
+                    and not boxes.inside(box, at, boxes.BOX_WALL + shared_task.BOX_NEAR + 0.03):
+                cells.append(at)
+    return [cells[int(i)] for i in np.linspace(0, len(cells) - 1, min(20, len(cells)))]   # 20, evenly over them
+
+
+def evaluate(args) -> None:
+    """A checkpoint in the simulator's closed loop (isaac_m3.py's run_policy, the policy behind
+    tools/policy_http.py on Dionysos's CPU): a 30 mm cube on each cell of the grid in turn, the arm from the
+    episodes' start for --seconds; per cell whether the tool point came within 2 cm of the cube (reached), the
+    cube rose 3 cm (lifted), and ended in the box. Ranks checkpoints before the robot (the research: a matched
+    simulation orders policies as reality does, r ~0.9; offline action error does not)."""
+    import cv2
+    import m3_expert
+
+    ckpt = Path(args.checkpoint)
+    model = ckpt / "pretrained_model" if (ckpt / "pretrained_model").exists() else ckpt
+    name = f"{ckpt.parent.parent.name}_{ckpt.name}" if ckpt.parent.name == "checkpoints" else ckpt.name
+    folder = f"{REMOTE.replace('/', chr(92))}\\policies\\{name}"
+    have = subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"if exist {folder}\\model.safetensors (echo yes)"],
+                          capture_output=True, text=True, check=False)
+    if "yes" not in have.stdout:
+        subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"mkdir {folder}"], check=False)
+        for f in model.iterdir():
+            subprocess.run(["scp", "-q", "-o", "BatchMode=yes", str(f), f"{HOST}:{REMOTE}/policies/{name}/"], check=True)
+    put(ROOT / "tools" / "policy_http.py", ROOT / "sim" / "isaac_m3.py")
+    rng = np.random.default_rng(args.seed)
+    box = m3_expert.facing_box(np.array(m3_expert.BOX_AT))
+    cells = grid_cells(box)[: args.trials]
+    trials = [{"pieces": [{"centre": [float(x), float(y), 0.015], "yaw": float(rng.uniform(0, 90))}], "seconds": args.seconds}
+              for x, y in cells]
+    held = {**{j: START[j] + m3kinematics.SAG.get(j, 0.0) for j in range(1, 6)}, 6: START[6]}
+    plan = {"keys": [{"t": 0.0, "q": urdf_targets(held)}], "settle_s": 0.0, "friction": 0.7,
+            "pieces": [{"size": [0.03] * 3, "centre": trials[0]["pieces"][0]["centre"], "yaw": 0.0, "mass": 0.015,
+                        "faces": green_cube()}],
+            "statics": box_parts(box), "table": TABLE, "pictures": wrist_view(),
+            "policy": {"url": POLICY_URL, "n_action_steps": 10, "hz": HZ, "max_dps": args.max_dps},
+            "start": START, "trials": trials,
+            "servo_map": {"sag": {str(j): v for j, v in m3kinematics.SAG.items()}, "mirrored": list(m3kinematics.MIRRORED),
+                          "j6": [list(p) for p in J6_TO_FINGER]}}
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    OUT.mkdir(parents=True, exist_ok=True)
+    plan_path, result = OUT / f"eval_{stamp}.json", f"evalresult_{stamp}.json"
+    plan_path.write_text(json.dumps(plan))
+    put(plan_path)
+    print(f"{name}: {len(trials)} cells x {args.seconds:.0f} s in the simulator", flush=True)
+    remote(f"start /b {LEROBOT_PY} policy_http.py policies\\{name} > policy_http_{stamp}.log 2>&1 & "
+           f"{ISAAC} isaac_m3.py play m3pro.usd {plan_path.name} {result}", f"eval_{stamp}.log")
+    subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"curl -s {POLICY_URL}/quit"], capture_output=True, check=False)
+    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{result}", str(OUT / result)], check=True)
+    played = json.loads((OUT / result).read_text())
+    from roboshared import box as boxes
+
+    rows, tiles = [], []
+    for trial in played["trials"]:
+        cube0 = np.array(trial["pieces"][0]["centre"])
+        cubes = np.array([t["pieces"][0][:3] for t in trial["ticks"]])
+        grips = np.array([t["grip"] for t in trial["ticks"]])
+        reached = float(np.min(np.linalg.norm(cubes - grips, axis=1)))
+        lifted = float(cubes[:, 2].max() - cube0[2])
+        in_box = bool(boxes.inside(box, cubes[-1][:2]) and cubes[-1][2] < 0.06)
+        j1 = [t["sent"][0] for t in trial["ticks"][:12]]
+        rows.append((cube0, reached, lifted, in_box, j1[-1]))
+        if len(tiles) < 8:
+            for tick in trial["sheet"][1:3]:
+                jpg = f"trial{trial['trial']:02d}_{tick:04d}.jpg"
+                local = OUT / f"eval_{stamp}_{jpg}"
+                if subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{jpg}", str(local)], check=False).returncode == 0:
+                    tile = cv2.resize(cv2.imread(str(local)), (320, 240))
+                    cv2.putText(tile, f"{trial['trial']} t{tick / HZ:.0f}s", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+                    tiles.append(tile)
+                    local.unlink()
+    axis = np.asarray(m3pick.Picker.AXIS)
+    for (c, reached, lifted, in_box, j1), trial in zip(rows, played["trials"], strict=True):
+        aim = 90 - math.degrees(math.atan2(c[1] - axis[1], c[0] - axis[0]))
+        print(f"  cell {trial['trial']:2d} x {c[0]:.3f} y {c[1]:+.3f} (J1 to it ~{aim:3.0f}, J1 after 1.2 s {j1:5.1f}): "
+              f"closest {1000 * reached:3.0f} mm, lifted {1000 * lifted:3.0f} mm, {'IN THE BOX' if in_box else '-'}", flush=True)
+    n = len(rows)
+    print(f"{name}: reached {sum(r[1] < 0.02 for r in rows)}/{n}, lifted {sum(r[2] > 0.03 for r in rows)}/{n}, "
+          f"in the box {sum(r[3] for r in rows)}/{n}", flush=True)
+    if tiles:
+        while len(tiles) % 4:
+            tiles.append(np.zeros_like(tiles[0]))
+        sheet_path = OUT / f"eval_{stamp}_{name}.jpg"
+        cv2.imwrite(str(sheet_path), np.vstack([np.hstack(tiles[i:i + 4]) for i in range(0, len(tiles), 4)]))
+        print(f"sheet: {sheet_path}", flush=True)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -572,6 +676,12 @@ def main() -> int:
     ep.add_argument("--seed", type=int, default=1)
     ep.add_argument("--pieces", type=int, default=4)
     ep.add_argument("--card", choices=["drawn", "zero"], default="drawn")
+    ev = sub.add_parser("evaluate")
+    ev.add_argument("checkpoint", help="a run's checkpoints/NNNNNN (its pretrained_model inside)")
+    ev.add_argument("--trials", type=int, default=20, help="cells of the grid (at most its 21)")
+    ev.add_argument("--seconds", type=float, default=25.0)
+    ev.add_argument("--max-dps", type=float, default=100.0)
+    ev.add_argument("--seed", type=int, default=0)
     a = ap.parse_args()
     if a.cmd == "setup":
         setup()
@@ -579,6 +689,8 @@ def main() -> int:
         look(a)
     elif a.cmd == "episode":
         episode(a)
+    elif a.cmd == "evaluate":
+        evaluate(a)
     else:
         grip(a)
     return 0

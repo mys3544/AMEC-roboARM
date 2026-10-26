@@ -350,6 +350,16 @@ attempts from 8 episodes). **Night run from 14:10:** `tools/m3_sim_night.sh W no
 the ACT fine-tune; seeds 100000*W on), logs out/sim/night_w*.log; stop: `touch m3pro/out/sim/STOP`. The laptop must
 stay awake (lid open, on power).
 
+**The closed-loop evaluation in the sim (done Monday afternoon, ahead of plan):** `m3_sim.py evaluate CKPT
+[--trials 20] [--seconds 25]` -- the checkpoint copied to Dionysos (roboarm-sim/policies/), `tools/policy_http.py`
+in LeRobot's venv there on the CPU (the robot's policy-service API on 127.0.0.1:8764, LeRobot's own pipeline),
+`isaac_m3.py`'s run_policy: per trial the arm at START and a 30 mm cube on a grid cell, then 10 Hz: the picture,
+the pose sent, a chunk every 10 ticks, steps held to max_dps/10 and swept over the tick as the board does; per
+cell closest approach of the tool point, lift, in the box. The grid: 18 cells at 16/19/22 cm, J1 40-100 (the box
+takes the right). **First run, the real-only fine-tune's 10k on 3 middle cells: closest 20 / 33 / 71 mm, nothing
+lifted, J1 after 1.2 s 62-73 where the cubes were at 80-100** -- the left lean shows in the sim too. ~100 s a
+20 s trial with two night workers and a training on the GPU.
+
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning
