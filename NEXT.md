@@ -240,6 +240,9 @@
      grips' J1 median 75.5 (quartiles 54-98), 55 % of the departures go left, 6 of 58 targets in the middle
      (x 0.20-0.26, y +-3 cm). Next: the later checkpoints from START on today's frames (do they head for J1
      ~94?), and more episodes with pieces in the middle and on the right (clean-ups; or the simulator).
+     **The 40k** (eval loss 0.250): the same on today's frames -- J1 to ~62 in its first second, the cube at 94.
+     More steps on these data do not turn it: the placements must change (the simulator's uniform ones, or
+     more real rounds in the middle and on the right).
 3. **The picker's "picked" check** (shared roboshared.task.pick): a piece shoved off is not picked --
    look round (both sides) after an attempt and compare with the look before (as m3_episodes does now).
    Both robots, tests, deploy. **Done 2026-10-26:** where the gripper cannot tell (the M3; the X3 when its
@@ -267,6 +270,67 @@
    table and pieces (kit_synth.py's), then the expert's loop -- the picker on the true poses -- and the
    recorder writing the same LeRobot format: thousands of episodes, the real 58 to fine-tune.
 5. The X3: re-teach its grips with the camera where it is now (still open).
+
+## This week, to the meeting on Thursday 2026-10-29: sim expert -> ACT that heads for the cube
+
+From the research of 2026-10-26 (reports/Simulácia a VLA pre presný úchop.md; its notes in
+research_notes/ of the same name; the earlier precision report beside it). The sim's first job is the
+table's **coverage**, not millimetres: the real data lean left and the ACT heads ~30 deg off. Sim-only
+imitation reaches the cube but loses the grasp on real arms (0-40 %); sim + a few real episodes
+co-trained reach 80-85 % (Genesis ACT 17/20 vs 5/20 real-only; NVIDIA 45 -> 83 %).
+
+**Decisions (the user, 2026-10-26):**
+- Isaac Sim: the week stays on **5.0 on Dionysos** (the grip works there). Standard later: 6.2 + Isaac
+  Lab 3.0 GA, which needs driver >= 595.97 on Windows -- **ask the user before any driver change on
+  Dionysos** (581.42 now; 6.0.1 runs on it unchanged). Side by side is safe (own folder or uv venv,
+  `--portable-root`, never rename an extracted install, no machine-wide ISAACSIM_ASSET_ROOT).
+- hekate: the **Hungarica LLM may be paused** when we need the 5090 (Isaac Lab 3.0 + 6.2 in a uv venv,
+  GR00T N1.7, two ACT runs at once) -- say what was stopped and how it restarts.
+- **Every simulated episode carries (RESEARCH.md 9.7):** the **robot card** it was drawn with (backlash
+  per joint, command-to-motion delay, servo gain, hand-eye pose error, gripper offset), stored with the
+  episode; and the **expert's verdict and progress for every chunk** (the hand-back gate's labels from
+  the first night). Relative end-effector actions beside the joint targets: cheap to add too.
+- Models: ACT now (trains anywhere, 6 ms on the Orin); the first VLA GR00T N1.7 (LeRobot `groot`, on
+  the 5090, served over the network), pi0.5 second, SmolVLA if it must run on board.
+
+**Must show on Thursday:** (1) the sim expert writing episodes in our LeRobot format (the same keys,
+10 fps, 640x480, state = the command sent, action = the next tick, the same cut); (2) the target
+placements, real vs sim, as a histogram; (3) the twin's gap in mm (fingertip at closure, RMS path,
+ms delay); (4) a co-trained ACT that heads for the cube on a 20-cell grid in sim and on the M3.
+Stretch: first real grasps of the co-trained ACT; GR00T N1.7 training on hekate.
+
+| when | what | where |
+|---|---|---|
+| Mon | 73 real episodes -> dataset; ACT fine-tuned on it (real-only baseline); Dionysos inventory, read-only | laptop, Dionysos |
+| Tue | DCW2 on arm4 at the hand-eye pose (intrinsics, 640x480), table and pieces from kit_synth.py, an overlay on 3-5 real poses; a servo emulator (delay ~0.15 s, gain ~0.9, backlash 0.4-1.1 deg, the speed cap) and the grip re-tested 7/7 | Dionysos 5.0 |
+| Tue | the expert loop: m3pick's plan on true poses, the real look sequence, placements uniform to ~22 cm from J1's axis, small action noise; the LeRobot recorder with the robot card and per-chunk verdicts; >= 500 episodes overnight | Dionysos |
+| Wed | the gap: 5-10 real episodes replayed in sim and on the arm over the ChArUco board; ACT sim-only and co-trained (90 % sim, real rebalanced by placement); an eval loop in sim (policy_service once a chunk, 20-cell grid) | M3, Dionysos, hekate |
+| Wed eve | guarded runs on the M3: does it head for J1 ~94 with the cube in the middle? | M3 |
+| Thu | 10-20 paired trials on the grid against the picker: mm at closure, failure taxonomy, Wilson intervals | M3 |
+
+Fallback if the sim camera is not ready Tuesday evening: the expert's video, the real-only ACT on 73
+episodes and the measured gap.
+
+**Dionysos inventory (read-only, 2026-10-26):** a MACHINE-wide `EXP_PATH=C:\Users\mImrich\Isaac_Sim_Projects\scripts`
+(another user's) -- Isaac Sim looks for its .kit apps there, so a 6.x venv must set its own EXP_PATH (5.0's
+python.bat runs fine as it is); LongPathsEnabled = 1; uv in C:\Users\Hercules\.local\bin (Python 3.12 via uv;
+py has 3.11 and 3.13); no Kit data dirs under Hercules yet; 5.0's clear_caches.bat asks before each step but
+its shader and texture caches are shared by every version (only Kit\107.3 is 5.0's own); VRAM 7.5 of 20 GB
+in use with our ACT run.
+
+**The wrist camera in the sim (done Monday afternoon, ahead of plan):** `m3_sim.py look [--pose] [--cube x,y,yaw]
+[--real FRAME] [--table JSON]` -- the DCW2 as a USD camera on the URDF's DCW2 link at its optical frame (K 480.8 /
+480.9, 640x480; the hand-eye fit of 2026-09-30 stays unused, degenerate), the arm held at command + SAG as the
+robot's model has it. **The simulated camera sits 0.6 mm from the model's, its axis the same to 0.004**; the cube
+lands on the model's projected pixel. The lab table from kit_synth.py's pieces: paper (textures/paper_faint.png:
+paper.png's print at 30 %, as faint as on the real sheet), the grey desk, tape at the far corners (the real top-left
+tape within ~20 px), dome 250 + a sun from the far left (shadows towards the robot, right, as in the real frame); the
+lab's green picture cube textured (paint top, pictures round). Gaps seen on the first overlay (out/sim/look_*.jpg,
+real | sim | blend at START): **the sim shows the fingertips at the picture's bottom, the real one does not** (the
+real camera tilted or set off the URDF's -- to measure on the ChArUco board); the cube ~20 px right / 10 px low in
+the real frame (its place from the grip target, not ground truth); the sim's green lighter. Two traps: the first
+renders after new MDL materials are black (60 warm-up renders now), and **one run in three renders black all
+through** with the ACT training on the same GPU -- `remote()` reruns it (up to 3).
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 

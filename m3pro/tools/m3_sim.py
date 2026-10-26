@@ -43,6 +43,34 @@ J6_TO_FINGER = ((0, 0.6), (30, 0.6), (60, 0.242), (90, -0.022), (120, -0.392), (
                 (170, -0.974), (180, -0.974))
 SPEEDS = {"free": 90, "near": 60, "descend": 25, "lift": 60, "gripper": 150}   # the picker's defaults, deg/s
 GRIP_S = 0.3
+K = (480.8, 480.9, 323.8, 240.0)   # the DCW2's colour camera at 640 x 480 (its camera_info)
+TEXTURES = "C:/Users/Hercules/roboarm-synth/textures"   # train/synth/textures, put there for kit_synth.py
+# the lab table as the wide look saw it on 2026-10-26 (its edges in the picture, through the model): the paper's
+# middle and turn, the light
+TABLE = {"textures": TEXTURES, "paper": [0.12, -0.105, 0.0], "paper_texture": "paper_faint.png",
+         "dome": 250.0, "sun": 700.0, "sun_from": [0.5, 0.4, 0.8]}   # its shadows fall towards the robot, right
+GREEN = (0.23, 0.46, 0.23)          # the lab's green picture cube's paint (kit_synth.py's CUBE_PAINT)
+
+
+def green_cube() -> list[dict]:
+    """The lab's green 30 mm picture cube: paint top and bottom, a picture on each side."""
+    return [{"colour": GREEN}, {"colour": GREEN}] + [{"texture": f"{TEXTURES}/pic_green_{p}.png"}
+                                                     for p in ("apple", "egg", "fish", "melon")]
+FLIP = np.diag([1.0, -1.0, -1.0])  # the optical frame (x right, y down, z ahead) -> a USD camera's (+y up, -z ahead)
+
+
+def wrist_view() -> dict:
+    """The simulated wrist camera as the robot's model has it: on the URDF's DCW2 link, at its optical frame
+    (m3kinematics.camera_optical -- the hand-eye fit of 2026-09-30 was degenerate and is not used)."""
+    T = np.eye(4)
+    T[:3, :3] = m3kinematics.OPTICAL @ FLIP
+    return {"mount": "DCW2", "T": T.tolist(), "K": list(K), "size": [640, 480]}
+
+
+def project(pose: dict, point) -> np.ndarray:
+    """Where `point` (base x, y, z) falls in the real camera's picture at servo `pose`, by the robot's model."""
+    p = np.linalg.inv(m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()) @ np.r_[point[:3], 1.0]
+    return np.array([K[0] * p[0] / p[2] + K[2], K[1] * p[1] / p[2] + K[3]])
 
 
 def urdf_targets(pose: dict) -> dict:
@@ -127,12 +155,19 @@ def _grip_plan(x: float, y: float, yaw: float, size: float, mass: float, frictio
                      {"from": [x + 0.30, y - 0.30, 0.32], "at": [x - 0.05, y, 0.08]})
 
 
-def remote(cmd: str, log: str) -> None:
-    began = time.time()
-    subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"cd /d {REMOTE.replace('/', chr(92))} && {cmd} > {log} 2>&1"],
-                   check=False)
-    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{log}", str(OUT / log)], check=True)
-    print(f"({time.time() - began:.0f} s on Dionysos; log out/sim/{log})", flush=True)
+def remote(cmd: str, log: str, tries: int = 3) -> None:
+    """`cmd` run on Dionysos, its log fetched -- again while its pictures came out black: one run in three
+    renders black all through with an ACT training on the same GPU (2026-10-26; isaac_m3.py's _picture)."""
+    for attempt in range(1, tries + 1):
+        began = time.time()
+        subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"cd /d {REMOTE.replace('/', chr(92))} && {cmd} > {log} 2>&1"],
+                       check=False)
+        subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{log}", str(OUT / log)], check=True)
+        print(f"({time.time() - began:.0f} s on Dionysos; log out/sim/{log})", flush=True)
+        if "the picture stayed black" not in (OUT / log).read_text(errors="replace"):
+            return
+        print(f"  the pictures came out black (run {attempt} of {tries})", flush=True)
+    raise SystemExit("the simulator's pictures stayed black: see the log")
 
 
 def put(*paths: Path) -> None:
@@ -162,6 +197,43 @@ def grip(args) -> None:
     played = json.loads((OUT / result).read_text())
     sheet(played, OUT / result.replace(".json", ".jpg"))
     summary(played)
+
+
+def look(args) -> None:
+    """One picture from the simulated wrist camera at servo `pose`, the cube where given -- the arm held where the
+    real one sits (the command plus m3kinematics.SAG, as the robot's model has it) -- and, given a real frame
+    taken there, the two side by side and blended, the model's projection of the cube's top marked on both."""
+    import cv2
+
+    OUT.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S")
+    pose = {j: float(v) for j, v in zip(m3arm.JOINTS, args.pose.split(","), strict=True)}
+    held = {j: v + m3kinematics.SAG.get(j, 0.0) for j, v in pose.items()}
+    plan = Plan(held)
+    plan.go(held, SPEEDS["free"], hold=0.6)
+    plan.marks["look"] = 0.5
+    x, y, yaw = (float(v) for v in args.cube.split(","))
+    centre = [x, y, args.size / 2]
+    plan_path, result = OUT / f"look_{stamp}.json", f"lookresult_{stamp}.json"
+    table = {**TABLE, **json.loads(args.table or "{}")}
+    plan_path.write_text(json.dumps(plan.json([{"size": [args.size] * 3, "centre": centre, "yaw": yaw, "mass": 0.015,
+                                                "faces": green_cube()}], settle_s=0.0, pictures=wrist_view(),
+                                              table=table), indent=1))
+    put(plan_path, ROOT / "sim" / "isaac_m3.py")
+    remote(f"{ISAAC} isaac_m3.py play m3pro.usd {plan_path.name} {result}", f"look_{stamp}.log")
+    npy = OUT / f"lookresult_{stamp}_look.npy"
+    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{npy.name}", str(npy)], check=True)
+    sim = cv2.cvtColor(np.load(npy).astype(np.uint8), cv2.COLOR_RGB2BGR)
+    top = project(pose, [x, y, args.size])
+    tiles = [sim]
+    if args.real:
+        real = cv2.imread(str(args.real))
+        tiles = [real, sim, cv2.addWeighted(real, 0.5, sim, 0.5, 0)]
+    for tile in tiles:
+        cv2.drawMarker(tile, tuple(round(float(v)) for v in top), (0, 0, 255), cv2.MARKER_CROSS, 24, 2)
+    out = OUT / f"look_{stamp}.jpg"
+    cv2.imwrite(str(out), np.hstack(tiles))
+    print(f"the cube's top by the model at pixel {np.round(top, 1).tolist()}; picture: {out}", flush=True)
 
 
 def sheet(played: dict, out: Path) -> None:
@@ -229,9 +301,17 @@ def main() -> int:
     g.add_argument("--mass", type=float, default=0.015)
     g.add_argument("--friction", type=float, default=0.6)
     g.add_argument("--close", action="store_true", help="the pictures from beside the cube, not over the robot")
+    lk = sub.add_parser("look")
+    lk.add_argument("--pose", default="90,105,10,0,90,76", help="servo degrees J1..J6 (default: the wide look)")
+    lk.add_argument("--cube", default="0.2377,-0.0158,4.5", help="x,y,yaw of a cube on the table (m, m, deg)")
+    lk.add_argument("--size", type=float, default=0.03)
+    lk.add_argument("--real", type=Path, help="a real frame taken at that pose, to lay beside and over it")
+    lk.add_argument("--table", help='JSON over TABLE\'s keys, e.g. {"sun": 0, "paper_texture": "paper.png"}')
     a = ap.parse_args()
     if a.cmd == "setup":
         setup()
+    elif a.cmd == "look":
+        look(a)
     else:
         grip(a)
     return 0

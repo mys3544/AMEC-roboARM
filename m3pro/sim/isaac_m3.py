@@ -18,6 +18,7 @@ gripper's measured opening -- is m3pro/tools/m3_sim.py, which also copies this o
 import argparse
 import itertools
 import json
+import math
 import os
 import re
 import sys
@@ -52,6 +53,10 @@ SAMPLE_S = 0.1
 ARM_DRIVE = (40.0, 2.0, 3.0)
 FINGER_DRIVE = (4.0, 0.2, 1.5)
 ARM_MAX_DPS = 150.0   # a servo's top speed: without it a target far ahead flung what was held (2026-10-23)
+TABLE_GREY = (0.74, 0.74, 0.72)   # the lab's desk round the paper (kit_synth.py's TABLE)
+PAPER_M = 0.6                     # m, the side textures/paper.png covers
+WARMUP_RENDERS = 60   # renders before the first picture: the first ones came out black while the materials'
+                      # shaders compiled (2026-10-26; kit_synth.py drops 30 after every move)
 
 from isaacsim import SimulationApp  # before any omni import: the app loads them
 
@@ -142,16 +147,109 @@ def do_import(desc: str, usd: str) -> None:
     print("linkage (name, share of the finger):", mimics, flush=True)
 
 
-def add_box(stage, path: str, size, centre, yaw_deg: float, mass: float, colour, material) -> None:
-    cube = UsdGeom.Cube.Define(stage, path)
-    cube.CreateSizeAttr(1.0)
+# A box of side 1, a face each: (normal, u, v) -- +z and -z, then +x +y -x -y round it (kit_synth.py's)
+FACES = [((0, 0, 1), (1, 0, 0), (0, 1, 0)), ((0, 0, -1), (1, 0, 0), (0, -1, 0)),
+         ((1, 0, 0), (0, 1, 0), (0, 0, 1)), ((0, 1, 0), (-1, 0, 0), (0, 0, 1)),
+         ((-1, 0, 0), (0, -1, 0), (0, 0, 1)), ((0, -1, 0), (1, 0, 0), (0, 0, 1))]
+
+
+def look_material(stage, path: str, texture: str | None = None, colour=None):
+    """An OmniPBR material (a picture, or a colour), matte as paper and paint."""
+    from pxr import Sdf
+
+    omni.kit.commands.execute("CreateMdlMaterialPrim", mtl_url="OmniPBR.mdl", mtl_name="OmniPBR", mtl_path=path)
+    shader = UsdShade.Shader(stage.GetPrimAtPath(f"{path}/Shader"))
+    if texture is not None:
+        shader.CreateInput("diffuse_texture", Sdf.ValueTypeNames.Asset).Set(Sdf.AssetPath(texture))
+    shader.CreateInput("diffuse_color_constant", Sdf.ValueTypeNames.Color3f).Set(Gf.Vec3f(*(colour or (1, 1, 1))))
+    shader.CreateInput("reflection_roughness_constant", Sdf.ValueTypeNames.Float).Set(0.8)
+    return UsdShade.Material(stage.GetPrimAtPath(path))
+
+
+def box_mesh(stage, path: str, faces: list, looks: list):
+    """A mesh of side 1 from `faces`, each face its own `looks` material (a subset each), its st from 0 to 1."""
+    from pxr import Sdf
+
+    mesh = UsdGeom.Mesh.Define(stage, path)
+    points, normals, st = [], [], []
+    for n, u, v in faces:
+        n, u, v = (Gf.Vec3f(*x) for x in (n, u, v))
+        for su, sv in ((-1, -1), (1, -1), (1, 1), (-1, 1)):   # counter-clockwise seen from outside
+            points.append(0.5 * (n + su * u + sv * v))
+            normals.append(n)
+            st.append(Gf.Vec2f((su + 1) / 2, (sv + 1) / 2))
+    mesh.CreatePointsAttr(points)
+    mesh.CreateFaceVertexCountsAttr([4] * len(faces))
+    mesh.CreateFaceVertexIndicesAttr(list(range(4 * len(faces))))
+    mesh.CreateNormalsAttr(normals)
+    mesh.SetNormalsInterpolation(UsdGeom.Tokens.faceVarying)
+    mesh.CreateSubdivisionSchemeAttr(UsdGeom.Tokens.none)
+    UsdGeom.PrimvarsAPI(mesh).CreatePrimvar("st", Sdf.ValueTypeNames.TexCoord2fArray,
+                                            UsdGeom.Tokens.faceVarying).Set(st)
+    for i, look in enumerate(looks):
+        subset = UsdGeom.Subset.CreateGeomSubset(mesh, f"face{i}", UsdGeom.Tokens.face, [i],
+                                                 familyName=UsdShade.Tokens.materialBind)
+        UsdShade.MaterialBindingAPI.Apply(subset.GetPrim()).Bind(look)
+    return mesh
+
+
+def lab_table(stage, table: dict) -> None:
+    """The lab's table as the M3 sees it (as train/synth/kit_synth.py renders it for the detector): white paper
+    printed faintly with a tag board (textures/paper.png, PAPER_M a side) on a grey desk, black tape at its far
+    corners, the lab's light -- the ground plane's own look hidden (it still carries the pieces). `table`:
+    {"textures": the folder, "paper": [x, y, yaw deg], "paper_texture": its file there (paper.png),
+    "dome": intensity, "sun": intensity, "sun_from": the direction the sun shines from (x, y, z)}."""
+    from pxr import UsdLux
+
+    UsdGeom.Imageable(stage.GetPrimAtPath("/World/defaultGroundPlane")).MakeInvisible()
+    desk = UsdGeom.Cube.Define(stage, "/World/desk")   # looks only: no collider
+    desk.CreateSizeAttr(1.0)
+    UsdGeom.Xformable(desk).AddTranslateOp().Set(Gf.Vec3d(0.0, 0.0, -0.0006))
+    UsdGeom.Xformable(desk).AddScaleOp().Set(Gf.Vec3f(4.0, 4.0, 0.001))
+    desk.CreateDisplayColorAttr([Gf.Vec3f(*TABLE_GREY)])
+    x, y, yaw = table["paper"]
+    paper = box_mesh(stage, "/World/paper", FACES[:1],
+                     [look_material(stage, "/World/Looks/paper",
+                                    os.path.join(table["textures"], table.get("paper_texture", "paper.png")))])
+    xf = UsdGeom.Xformable(paper)
+    xf.AddTranslateOp().Set(Gf.Vec3d(x, y, -0.0005))   # its face at 0: under the pieces' feet
+    xf.AddRotateZOp().Set(float(yaw))
+    xf.AddScaleOp().Set(Gf.Vec3f(PAPER_M, PAPER_M, 0.001))
+    a = math.radians(yaw)
+    for i, side in enumerate((-1, 1)):   # tape over the paper's far corners, as on the lab's table
+        cx = x + math.cos(a) * PAPER_M / 2 - math.sin(a) * side * (PAPER_M / 2 - 0.02)
+        cy = y + math.sin(a) * PAPER_M / 2 + math.cos(a) * side * (PAPER_M / 2 - 0.02)
+        tape = UsdGeom.Cube.Define(stage, f"/World/tape{i}")
+        tape.CreateSizeAttr(1.0)
+        UsdGeom.Xformable(tape).AddTranslateOp().Set(Gf.Vec3d(cx, cy, 0.0003))
+        UsdGeom.Xformable(tape).AddRotateZOp().Set(float(yaw))
+        UsdGeom.Xformable(tape).AddScaleOp().Set(Gf.Vec3f(0.05, 0.025, 0.0006))
+        tape.CreateDisplayColorAttr([Gf.Vec3f(0.03, 0.03, 0.03)])
+    UsdLux.DomeLight.Define(stage, "/World/dome").CreateIntensityAttr(float(table.get("dome", 300.0)))
+    sun = UsdLux.DistantLight.Define(stage, "/World/sun")
+    sun.CreateIntensityAttr(float(table.get("sun", 900.0)))
+    shine = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*table.get("sun_from", (0.5, 0.4, 0.8))), Gf.Vec3d(0, 0, 0),
+                                    Gf.Vec3d(0, 0, 1))   # a distant light shines down its -z
+    UsdGeom.Xformable(sun).AddTransformOp().Set(shine.GetInverse())
+
+
+def add_box(stage, path: str, size, centre, yaw_deg: float, mass: float, colour, material, faces=None) -> None:
+    """A piece: one colour, or `faces` -- six looks ({"texture": file} or {"colour": rgb}; +z -z +x +y -x -y)."""
+    if faces:
+        cube = box_mesh(stage, path, FACES, [look_material(stage, f"{path}_look{i}", f.get("texture"), f.get("colour"))
+                                             for i, f in enumerate(faces)])
+    else:
+        cube = UsdGeom.Cube.Define(stage, path)
+        cube.CreateSizeAttr(1.0)
+        cube.CreateDisplayColorAttr([Gf.Vec3f(*colour)])
     xf = UsdGeom.Xformable(cube)
     xf.AddTranslateOp().Set(Gf.Vec3d(*centre))
     xf.AddRotateZOp().Set(float(yaw_deg))
     xf.AddScaleOp().Set(Gf.Vec3f(*size))
-    cube.CreateDisplayColorAttr([Gf.Vec3f(*colour)])
     prim = cube.GetPrim()
     UsdPhysics.CollisionAPI.Apply(prim)
+    if faces:
+        UsdPhysics.MeshCollisionAPI.Apply(prim).CreateApproximationAttr("convexHull")
     UsdPhysics.RigidBodyAPI.Apply(prim)
     UsdPhysics.MassAPI.Apply(prim).CreateMassAttr(mass)
     PhysxSchema.PhysxCollisionAPI.Apply(prim).CreateContactOffsetAttr(0.002)
@@ -192,6 +290,8 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
     world = World(physics_dt=1.0 / PHYSICS_HZ, rendering_dt=1.0 / 30, stage_units_in_meters=1.0)
     stage = omni.usd.get_context().get_stage()
     world.scene.add_default_ground_plane(z_position=0.0, static_friction=0.6, dynamic_friction=0.5)
+    if plan.get("table"):
+        lab_table(stage, plan["table"])
     robot_prim = stage.DefinePrim("/World/m3", "Xform")
     robot_prim.GetReferences().AddReference(os.path.abspath(usd).replace("\\", "/"))
     rubber = material(stage, "/World/materials/rubber", 1.2, 1.0)
@@ -201,12 +301,16 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
             UsdShade.MaterialBindingAPI.Apply(prim).Bind(rubber, UsdShade.Tokens.strongerThanDescendants, "physics")
     for i, piece in enumerate(plan["pieces"]):
         add_box(stage, f"/World/piece{i}", piece["size"], piece["centre"], piece.get("yaw", 0.0),
-                piece.get("mass", 0.015), piece.get("colour", (0.9, 0.3, 0.2)), wood)
+                piece.get("mass", 0.015), piece.get("colour", (0.9, 0.3, 0.2)), wood, piece.get("faces"))
     scene = UsdPhysics.Scene.Get(stage, "/physicsScene") if stage.GetPrimAtPath("/physicsScene") else None
     if scene is not None:
         physx = PhysxSchema.PhysxSceneAPI.Apply(scene.GetPrim())
         physx.CreateSolverTypeAttr("TGS")
     robot = world.scene.add(SingleArticulation("/World/m3", name="m3"))
+    shots = sorted(plan.get("marks", {}).items(), key=lambda kv: kv[1]) if plan.get("pictures") else []
+    # one run in three renders black all through, the camera made before the reset or after it (2026-10-26, Dionysos,
+    # an ACT training on the same GPU): _picture says so, and the laptop runs it again
+    annotator = _camera(plan["pictures"]) if shots else None
     pieces = [world.scene.add(SingleXFormPrim(f"/World/piece{i}", name=f"piece{i}")) for i in range(len(plan["pieces"]))]
     world.reset()
     names = list(robot.dof_names)
@@ -222,8 +326,8 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
     robot.set_joint_positions(start)
     tips = [SingleXFormPrim(p) for p in (_find(stage, "rlink2"), _find(stage, "llink2"))]
     grip = SingleXFormPrim(_find(stage, "Gripping"))   # Yahboom's tool point: between the fingertips
-    shots = sorted(plan.get("marks", {}).items(), key=lambda kv: kv[1]) if plan.get("pictures") else []
-    annotator = _camera(plan["pictures"]) if shots else None
+    for _ in range(WARMUP_RENDERS if shots else 0):   # the materials' shaders compiled, the picture settled
+        world.render()
     controller = robot.get_articulation_controller()
     samples, t, next_sample = [], 0.0, 0.0
     end = keys[-1]["t"] + plan.get("settle_s", 1.0)
@@ -240,9 +344,14 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
             import omni.replicator.core as rep
 
             name = shots.pop(0)[0]
-            rep.orchestrator.step(rt_subframes=4, delta_time=0.0, pause_timeline=False)
-            np.save(os.path.splitext(os.path.abspath(result_path))[0] + f"_{name}.npy",
-                    np.asarray(annotator.get_data())[..., :3])
+            picture = _picture(world, annotator, rep)
+            wrist = stage.GetPrimAtPath(_find(stage, plan["pictures"]["mount"]) + "/wrist") \
+                if "mount" in plan["pictures"] else None
+            if wrist is not None:   # where it is, to check against the robot's model (row vectors: the last row)
+                world_m = UsdGeom.Xformable(wrist).ComputeLocalToWorldTransform(Usd.TimeCode.Default())
+                print(f"wrist camera at {name}: {[round(v, 4) for v in world_m.ExtractTranslation()]}, looking "
+                      f"{[round(-world_m[2][i], 3) for i in range(3)]}", flush=True)
+            np.save(os.path.splitext(os.path.abspath(result_path))[0] + f"_{name}.npy", picture)
         if t >= next_sample - 1e-9:
             pos = robot.get_joint_positions()
             samples.append({"t": round(t, 3),
@@ -258,21 +367,57 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
 
 
 def _camera(view: dict):
-    """A camera looking on (view: {"from": xyz, "at": xyz}, 640 x 480) and a dome light: its rgb annotator."""
+    """A camera and a dome light: its rgb annotator. `view`: {"from": xyz, "at": xyz} -- looking on, 14 mm,
+    640 x 480 -- or the wrist camera: {"mount": a link's name, "T": 4 x 4 link -> the USD camera (column
+    vectors; a USD camera looks down its -z, +y up), "K": [fx, fy, cx, cy], "size": [w, h]}, fixed to the
+    link so it moves with the arm (the principal point taken as the picture's middle: the DCW2's is 3.8 px off)."""
     import omni.replicator.core as rep
     from pxr import UsdLux
 
     stage = omni.usd.get_context().get_stage()
-    UsdLux.DomeLight.Define(stage, "/World/dome").CreateIntensityAttr(1500)
-    cam = UsdGeom.Camera.Define(stage, "/World/sidecam")   # a USD camera looks down its -z, +y up
-    cam.CreateFocalLengthAttr(14.0)
-    cam.CreateClippingRangeAttr(Gf.Vec2f(0.01, 100.0))
-    look = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*view["from"]), Gf.Vec3d(*view["at"]), Gf.Vec3d(0, 0, 1))
-    UsdGeom.Xformable(cam).AddTransformOp().Set(look.GetInverse())
-    product = rep.create.render_product("/World/sidecam", (640, 480))
+    if not stage.GetPrimAtPath("/World/dome"):   # the lab table brings its own light
+        UsdLux.DomeLight.Define(stage, "/World/dome").CreateIntensityAttr(1500)
+    size = tuple(view.get("size", (640, 480)))
+    if "mount" in view:
+        path = _find(stage, view["mount"]) + "/wrist"
+        cam = UsdGeom.Camera.Define(stage, path)
+        fx, fy, _cx, _cy = view["K"]
+        focal = 10.0   # any: the field of view is aperture over focal length, set from fx, fy
+        cam.CreateFocalLengthAttr(focal)
+        cam.CreateHorizontalApertureAttr(focal * size[0] / fx)
+        cam.CreateVerticalApertureAttr(focal * size[1] / fy)
+        cam.CreateClippingRangeAttr(Gf.Vec2f(0.03, 20.0))   # past the DCW2's own housing round its centre
+        rows = [[float(view["T"][r][c]) for r in range(4)] for c in range(4)]   # USD: row vectors, transposed
+        UsdGeom.Xformable(cam).AddTransformOp().Set(Gf.Matrix4d(rows))
+        print("wrist camera at", path, flush=True)
+    else:
+        path = "/World/sidecam"
+        cam = UsdGeom.Camera.Define(stage, path)
+        cam.CreateFocalLengthAttr(14.0)
+        cam.CreateClippingRangeAttr(Gf.Vec2f(0.01, 100.0))
+        look = Gf.Matrix4d().SetLookAt(Gf.Vec3d(*view["from"]), Gf.Vec3d(*view["at"]), Gf.Vec3d(0, 0, 1))
+        UsdGeom.Xformable(cam).AddTransformOp().Set(look.GetInverse())
+    product = rep.create.render_product(path, size)
     annotator = rep.AnnotatorRegistry.get_annotator("rgb")
     annotator.attach([product])
     return annotator
+
+
+def _picture(world, annotator, rep, tries: int = 20):
+    """The camera's picture (H x W x 3), rendered until it is one: a fresh material's shaders compile for
+    longer than any fixed warm-up, and until then the picture is black (2026-10-26: black, then right, then
+    black again with a new texture, the logs alike)."""
+    import numpy as np
+
+    for _ in range(tries):
+        rep.orchestrator.step(rt_subframes=8, delta_time=0.0, pause_timeline=False)
+        picture = np.asarray(annotator.get_data())[..., :3]
+        if picture.size and float(picture.mean()) > 1.0:
+            return picture
+        for _ in range(30):
+            world.render()
+    print("the picture stayed black", flush=True)
+    raise SystemExit(3)
 
 
 def _find(stage, name: str) -> str:
