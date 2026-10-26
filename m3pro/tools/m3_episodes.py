@@ -167,12 +167,12 @@ def fetch() -> None:
 
 
 # ------------------------------------------------------------------------------- build --
-def build(out: Path, fps: float, keep_failed: bool, jobs: list[str] | None, episodes: Path = EPISODES) -> None:
+def build(out: Path, fps: float, keep_failed: bool, jobs: list[str] | None, episodes: tuple[Path, ...] = (EPISODES,)) -> None:
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
     from PIL import Image
 
     chosen = []   # (folder, ticks, summary, attempt)
-    for folder in sorted(p for p in episodes.iterdir() if (p / "episode.json").exists()):
+    for folder in sorted((p for e in episodes for p in e.iterdir() if (p / "episode.json").exists()), key=lambda p: p.name):
         ticks, summary = load(folder)
         if jobs and summary["job"] not in jobs:
             continue
@@ -223,13 +223,14 @@ def main() -> int:
     b.add_argument("--fps", type=float, default=10.0)
     b.add_argument("--keep-failed", action="store_true")
     b.add_argument("--jobs", nargs="+", help="only these jobs (clean_up, sort, pick, named ...)")
-    b.add_argument("--episodes", type=Path, default=EPISODES,
-                   help="the recordings' folder (out/sim_episodes: the simulator's, m3_sim.py episode)")
+    b.add_argument("--episodes", type=Path, nargs="+", default=[EPISODES],
+                   help="the recordings' folders (out/sim_episodes: the simulator's, m3_sim.py episode; "
+                        "several: one dataset of them all -- sim and real together)")
     args = parser.parse_args()
     if args.cmd == "fetch":
         fetch()
     else:
-        build(args.out, args.fps, args.keep_failed, args.jobs, args.episodes)
+        build(args.out, args.fps, args.keep_failed, args.jobs, tuple(args.episodes))
     return 0
 
 

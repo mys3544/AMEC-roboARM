@@ -425,6 +425,18 @@ box, 0 missed, 12-21 s a pick** -- the block (J5 145), six 30 mm cubes (x 0.10-0
 cube; the close looks moved the aim 1.2-5.9 mm, once 25.6 (a cube the wide look saw only in part, at its edge).
 Left on the floor: a block 40 cm out on the left (out of reach) and things not in the kit. The new model holds.
 
+**Tuesday first thing (the user left at 16:25 on Monday; nothing runs overnight):** the sim workers stopped
+cleanly (out/sim/STOP -- delete it before starting them again), 55 sim episodes, ~30 with twin_sag (the builder
+takes only those); real: out/episodes, 23 recordings incl. Monday evening's 3 (fetched).
+1. from m3pro/: `~/.roboarm/lerobot/Scripts/python.exe tools/m3_episodes.py build out/lerobot/m3_cotrain_20261026
+   --episodes out/sim_episodes out/episodes` (`--episodes` takes several folders since Monday)
+2. copy it to Dionysos (C:/Users/Hercules/roboarm-lerobot/m3_cotrain_20261026) and start it detached as the
+   weekend's run (a WMI-created cmd outlives SSH: cotrain_20261026.cmd + .ps1 like act_20261026ft's): ACT from
+   scratch, chunk 20 / 10 executed, batch 8, 150k steps (~6.8 h at 6.15 steps/s), eval_split 0.1, eval every 5k,
+   save every 25k -> m3_act_cotrain_20261026
+3. no sim workers beside it on the same GPU (the fine-tune ran slower beside them); evaluate in the sim grid and
+   on the M3 when it ends; the real-only m3_act_20261026ft (40k, done 15:19) is the baseline to beat.
+
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning
