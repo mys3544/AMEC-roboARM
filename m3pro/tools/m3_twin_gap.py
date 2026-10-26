@@ -45,16 +45,17 @@ POSES = [{1: j1, 2: j2, 3: j3, 4: j4, 5: 90}
 
 
 def low_poses(board_mean: np.ndarray) -> list[dict]:
-    """Poses with the grip point 8 and 11 cm over points of the board (3 x 3 round its middle), the fingers 65
-    and 75 deg down -- a pick's shapes near the table -- that the guard allows and from which the model sees 10
-    of the board's corners or more."""
+    """Poses with the grip point 7-12 cm over points of the board (3 deep x 5 across round its middle), the
+    fingers 55-85 deg down -- a pick's shapes near the table, J2 ~20-70 and J3 0-70 -- that the guard allows and
+    from which the model sees 9 of the board's corners or more."""
     import itertools
 
     points = he.board().getChessboardCorners()
     world = (board_mean[:3, :3] @ points.T + board_mean[:3, 3:4]).T
     k = np.array([[480.8, 0, 323.8], [0, 480.9, 240.0], [0, 0, 1]])
     out = []
-    for x, y, h, pitch in itertools.product((0.19, 0.23, 0.27), (-0.08, 0.0, 0.08), (0.08, 0.11), (65, 75)):
+    for x, y, h, pitch in itertools.product((0.18, 0.22, 0.26), (-0.10, -0.05, 0.0, 0.05, 0.10), (0.07, 0.09, 0.12),
+                                             (55, 65, 75, 85)):
         pose = m3kinematics.reach((x, y, h), pitch)
         if pose is None:
             continue
@@ -64,7 +65,8 @@ def low_poses(board_mean: np.ndarray) -> list[dict]:
         cam = m3kinematics.frames(pose)["arm4"] @ m3kinematics.camera_optical()
         q = np.linalg.inv(cam) @ np.c_[world, np.ones(len(world))].T
         uv = (k @ (q[:3] / q[2]))[:2]
-        if int(np.sum((q[2] > 0.08) & (uv[0] > 20) & (uv[0] < 620) & (uv[1] > 20) & (uv[1] < 460))) >= 10:
+        visible = int(np.sum((q[2] > 0.08) & (uv[0] > 30) & (uv[0] < 610) & (uv[1] > 30) & (uv[1] < 450)))
+        if visible >= 9 and pose not in out:
             out.append(pose)
     return out
 
@@ -91,8 +93,8 @@ def main() -> int:
     poses = POSES
     if a.low is not None:
         reference = np.array(json.loads(a.low.read_text())["board_mean"])
-        poses = [*low_poses(reference), POSES[-1]]
-        print(f"{len(poses) - 1} low poses, then the LOOK", flush=True)
+        poses = [POSES[-1], *low_poses(reference), POSES[-1]]   # the LOOK first and last: has the board moved?
+        print(f"the LOOK, {len(poses) - 2} low poses, the LOOK", flush=True)
     if "error" in he.http("/arm/call", {"method": "read"}):
         print("engage:", he.http("/arm/call", {"method": "engage"}).get("result"), flush=True)
     stamp = time.strftime('%Y%m%d_%H%M%S')

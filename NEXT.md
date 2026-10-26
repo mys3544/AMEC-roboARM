@@ -374,9 +374,17 @@ point 8-11 cm over the board, 65/75 deg down, the camera 19-22 cm up; the board 
 corners, PnP 0.1-0.4 px), 7 seen. Against the high looks' board: **on the table 3-14 mm (median ~5), but +7 to
 +17 mm in height (median ~+11), 1.9-4.0 deg** -- where the LOOK in the same run read +3 mm and 0.4 deg (and 7 mm
 along x: the board moved a little between the runs, or backlash from below; most low poses share that x).
-So the twin's constant SAG (J2 +4, J3 -8.5) leaves ~1 cm in the low, reaching shapes -- where the grips are;
-the grips' ~1.5 cm short without the taught aim says the same. Next for the twin: a pose-dependent sag fitted
-on these readings (and more low poses), then the card's offsets round it. Two traps found on the way: from
+~~So the twin's constant SAG leaves ~1 cm in the low shapes~~ -- **corrected the same afternoon:** that
+compared runs between which the board had moved ~7 mm (the LOOK repeated in a run showed it). **The sag fit
+(`tools/m3_sag_fit.py`, 38 readings from 3 runs -- 12 high, 26 low incl. a third run of 29 low poses, 18 seen --
+each run its own board pose, 5-fold cross-validation, the held-out poses' board middle against their run's):
+today's constant SAG 2.5 mm median on the table, 1.7 mm median in height, 4.8 mm rms 3D; refitted constant 5.5,
++J4 5.5, slopes centred on today's 4.4, a camera-mount correction (6 numbers) 4.6, a gravity lever model 3.7 --
+the last only through J2 -10..-18 deg and J4 +9 deg, offsets the arm could not hide: it trades the joints
+against the camera's mount, which a camera alone cannot tell apart, and would move the gripper by centimetres.
+Nothing adopted, neither on the robot nor in the sim (the user asked for both; the evidence says the twin's
+model already holds to ~5 mm rms, about what the readings repeat to).** What would measure the gripper's own sag:
+the fingertips on known points (tools/m3_touch.py's touch test), not the camera. Two traps found on the way: from
 19-22 cm the detector finds 6-7 corners (MIN_CORNERS 8 -> 6), and **the DCW2's driver stalled for three poses
 -- /rgbd handed out one picture for all three** (40-62 mm "errors"): the tool now takes only a picture newer
 than the last one. out/twin/20261026_143116.json (+ each pose's picture).
