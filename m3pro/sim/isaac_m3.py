@@ -297,6 +297,11 @@ def do_play(usd: str, plan_path: str, result_path: str) -> None:
         lab_table(stage, plan["table"])
     robot_prim = stage.DefinePrim("/World/m3", "Xform")
     robot_prim.GetReferences().AddReference(os.path.abspath(usd).replace("\\", "/"))
+    if plan.get("finger_drive"):   # the finger's drive for this run, over the imported one (m3_sim.FINGER_SQUEEZE)
+        for prim in stage.Traverse():
+            if prim.GetName() == FINGER and prim.IsA(UsdPhysics.RevoluteJoint):
+                set_drive(prim, *plan["finger_drive"])
+                print("finger drive:", plan["finger_drive"], flush=True)
     rubber = material(stage, "/World/materials/rubber", 1.2, 1.0)
     wood = material(stage, "/World/materials/wood", plan.get("friction", 0.6), plan.get("friction", 0.6) * 0.8)
     for prim in stage.Traverse():   # the fingertips' pads: rubber

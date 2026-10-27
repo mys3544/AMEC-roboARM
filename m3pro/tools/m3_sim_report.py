@@ -36,7 +36,7 @@ EPISODES = ROOT / "out" / "sim_episodes"
 RESULTS = ROOT / "out" / "sim"
 HZ = 10
 LIFTED = 0.02    # m the piece must rise to count as up with the fingers
-IN_BOX_Z = 0.06  # m: lower than this over the box's inside is in it (m3_sim.verdicts)
+IN_BOX_Z = 0.10  # m: lower than this over the box's inside is in it (m3_sim.IN_BOX_Z: stacked pieces too)
 
 
 def segments(ticks: list[dict]) -> list[dict[str, tuple[int, int]]]:

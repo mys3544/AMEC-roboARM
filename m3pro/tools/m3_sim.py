@@ -224,6 +224,17 @@ def carded_view(card: dict) -> dict:
     return view
 
 
+# A piece lower than this over the box's inside is in it: stacked on others, a 40 mm cube rests 62-68 mm up
+# (2026-10-27, m3_sim_report.py misses: three "on the box" were in it); 6 cm until then
+IN_BOX_Z = 0.10
+# The simulated gripper's finger drive in the episodes (stiffness, damping, max force; isaac_m3.py's FINGER_DRIVE
+# is 4.0, 0.2, 1.5): pieces gripped high on the far rim slipped out or flew off in the carry, 2026-10-27 -- the
+# real M3 holds the same grips. `evaluate` keeps the imported one: its runs stay comparable.
+FINGER_SQUEEZE = (12.0, 0.6, 4.0)
+# evaluate's box: where it stood when the first checkpoints were judged (m3_expert.BOX_AT then), kept for them all
+EVAL_BOX_AT = (0.212, -0.195)
+
+
 def first_afters(steps: list) -> list[float]:
     """When each attempt's look after began: the first after each pregrasp (a look round may follow it)."""
     starts = [t for t, s in steps if s == "pregrasp"]
@@ -244,7 +255,7 @@ def verdicts(plan: dict, played: dict, pieces: list[dict], box: dict, delay: flo
         when = min(afters[k] if k < len(afters) else math.inf, samples[-1]["t"] - delay - 0.5) + delay + 0.5
         s = min(samples, key=lambda x: abs(x["t"] - when))
         x, y, z = s["pieces"][which][:3]
-        out.append(bool(boxes.inside(box, (x, y)) and z < 0.06))
+        out.append(bool(boxes.inside(box, (x, y)) and z < IN_BOX_Z))
     return out
 
 
@@ -281,7 +292,7 @@ def episode(args) -> None:
                             "yaw": p["yaw"], "mass": 0.015,   # its width (x) along yaw, as in_picture has it
                             "faces": piece_faces(p, rng)} for p in pieces],
                 "statics": box_parts(box), "table": table, "pictures": carded_view(card),
-                "record": {"dir": name, "hz": HZ}}
+                "record": {"dir": name, "hz": HZ}, "finger_drive": list(FINGER_SQUEEZE)}
     OUT.mkdir(parents=True, exist_ok=True)
     plan_path, result = OUT / f"episode_{stamp}.json", f"episoderesult_{stamp}.json"
     plan_path.write_text(json.dumps(sim_plan))
@@ -611,7 +622,7 @@ def evaluate(args) -> None:
             subprocess.run(["scp", "-q", "-o", "BatchMode=yes", str(f), f"{HOST}:{REMOTE}/policies/{name}/"], check=True)
     put(ROOT / "tools" / "policy_http.py", ROOT / "sim" / "isaac_m3.py")
     rng = np.random.default_rng(args.seed)
-    box = m3_expert.facing_box(np.array(m3_expert.BOX_AT))
+    box = m3_expert.facing_box(np.array(EVAL_BOX_AT))
     cells = grid_cells(box)[: args.trials]
     trials = [{"pieces": [{"centre": [float(x), float(y), 0.015], "yaw": float(rng.uniform(0, 90))}], "seconds": args.seconds}
               for x, y in cells]
@@ -645,7 +656,7 @@ def evaluate(args) -> None:
         grips = np.array([t["grip"] for t in trial["ticks"]])
         reached = float(np.min(np.linalg.norm(cubes - grips, axis=1)))
         lifted = float(cubes[:, 2].max() - cube0[2])
-        in_box = bool(boxes.inside(box, cubes[-1][:2]) and cubes[-1][2] < 0.06)
+        in_box = bool(boxes.inside(box, cubes[-1][:2]) and cubes[-1][2] < IN_BOX_Z)
         j1 = [t["sent"][0] for t in trial["ticks"][:12]]
         rows.append((cube0, reached, lifted, in_box, j1[-1]))
         if len(tiles) < 8:

@@ -38,7 +38,9 @@ KINDS = (("cube30", 0.6), ("cube40", 0.2), ("block", 0.2))         # what a layo
 SIZES = {"cube30": (0.03, 0.03, 0.03), "cube40": (0.04, 0.04, 0.04), "block": (0.03, 0.06, 0.03)}   # w, l, h
 APART_M = 0.06            # pieces at least this far apart (centre to centre)
 REACH_M = (0.11, 0.25)    # from J1's axis: the band a layout's pieces lie in -- a few out of reach, as on the table
-BOX_AT = (0.212, -0.195)  # the box's middle as the M3 found it on 2026-10-26, facing the arm
+BOX_AT = (0.10, -0.215)   # the box's middle beside the robot, as the M3 found it on 2026-10-26 evening (J1 ~165),
+                          # facing the arm; (0.212, -0.195) until 2026-10-27, the morning's place: its keep-clear
+                          # emptied the right front (m3_sim_report.py placement: the sim leaned left as the real)
 
 
 class Clock:
