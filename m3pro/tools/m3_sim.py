@@ -21,6 +21,8 @@ import contextlib
 import itertools
 import json
 import math
+import os
+import shutil
 import subprocess
 import sys
 import time
@@ -298,17 +300,21 @@ def episode(args) -> None:
     plan_path.write_text(json.dumps(sim_plan))
     put(plan_path, ROOT / "sim" / "isaac_m3.py")
     remote(f"{ISAAC} isaac_m3.py play m3pro.usd {plan_path.name} {result}", f"episode_{stamp}.log")
-    subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"cd /d {REMOTE.replace('/', chr(92))} && tar -czf {name}.tgz {name}"],
-                   check=True)
-    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{result}", str(OUT / result)], check=True)
-    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{name}.tgz", str(OUT / f"{name}.tgz")], check=True)
+    if not fetch(result, OUT / result):
+        raise SystemExit(f"the simulator wrote no {result}: see out/sim/episode_{stamp}.log")
     played = json.loads((OUT / result).read_text())
     folder = EPISODES / name
     folder.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["tar", "-xzf", str(OUT / f"{name}.tgz"), "-C", str(EPISODES)], check=True)
-    (OUT / f"{name}.tgz").unlink()
-    subprocess.run(["ssh", "-o", "BatchMode=yes", HOST,   # its pictures are here now: Dionysos keeps only the logs
-                    f"cd /d {REMOTE.replace('/', chr(92))} && rmdir /s /q {name} & del {name}.tgz {plan_path.name}"], check=False)
+    if LOCAL:   # its pictures moved over, its plan's copy gone
+        shutil.move(str(Path(REMOTE) / name), str(folder))
+        (Path(REMOTE) / plan_path.name).unlink(missing_ok=True)
+    else:
+        there(f"tar -czf {name}.tgz {name}")
+        if not fetch(f"{name}.tgz", OUT / f"{name}.tgz"):
+            raise SystemExit(f"no pictures {name}.tgz on Dionysos")
+        subprocess.run(["tar", "-xzf", str(OUT / f"{name}.tgz"), "-C", str(EPISODES)], check=True)
+        (OUT / f"{name}.tgz").unlink()
+        there(f"rmdir /s /q {name} & del {name}.tgz {plan_path.name}")   # its pictures are here now: Dionysos keeps the logs
     picked = verdicts(plan, played, pieces, box, card["delay_s"])
     # the ticks as the real recorder writes them: the pose the arm was sent (believed), the job's step
     steps, records = plan["steps"], plan["records"]
@@ -445,14 +451,39 @@ def _grip_plan(x: float, y: float, yaw: float, size: float, mass: float, frictio
                      {"from": [x + 0.30, y - 0.30, 0.32], "at": [x - 0.05, y, 0.08]})
 
 
+# Run ON Dionysos itself (ROBOARM_SIM_LOCAL=1, its code under roboarm-code\m3pro): no laptop, no SSH -- the
+# commands in its own cmd.exe, the files copied (2026-10-27: the night's episodes with the laptop at home)
+LOCAL = os.environ.get("ROBOARM_SIM_LOCAL") == "1"
+
+
+def there(cmd: str, capture: bool = False) -> subprocess.CompletedProcess:
+    """`cmd` in Dionysos's cmd.exe, in REMOTE: over SSH, or right here when LOCAL."""
+    line = f"cd /d {REMOTE.replace('/', chr(92))} && {cmd}"
+    if LOCAL:
+        return subprocess.run(line, shell=True, capture_output=capture, text=True, check=False)
+    return subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, line], capture_output=capture, text=True, check=False)
+
+
+def fetch(name: str, dest: Path) -> bool:
+    """REMOTE/`name` (a file) -> `dest`; False when it is not there."""
+    if LOCAL:
+        src = Path(REMOTE) / name
+        if not src.exists():
+            return False
+        if src.resolve() != Path(dest).resolve():
+            shutil.copyfile(src, dest)
+        return True
+    return subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{name}", str(dest)], check=False).returncode == 0
+
+
 def remote(cmd: str, log: str, tries: int = 3) -> None:
     """`cmd` run on Dionysos, its log fetched -- again while its pictures came out black: one run in three
     renders black all through with an ACT training on the same GPU (2026-10-26; isaac_m3.py's _picture)."""
     for attempt in range(1, tries + 1):
         began = time.time()
-        subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"cd /d {REMOTE.replace('/', chr(92))} && {cmd} > {log} 2>&1"],
-                       check=False)
-        subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{log}", str(OUT / log)], check=True)
+        there(f"{cmd} > {log} 2>&1")
+        if not fetch(log, OUT / log):
+            raise SystemExit(f"no log {log} on Dionysos")
         print(f"({time.time() - began:.0f} s on Dionysos; log out/sim/{log})", flush=True)
         if "the picture stayed black" not in (OUT / log).read_text(errors="replace"):
             return
@@ -462,7 +493,12 @@ def remote(cmd: str, log: str, tries: int = 3) -> None:
 
 def put(*paths: Path) -> None:
     for p in paths:
-        subprocess.run(["scp", "-q", "-r", "-o", "BatchMode=yes", str(p), f"{HOST}:{REMOTE}/"], check=True)
+        if LOCAL:
+            target = Path(REMOTE) / p.name
+            if p.resolve() != target.resolve():
+                shutil.copytree(p, target, dirs_exist_ok=True) if p.is_dir() else shutil.copyfile(p, target)
+        else:
+            subprocess.run(["scp", "-q", "-r", "-o", "BatchMode=yes", str(p), f"{HOST}:{REMOTE}/"], check=True)
 
 
 def setup() -> None:
@@ -614,12 +650,14 @@ def evaluate(args) -> None:
     model = ckpt / "pretrained_model" if (ckpt / "pretrained_model").exists() else ckpt
     name = f"{ckpt.parent.parent.name}_{ckpt.name}" if ckpt.parent.name == "checkpoints" else ckpt.name
     folder = f"{REMOTE.replace('/', chr(92))}\\policies\\{name}"
-    have = subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"if exist {folder}\\model.safetensors (echo yes)"],
-                          capture_output=True, text=True, check=False)
+    have = there(f"if exist {folder}\\model.safetensors (echo yes)", capture=True)
     if "yes" not in have.stdout:
-        subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"mkdir {folder}"], check=False)
-        for f in model.iterdir():
-            subprocess.run(["scp", "-q", "-o", "BatchMode=yes", str(f), f"{HOST}:{REMOTE}/policies/{name}/"], check=True)
+        if LOCAL:
+            shutil.copytree(model, Path(REMOTE) / "policies" / name, dirs_exist_ok=True)
+        else:
+            there(f"mkdir {folder}")
+            for f in model.iterdir():
+                subprocess.run(["scp", "-q", "-o", "BatchMode=yes", str(f), f"{HOST}:{REMOTE}/policies/{name}/"], check=True)
     put(ROOT / "tools" / "policy_http.py", ROOT / "sim" / "isaac_m3.py")
     rng = np.random.default_rng(args.seed)
     box = m3_expert.facing_box(np.array(EVAL_BOX_AT))
@@ -644,8 +682,9 @@ def evaluate(args) -> None:
     print(f"{name}: {len(trials)} cells x {args.seconds:.0f} s in the simulator", flush=True)
     remote(f"start /b {LEROBOT_PY} policy_http.py policies\\{name} > policy_http_{stamp}.log 2>&1 & "
            f"{ISAAC} isaac_m3.py play m3pro.usd {plan_path.name} {result}", f"eval_{stamp}.log")
-    subprocess.run(["ssh", "-o", "BatchMode=yes", HOST, f"curl -s {POLICY_URL}/quit"], capture_output=True, check=False)
-    subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{result}", str(OUT / result)], check=True)
+    there(f"curl -s {POLICY_URL}/quit", capture=True)
+    if not fetch(result, OUT / result):
+        raise SystemExit(f"the simulator wrote no {result}: see out/sim/eval_{stamp}.log")
     played = json.loads((OUT / result).read_text())
     from roboshared import box as boxes
 
@@ -663,7 +702,7 @@ def evaluate(args) -> None:
             for tick in trial["sheet"][1:3]:
                 jpg = f"trial{trial['trial']:02d}_{tick:04d}.jpg"
                 local = OUT / f"eval_{stamp}_{jpg}"
-                if subprocess.run(["scp", "-q", "-o", "BatchMode=yes", f"{HOST}:{REMOTE}/{jpg}", str(local)], check=False).returncode == 0:
+                if fetch(jpg, local):
                     tile = cv2.resize(cv2.imread(str(local)), (320, 240))
                     cv2.putText(tile, f"{trial['trial']} t{tick / HZ:.0f}s", (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                     tiles.append(tile)
