@@ -472,7 +472,13 @@ alone on the A4500 (6.15 beside the sim workers) -> 150k in ~3.6 h, ends ~13:50*
   co-training beside it): reached (2 cm) 5/18, lifted 1/18, in the box 0/18.** J1 after 1.2 s 53-81 wherever
   the cube was (J1 40-100): it heads left, where the real data are; on the left 3-19 mm short, on the right and
   far out 36-103 mm. out/sim/eval_20261027_102250_m3_act_20261026ft_040000.jpg.
-- After the co-training (~14:30) the laptop runs on its own (scratchpad after_train.sh): the 150k checkpoint in
+- **The co-training died at 10:55, step 13.7k** (eval_loss 0.297 / 0.295 at 5k / 10k): "DataLoader worker exited
+  unexpectedly" -- right after the sim evaluation beside it (Isaac + the policy server on the CPU + six loader
+  workers, each a Python with torch's CUDA DLLs; Dionysos: 64 GB RAM, 91 GB commit limit). No checkpoint yet:
+  **restarted 10:58 with 4 loader workers** (data_s was 0.00: they were never the bottleneck), the same numbers
+  again (deterministic), 11.6 steps/s -> ends ~14:35. The crashed log: m3_act_cotrain_20261026_crash1.log.
+  Lesson: no Isaac run on Dionysos while it trains.
+- After the co-training (~14:35) the laptop runs on its own (scratchpad after_train.sh): the 150k checkpoint in
   the same grid, then six episodes (seeds 400000-400005) with the random box and the firmer grip -> 
   out/sim/after_train_20261027.log, eval_cotrain150k_20261027.log; `m3_sim_report.py misses` on them next.
 
