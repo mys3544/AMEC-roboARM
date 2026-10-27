@@ -51,3 +51,22 @@ def test_the_expert_sends_what_puts_the_real_arm_where_the_plan_has_it():
         assert sits == pytest.approx(keys[1][1][j] + m3kinematics.SAG.get(j, 0.0))
     assert m3_sim.true_sag()[2] == pytest.approx(m3kinematics.SAG.get(2, 0.0) + m3_sim.TWIN_SAG.get(2, 0.0))
 
+
+def test_each_episode_draws_a_box_the_job_can_use_on_either_side():
+    import m3_expert
+    import numpy as np
+    from roboshared import box as boxes
+    axis = np.asarray(m3_expert.m3pick.Picker.AXIS)
+    sides = set()
+    for seed in range(12):
+        box = m3_expert.box_place(np.random.default_rng(seed))
+        assert m3_expert.box_usable(box)
+        j1 = 90 - math.degrees(math.atan2(box["centre"][1] - axis[1], box["centre"][0] - axis[0]))
+        sides.add("left" if j1 < 90 else "right")
+        edge = boxes.outline_points(boxes.outline(box))   # its walls off the chassis
+        (x0, x1), y = m3_expert.m3pick.ROBOT_X, m3_expert.m3pick.ROBOT_Y
+        assert not np.any((edge[:, 0] > x0) & (edge[:, 0] < x1) & (np.abs(edge[:, 1]) < y))
+    assert sides == {"left", "right"}
+    box = m3_expert.facing_box(np.array([0.05, -0.12]))   # on the chassis' corner: no
+    assert not m3_expert.box_usable(box)
+

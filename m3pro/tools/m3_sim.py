@@ -269,7 +269,7 @@ def episode(args) -> None:
 
     rng = np.random.default_rng(args.seed)
     stamp = time.strftime("%Y%m%d_%H%M%S") + f"_s{args.seed}"   # the seed in it: workers side by side never share a name
-    box = m3_expert.facing_box(np.array(m3_expert.BOX_AT) + rng.uniform(-0.02, 0.02, 2), rng.uniform(-10, 10))
+    box = m3_expert.box_place(rng)   # a place of its own each episode, either side (2026-10-27)
     pieces = m3_expert.layout(rng, args.pieces, box)
     began = time.time()
     plan = m3_expert.plan_episode(pieces, box, args.seed)

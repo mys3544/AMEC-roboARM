@@ -41,6 +41,58 @@ REACH_M = (0.11, 0.25)    # from J1's axis: the band a layout's pieces lie in --
 BOX_AT = (0.10, -0.215)   # the box's middle beside the robot, as the M3 found it on 2026-10-26 evening (J1 ~165),
                           # facing the arm; (0.212, -0.195) until 2026-10-27, the morning's place: its keep-clear
                           # emptied the right front (m3_sim_report.py placement: the sim leaned left as the real)
+# A box of its own each episode (box_place, since 2026-10-27, the user's: "náhodnú polohu, ale dosiahnuteľnú"):
+BOX_RING = (0.20, 0.27)                     # m from J1's axis to its middle
+BOX_SIDES = ((0.0, 50.0), (130.0, 180.0))   # J1 to it: left of the robot or right of it, not before it
+BOX_TURN = 15.0                             # deg it may stand turned off facing the arm
+ROBOT_CLEAR = 0.02                          # m its walls keep off the chassis' outline (m3pick.ROBOT_X, ROBOT_Y)
+
+
+def box_usable(box: dict) -> bool:
+    """Whether a job can use the box there: its walls clear of the chassis, its middle in the picture from one
+    of the picker's box looks (SIDE_LOOK at BOX_LOOKS, as SimPicker.see_box judges), and three spots or more in it
+    the arm carries a 30 mm cube over (m3pick.carry_to, as Picker.way_into, from that look)."""
+    axis = np.asarray(m3pick.Picker.AXIS)
+    edge = boxes.outline_points(boxes.outline(box))
+    (x0, x1), y = m3pick.ROBOT_X, m3pick.ROBOT_Y
+    if np.any((edge[:, 0] > x0 - ROBOT_CLEAR) & (edge[:, 0] < x1 + ROBOT_CLEAR) & (np.abs(edge[:, 1]) < y + ROBOT_CLEAR)):
+        return False
+    look = None
+    for j1 in m3pick.BOX_LOOKS:
+        camera = m3kinematics.frames({**m3pick.SIDE_LOOK, 1: j1})["arm4"] @ m3kinematics.camera_optical()
+        q = np.linalg.inv(camera) @ np.r_[box["centre"], boxes.BOX_INSIDE[2], 1.0]
+        if q[2] > 0.05:
+            u, v = (K @ (q[:3] / q[2]))[:2]
+            if 40 <= u < 600 and 40 <= v < 440:
+                look = j1
+                break
+    if look is None:
+        return False
+    here = {**m3pick.SIDE_LOOK, 1: look, 6: m3arm.gripper_angle(30)}
+    high = m3pick.SETTINGS["carry_cm"][5] / 100 + 0.04   # Picker.carry_high, held_below unknown
+    reached = 0
+    for spot in boxes.box_spots(box):
+        j1 = 90 - math.degrees(math.atan2(spot[1] - axis[1], spot[0] - axis[0]))
+        if 0 <= j1 <= 180 and m3pick.carry_to(here, float(np.hypot(*(spot - axis))), j1,
+                                               boxes.BOX_INSIDE[2] + boxes.BOX_DROP_OVER, high) is not None:
+            reached += 1
+            if reached >= 3:
+                return True
+    return False
+
+
+def box_place(rng: np.random.Generator, tries: int = 300) -> dict:
+    """A drop-off box where a job can use it (box_usable), its middle BOX_RING from J1's axis on a side of
+    BOX_SIDES -- either, alike -- facing the arm within BOX_TURN."""
+    axis = np.asarray(m3pick.Picker.AXIS)
+    for _ in range(tries):
+        lo, hi = BOX_SIDES[int(rng.integers(len(BOX_SIDES)))]
+        yaw = math.radians(90 - rng.uniform(lo, hi))   # J1 is mirrored: bigger turns right
+        box = facing_box(axis + rng.uniform(*BOX_RING) * np.array([math.cos(yaw), math.sin(yaw)]),
+                         rng.uniform(-BOX_TURN, BOX_TURN))
+        if box_usable(box):
+            return box
+    raise RuntimeError(f"no usable place for the box in {tries} tries")
 
 
 class Clock:
@@ -217,7 +269,7 @@ def main() -> int:
     ap.add_argument("--pieces", type=int, default=4)
     a = ap.parse_args()
     rng = np.random.default_rng(a.seed)
-    box = facing_box(np.array(BOX_AT) + rng.uniform(-0.02, 0.02, 2), rng.uniform(-10, 10))
+    box = box_place(rng)
     pieces = layout(rng, a.pieces, box)
     began = time.perf_counter()
     plan = plan_episode(pieces, box, a.seed)
