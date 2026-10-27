@@ -71,7 +71,7 @@ moved what (section 4).
 | P2 | Who moved it? Object permanence from the robots' own action log | E | yes, clearly | 4-6 weeks | IROS'27 (1 Mar) or RA-L | medium-high (6-12 months) | high |
 | P3 | Show-and-pick: from "Teach" to the first pick in under a minute, on the robot | A | the combination is open | demo 1-2 weeks, paper ~6 | IROS'27 / RA-L | medium | very high |
 | P4 | Where should the arm look? Two-robot search with measured detection models | B (+L, S5) | yes, on real robots | 6-10 weeks (needs AMCL + Nav2) | IROS'27 / RA-L | medium | high |
-| P5 | Two robots in 25 days: an AI coding agent with hardware access as co-developer | -- | yes | 2-3 weeks of analysis | AGENT@ICSE, 27 Nov | medium-high | medium (a talk) |
+| P5 | Two robots in 25 days: an AI coding agent with hardware access as co-developer | -- | yes | 2-3 weeks of analysis | AGENT@ICSE, 13 Nov (was given as 27 Nov) | medium-high | medium (a talk) |
 | P6 | "Stop" means stop: on-robot voice commanding in Slovak/Czech, cascaded vs speech-native | M3/S3 | yes | 2-4 weeks | HRI'27 LBR 8 Dec, demo 20 Nov | medium | high |
 
 The smaller ones fold into these or wait:
@@ -382,7 +382,7 @@ the login flow. Threats to validity: one developer, the memory files as a confou
 being the subject.
 
 **Venue:**
-- [AGENT@ICSE'27](https://conf.researchr.org/home/icse-2027/agent-2027), 27 Nov: an IEEE-published
+- [AGENT@ICSE'27](https://conf.researchr.org/home/icse-2027/agent-2027), 13 Nov AoE (corrected 2026-10-27; 27 Nov was wrong): an IEEE-published
   5-page experience report.
 - Then FSE'27 Industry (23 Jan), then a journal (EMSE or JSS).
 - [ICSE SEIP](https://conf.researchr.org/track/icse-2027/icse-2027-seip) (23 Oct) only as an
@@ -595,7 +595,7 @@ Checked on official pages on 2026-10-05 unless marked.
 | RoboCup@Home 2027 (open league only) | intent 30 Oct; team paper + video 6 Dec | | 15-21 Jun 2027, Nuremberg | the whole stack (reach may limit) | [CfP](https://athome.robocup.org/call-for-participation-robocuphome-2027/) |
 | CVPR'27 | main | 16 Nov | Jun 2027 | P3 only if public baselines are beaten | [dates](https://cvpr.thecvf.com/Conferences/2027/Dates) |
 | HRI'27 Videos & Demos | video / demo | **20 Nov** | 8-12 Mar 2027, Santa Clara | P6, the console | [HRI](https://humanrobotinteraction.org/2027/submissions/) |
-| AGENT'27 @ ICSE | 5 pp experience report, IEEE | **27 Nov** | 26 Apr 2027, Dublin | P5 | [CfP](https://conf.researchr.org/home/icse-2027/agent-2027) |
+| AGENT'27 @ ICSE | 5 pp short or 8 pp full incl. refs, IEEE, single-anonymous | **13 Nov AoE** (corrected 2026-10-27) | 26 Apr 2027, Dublin | P5 | [CfP](https://conf.researchr.org/home/icse-2027/agent-2027) |
 | **RSS'27 Stage 1** | 5+1 pp extended abstract | **4 Dec** (Stage 2: 16 Apr 2027) | 6-11 Jul 2027, Athens | **P1**, P2, P4 | [CfP](https://roboticsconference.org/information/cfp/) |
 | HRI'27 Late-Breaking Reports | 2-4 pp, ACM DL | **8 Dec** | Mar 2027 | P6, C | [LBR](https://humanrobotinteraction.org/2027/late-breaking-reports/) |
 | FSE'27 Industry | | 23 Jan 2027 | Jul 2027 | P5 | [dates](https://conf.researchr.org/dates/fse-2027) |
@@ -634,7 +634,7 @@ TRI's blind trials):
 | when | P1 (X3, overnight) | the arena (M3, then both) | quick wins |
 |---|---|---|---|
 | October | overhead camera; a LeRobot class for the X3; recorder + auto-reset; the first nights of data | AMCL + Nav2 + catalogue (M2); measure each robot's detection model | EEAI paper (12 Oct)?; scrub and mine the logs for P5 |
-| November | first fine-tunes on the 5090; DAgger round 1; the dynamic battery fixed in writing | object memory + action-event log (P2); A1-A2 teach demo | HRI demo/video (20 Nov); AGENT@ICSE (27 Nov) |
+| November | first fine-tunes on the 5090; DAgger round 1; the dynamic battery fixed in writing | object memory + action-event log (P2); A1-A2 teach demo | HRI demo/video (20 Nov); AGENT@ICSE (13 Nov AoE) |
 | 4 December | **RSS Stage 1 abstract**: H1-H4, method, preliminary numbers | | HRI LBR on voice (8 Dec) |
 | Dec-Feb | rounds 2-3; the exchange-rate curve; X3 -> M3 | P2's ~100 episodes, or P4's 20 layouts x conditions | the lab-visit demo, rehearsed |
 | 1 March | | **IROS'27**: P2 or P4, whichever has its numbers | |
@@ -655,7 +655,7 @@ a "maybe", the overhead webcam (decision 3) can wait. Decisions 2, 4 and 5 are s
    overnight while the M3 does the arena work.
 2. **The quick wins.** Which, if any:
    - the EEAI paper (12 Oct) or challenge (23 Oct);
-   - the AGENT@ICSE experience report (27 Nov);
+   - the AGENT@ICSE experience report (13 Nov AoE, not 27 Nov);
    - HRI demo (20 Nov) and LBR (8 Dec).
 3. **A purchase: one overhead USB webcam** above the X3's table, and later one above the arena. It
    is D's teacher sensor, ground truth for P4/L/S5, and the demo's wide shot.
@@ -981,7 +981,16 @@ claim re-read in its primary source or our code after the agent finished.
 | 7 | Object scan geometry | x, y and yaw are what is wrong; the printed floor measures them (16 mm on odometry -> 0.5-0.7 mm after a floor solve); the object improves only partly (lens distortion suspected); the box's +5 mm is not poses; the ghost is a pose jump | `camlock` exists in `tools/arena_map.py` |
 | 8 | Base localization while turning | timing, not slip: the board stamps a scan when it sends it (~83 ms late, 167 ms spread), ~1.4 deg lag + smear at 0.3 rad/s; the EKF may get no IMU; a standing fence fit per stop for the scan | our launch: no imu_filter node; the second lidar's correction was tried in replays and left out on purpose (`lidars.yaml`) |
 
+**The second round (same evening, three agents with a 40-search budget each; 7-24 searches used):**
+
+| # | report | bottom line | checked |
+|---|---|---|---|
+| 9 | M3 joint read-back and board firmware | one STM32H743 board drives the arm servos itself (USART3, Feetech-SCS, a position read in Yahboom's code); factory firmware is a hex only; Yahboom's calibrate_arm.py makes the arm limp; read-only survey -> bench servo -> bus listening, reflash only with Yahboom's source | m3arm.py does say "no torque switch" (the user's power-cycle test, 2026-10-05) -- the contradiction is real, to test |
+| 10 | Healthcare Challenge 2027 task approaches | every task from known methods; sub-skills score separately; Jazzy native on the AGX Orin, a Jazzy gateway for the M3, a small dispatcher (no Open-RMF); the arena GLB needs fixing for Isaac Sim | the F/T sensor: retailers list it as not compatible with the Lite 6, compatible with the 850 |
+| 11 | P5 AI agent case study | AGENT 2027 is due **13 Nov AoE**, not 27 Nov; no prior report of an agent building a robot stack over weeks with hardware in the loop; our record in numbers; go for 5 pages if the supervisor agrees | the deadline and page limits on the official page |
+
 **Decisions they raise:**
+0. P5: write it for 13 Nov (the supervisor on Thursday), or move it to WSESE / FSE Industry.
 1. The ACT's next run without the state input (R1), after the offline probe -- Wednesday.
 2. P1's three hypotheses frozen by 5 Nov; OpenReview accounts now.
 3. The Healthcare build: ask the organisers about robot-to-robot links, then order (November) or not.

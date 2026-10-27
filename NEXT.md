@@ -317,6 +317,29 @@ What they change, by when (nothing here has run yet):
   mobile manipulator (AgileX Ranger Mini 3.0 + 24 V lift column + the Lite 6 + AGX Orin 64 GB + a hard-wired
   E-stop chain, ~EUR 19-25k excl. VAT) and the M3 as guide; buy in November, Stretch 4 the fallback on
   20 Dec. **Ask the organisers first** whether our robots may talk to each other during a run (RB 8.1.1.2).
+- **Second round, same evening (three more reports):**
+  - **P5 is due Fri 13 Nov AoE, not 27 Nov** (checked on the AGENT 2027 page: 5 pp short / 8 pp full incl.
+    references, IEEE, single-anonymous) -- `reports/P5 AI agent case study.md`: go for a 5-page short paper if
+    the supervisor agrees on Thu 29 Oct and ~15-20 h are free; else WSESE (27 Nov) or FSE Industry (23 Jan).
+    Our record: 250 commits in 47 days, 249 co-authored; tests 237 -> 543; 34 commits fixed faults that had
+    reached a commit or the robot (robot runs caught 12, the agent's measurements 11, the user 7, tests 0).
+    The fault coding needs the user's blind second pass. (Its counts include the laptop's Claude Code
+    session metadata -- timestamps and record types only.)
+  - **The Healthcare tasks** (`reports/Healthcare Challenge 2027 task approaches.md`): sub-skills score
+    separately -- do the cheap ones reliably (task 1, task 4's instruction, the controller calls, pick to
+    trolley, the tray); gaps: Nav2/AMCL on no robot yet, voice not on a robot, and force -- UFACTORY's F/T
+    sensor is NOT for the Lite 6 (retailers say so; the 850 takes it: confirm with UFACTORY). The new robot runs
+    Jazzy natively (JetPack 7.2 on the AGX Orin); the M3 gets a Jazzy container as its gateway; no Open-RMF,
+    a small dispatcher. The arena GLB needs work before Isaac Sim (no colliders, ~45 m offset, 0.01 scales,
+    3.0 m walls, doors on the hinge edge; import as .gltf).
+  - **The M3's joints** (`reports/M3 joint read-back and board firmware.md`): one STM32H743 board, the arm
+    servos on its USART3 with Feetech-SCS packets (Yahboom's own code has the position read); the factory
+    firmware is a hex only (V1.1.3), so a joint publisher means rebuilding it unless Yahboom shares the
+    source. **Yahboom's `calibrate_arm.py` turns the servos limp with the agent stopped** -- against
+    m3arm.py's "there is no torque switch" (2026-10-05): check it, the arm held by hand. Path: the read-only
+    survey on the robot, then a spare servo on the bench, then listen on the servo bus; reflash only with
+    Yahboom's source and the lidar fix together. Hypothesis: the camera's ~0.9 joint gain = Yahboom's 12.2
+    pulses/deg map against the servo's ~13.
 
 ## This week, to the meeting on Thursday 2026-10-29: sim expert -> ACT that heads for the cube
 
