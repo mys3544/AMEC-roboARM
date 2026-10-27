@@ -488,7 +488,22 @@ alone on the A4500 (6.15 beside the sim workers) -> 150k in ~3.6 h, ends ~13:50*
   **The policy's floor margin 8 -> 3 mm (m3policy.FLOOR_CLEAR, the user's):** by the new model (SAG J2 1.1) the 72
   recorded real grips put the fingertips 3.4 mm up (median; 96 % under 8) -- they touched the table -- so the
   learned grip was refused at 7 mm. At 3 mm it went down to 1 mm, refused again (at J1 85, not at the cube).
-- After the co-training (~14:35) the laptop runs on its own (scratchpad after_train.sh): the 150k checkpoint in
+- **Tuesday 11:45-13:05, the user at the robot, the new model:** 8 clean-ups with the kit spread right, far and
+  left -> **25 picked into the box** (round 1 0/4: pieces beside the wheels, the box found ahead; round 2: the
+  box behind J1's axis again; then 4, 2, 2, 6, 7, 4), 12-32 s a pick. Left: by the right lidar (J1 135-145),
+  beside the body, the left wheel's corner (the close look sees it cut: 7-13 mm off), one shove caught.
+  **The limits are not overdone:** at the lowest pose the guard allows by the right lidar (J1 137, J2 37, J3 26,
+  J4 60) the model says 1.0 cm from its shell -- **the user measured 10 mm (motor 6 to the lidar)**. The
+  right-front pieces would need the wrist 3-4 cm lower, into the lidar: only a base slide reaches them.
+  The 8 recordings (20261027_18xxxx-19xxxx robot clock) fetched and copied to Dionysos for dataset v2.
+- **The night runs on Dionysos alone** (laptop at home): `tools/m3_overnight.py` (started 11:42, pid 170548,
+  log roboarm-code\m3pro\out\sim\overnight.log): waits for the co-training, its sim grid, 3 workers of simulated
+  clean-ups until 05:30 (box of its own, firmer grip), dataset v2 (m3_cotrain_20261027: those + 30 twin sim +
+  all real incl. today's), ACT v2 (m3_act_cotrain_20261027, ~3.6 h), its sim grid. `m3_sim.py` local mode
+  (ROBOARM_SIM_LOCAL=1) tested there: 441 pictures, 1 of 2 in the box.
+  **Wednesday morning:** read overnight.log and eval_*.log there; then both checkpoints live on the M3 (the
+  baseline's three spots); the meeting page's slot.
+- (Superseded: the laptop's after_train.sh was stopped -- the night is Dionysos's.) The 150k checkpoint in
   the same grid, then six episodes (seeds 400000-400005) with the random box and the firmer grip -> 
   out/sim/after_train_20261027.log, eval_cotrain150k_20261027.log; `m3_sim_report.py misses` on them next.
 
