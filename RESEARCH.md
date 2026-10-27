@@ -12,6 +12,10 @@ adds the October scoop check, two new ideas for P1 (a measured robot card, a han
 scan-to-skill from the robot's own scan, P1's revised hypotheses and four additions to the
 simulator plan.
 
+**Updated 2026-10-27:** [section 10](#10-what-still-needs-research-2026-10-27) ranks what still needs
+research -- where our results contradict the plan, where a deadline forces a commitment, where a
+choice is expensive to undo -- and what does not.
+
 How sure: every paper below was checked against its arXiv abstract page, project page or official
 call. The load-bearing ones were re-checked by hand on 2026-10-05: HERO, OpenRUA, HEROIC, Project
 Fetch phase 2, the RSS 2027 call, the CoRL EEAI workshop and challenge, and ICSE SEIP. The surveys'
@@ -871,6 +875,124 @@ The FLARE-style loss and the V-JEPA 2.1 features (9.1) stay ablations of SmolVLA
 2. **The overhead webcam** (decision 3) becomes necessary for H2 and H6 on the real X3: the
    relabeller must see the cube from any state the student reaches.
 3. **Scan-to-skill:** after P3's teach demo, or not before IROS?
+
+## 10. What still needs research (2026-10-27)
+
+Written 2026-10-27 from PLAN.md, this file, NEXT.md up to the morning, the reports of 2026-10-20 and
+10-26 (reports/, their notes in research_notes/) and the ACT's training command. Much is covered
+already: VLA precision on cheap servos, sim-to-real and the Isaac versions, the October scoop check,
+the venues. What is left is where our results contradict the plan, where a deadline forces a
+commitment, or where a choice is expensive to undo. Nothing here has been researched yet; the user
+chooses which to run.
+
+| # | topic | kind | what it decides | needed by |
+|---|---|---|---|---|
+| 1 | why the ACT does not look at the cube | theory + practice | what changes in the next training run | now (meeting Thu 29 Oct) |
+| 2 | P1 for the RSS Stage 1 abstract: competing papers since 21 Oct, hypotheses, evaluation | method + practice | the 2-3 hypotheses written down before the data | ~5 Nov (abstract 4 Dec) |
+| 3 | Isaac Sim: grasp contacts and the wrist camera's render | practice | the sim's settings for the next night batches | this week |
+| 4 | Slovak/Czech voice on the robot | practice | speech recognition, word boosting, wake word, speech out on the Orin | before stage 2; HRI 20 Nov / 8 Dec |
+| 5 | is A3 still new (prior art) | theory + prior art | whether "the object's description as the engine's input" is a contribution | before A3; IROS 1 Mar |
+| 6 | Healthcare Challenge 2027: platform and safety | strategy | what to buy or build (the lab applies) | before the application, 31 Jan |
+| 7 | the object scan's geometry, by any means (not only splats) | theory + practice | how the scan gets its poses and its surface | before the scan's next round |
+| 8 | the base's pose while it turns: lidar and odometry errors | theory + practice | time sync, de-skew, what localizes the base | before the arena (stage 3) and the scan |
+
+1. **The ACT goes one way wherever the cube is** (J1 93-98 on the M3, 53-81 in the sim; NEXT.md
+   2026-10-27), and the co-training data still lean left (J1 mean 77 real and sim). Causes that fit
+   our setup: `observation.state` is the command and the actions absolute joint targets (the state
+   shortcut, "copycat"; the 2026-10-20 report advised dropping the state or keeping it only as the
+   anchor of relative actions -- not done yet); no image augmentation in the training command, a
+   ResNet18 from ImageNet; clean-ups of several pieces taken nearest first (`task.order`) while the
+   evaluation has one cube, and ACT ignores the task text and runs its latent at zero -- an unclear
+   target can average out into one heading. Wanted: a 30-minute diagnostic that tells them apart
+   (blank and shuffled image, zeroed state, saliency); fixes with published effect sizes (state
+   dropout, crop and colour augmentation, frozen DINOv2/v3 or a spatial softmax, the picker's target
+   as an input point or mask, a diffusion or flow head); the data's design (one piece or several an
+   episode, episodes a table cell, DART noise).
+2. **P1 / RSS'27 Stage 1.** About ten neighbours appeared in three weeks of October (9.2); H1-H6 (9.6)
+   are too many for five weeks and must be written before the runs. Wanted: which 2-3 our data can
+   carry (likely H1, H3, H6), what Stage 1 reviewers look for, and how to show the sim grid ranks
+   checkpoints as the M3 does (SIMPLER-style rank correlation) -- today the two agree only that the
+   real-only baseline fails, not where it goes.
+3. **The twin where it costs data.** 29 % of simulated picks do not end in the box, gripped 12-15 mm
+   over the piece's middle at the far rim, where the real M3 holds the same grips (a FINGER_SQUEEZE
+   knob so far); PhysX's mimic joints do not hold; one run in three renders black beside a training;
+   the sim's colours are lighter. Wanted: the PhysX settings that decide small parallel grasps
+   (contact and rest offsets, friction combine, SDF or convex collision, solver iterations, drive
+   force limits), what working SO-101 and Isaac Lab scenes use, what changes in 6.2. The 10-26 report
+   compared versions, not contacts.
+4. **Voice on the robot.** Parakeet v3 garbles Slovak (SOUNDS_LIKE rules: 79/79 on synthetic voices
+   only); nothing runs on the robot yet; stage 2, HRI, P6 and the Healthcare Challenge's on-board rule
+   all hang on it. Wanted: Parakeet v3 vs Canary-1B-v2 vs Slovak Whisper fine-tunes on an Orin NX, NeMo
+   word boosting for the commands, a Slovak wake word, Slovak speech out, speech-native models that
+   answer with a command.
+5. **A3's novelty.** NanoOWL (OWL-ViT in TensorRT, class embeddings at run time) and the YOLO-World /
+   YOLOE export paths may already do it; our own result says visual prompts do not reach single
+   objects (DINOv2 4/4 and 84/84, YOLOE 1/4). A prior-art check before 1-2 weeks of graph surgery;
+   P3 may be better framed as teach-to-pick time for one specific object.
+6. **Healthcare Challenge 2027, if the lab commits.** The most expensive choice in sight (a Lite 6 on
+   a lift column and a base, or a Stretch); all compute on board, a Jazzy controller, a single-fault
+   safety concept, the scoring chapter withheld. Wanted: platforms and costs, safety standards and
+   risk analyses, what won similar leagues, on-board compute (Orin AGX, Thor).
+7. **The object scan's geometry.** PPISP (below) fixes colour only; the scan's faults are poses and
+   coverage: the odometry drifts ~10 cm a circle, colour ICP moved cameras 0.7 cm median and 6.1 cm at
+   most, the anchored fuse leaves the box ~0.7 cm too tall and a stop-5/6 reading ~6 cm off, the splat
+   corrects cameras 3-6 mm (17 mm on the can), the tape's ghost from high up, the shiny lid. Wanted, by
+   any means: multiway / pose-graph / bundle adjustment with depth and colour, the arena map or lidar
+   pinning the base, feed-forward 3D models (MapAnything, VGGT, Pi3) for poses, surface methods (TSDF,
+   2DGS / PGSR, neural SDF), view planning for coverage, shiny things, the colour (locked exposure,
+   PPISP). Judged by the box's and the can's sizes against the ruler and by held-out views.
+8. **The base's pose while it turns.** Known so far (M2, 2026-09-30): the base board's clock runs 55-75
+   ms ahead of the Jetson, the lidars scan at ~7 Hz (270 deg each, two of them merged) and read ~1 cm
+   long, Yahboom's EKF gives odom at ~6-7 Hz, carrying the robot doubles walls, RTAB-Map's grid came
+   out +7 cm. Turning at 0.3-0.6 rad/s a 7 Hz scan sweeps 2.5-5 deg while it is taken, and 65 ms of
+   clock offset is another 2-2.5 deg -- ~5 cm sideways at 1.2 m. Wanted: the error sources on cheap
+   mecanum bases (scan motion distortion, timestamps, wheel slip in turns, IMU), the fixes (de-skew,
+   clock sync or offset estimation, IMU-aided turns, scan-to-map matching, slam_toolbox / AMCL
+   settings), and how to measure them (the fence, an overhead camera). Serves the scan, the arena and
+   the Healthcare Challenge's navigation.
+
+**The user's answers (2026-10-27):** research everything that brings better results or a more precise
+approach -- topics 1-6, plus the scan's geometry by any means and the lidar's errors while the robot
+turns (7, 8); the lab IS applying for the Healthcare Challenge; reports in English (reports/ and
+research_notes/ as before).
+
+**Not worth researching now:** AMCL/Nav2 in the arena (standard tools; our measurements decide);
+depth (the duel settled it); the kit detector (its misses are data gaps); the M3's calibration (the
+touches and the board, ~5 mm); the VLA's choice (decided 2026-10-26; again when ACT heads for the
+cube); JEPA and world models (9.8); model export formats (a research started 2026-10-27, its notes
+folder still empty). Later: P2's scoop check before December; how servo deadband meets action chunks
+once the policy reaches the cube.
+
+### 10.1 The results (2026-10-27, eight parallel research agents)
+
+Each wrote a report in `reports/` (title = the topic) and 3-5 notes in `research_notes/<same name>/`. The
+shared web-search quota (~200 searches for all eight) ran out partway, so later checks went to arXiv, GitHub
+and official pages directly, and every "not found" needs a re-check before a submission. "Checked" below = a
+claim re-read in its primary source or our code after the agent finished.
+
+| # | report | bottom line | checked |
+|---|---|---|---|
+| 1 | Why our ACT does not look | two shortcuts beat looking: the state is the previous action (a lookup on the joints alone matches the ACT, 7.79 deg) and the heading is chosen in ~2 % of the frames; the real-only baseline recalls its 13 layouts; the CVAE latent is unused. Next run: no state, augmentation, departure frames x5, layouts held out | the state-free paper's ACT row (Table V: height 0 -> 0.933, horizontal 0.084 -> 0.517; relative actions, two wide wrist cameras) |
+| 2 | P1 for RSS 2027 Stage 1 | still open only as "the student beats its own teacher"; freeze H1, H2 (cube moved 4 cm after the picker's last look) and HV (the sim ranks checkpoints as the robot) on 5 Nov; go/no-go 13 Nov at >= 30 % first-attempt grasps | the RSS call (4 Dec AoE, 5+1 pages, no links, OpenReview profiles up to two weeks); SimPT (2610.29161) |
+| 3 | Isaac Sim grasping fidelity | the far-rim losses follow the URDF's short pads (< 13 mm down the piece: 8/31; >= 13: 129/158); sRGB paint fed as linear (2.5-5x too light); solve contacts after drives only from 5.1; drives 30-1000x too stiff for 120 Hz | the paint: `kit_synth.py` CUBE_PAINT -> `diffuse_color_constant` |
+| 4 | Slovak voice on the robot | the garbled Slovak is Parakeet's language guess; KInIT's Slovak Parakeet + base Parakeet for English in sherpa-onnx; own stop/wake models; grammar before a small LLM; ~3-4 GB, ~1 s | KInIT's model card (CV24 7.92 vs 9.07 %, noisy set 6.62 vs 24.32 %, CC-BY-4.0, forgets the other languages) |
+| 5 | Teach-to-pick prior art | prompts as engine inputs are shipped (NanoOWL, Isaac ROS Grounding DINO, YOLO-World exports); drop A3 as the claim; P3 = time to the first correct pick among same-shape twins, grasp-gated A4 | YOLOE's head in our Ultralytics 8.4.175 (`x[-1]` prompts; `fuse()` bakes them) |
+| 6 | Healthcare Challenge 2027 platform | a two-robot team: our own AgileX Ranger Mini + lift column + Lite 6 + AGX Orin 64 GB + hard-wired E-stop chain (~EUR 19-25k), the M3 as guide; buy in November; Stretch 4 the fallback | the rule RB 8.1.1.2 as the notes quote it (not re-read in the PDF) |
+| 7 | Object scan geometry | x, y and yaw are what is wrong; the printed floor measures them (16 mm on odometry -> 0.5-0.7 mm after a floor solve); the object improves only partly (lens distortion suspected); the box's +5 mm is not poses; the ghost is a pose jump | `camlock` exists in `tools/arena_map.py` |
+| 8 | Base localization while turning | timing, not slip: the board stamps a scan when it sends it (~83 ms late, 167 ms spread), ~1.4 deg lag + smear at 0.3 rad/s; the EKF may get no IMU; a standing fence fit per stop for the scan | our launch: no imu_filter node; the second lidar's correction was tried in replays and left out on purpose (`lidars.yaml`) |
+
+**Decisions they raise:**
+1. The ACT's next run without the state input (R1), after the offline probe -- Wednesday.
+2. P1's three hypotheses frozen by 5 Nov; OpenReview accounts now.
+3. The Healthcare build: ask the organisers about robot-to-robot links, then order (November) or not.
+4. A3 dropped as P3's claim; a DINOv2 crop engine instead.
+5. The sim: calliper the real finger pads; fix the paint's colour space (also in the kit detector's frames).
+6. The base: a read-only timing audit on the M3 before any localization change.
+
+**Looked at 2026-10-27, PPISP** ([2601.18336](https://arxiv.org/abs/2601.18336), the user's find, for
+the object scan): it fixes the camera's colour (exposure, white balance, vignetting, tone curve), not
+the scan's faults, which are poses and coverage. Measured on our scans: exposure swings x0.89-1.20, the
+corners 7-9 % darker; NEXT.md, "The scan's colours", has the numbers and the next steps.
 
 ## Method and caveats
 

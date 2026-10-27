@@ -271,6 +271,53 @@
    recorder writing the same LeRobot format: thousands of episodes, the real 58 to fine-tune.
 5. The X3: re-teach its grips with the camera where it is now (still open).
 
+## From the research of 2026-10-27 (eight reports in reports/, notes in research_notes/; RESEARCH.md 10.1)
+
+What they change, by when (nothing here has run yet):
+- **Wednesday, before any robot time -- the ACT** (`reports/Why our ACT does not look.md`): the state IS the
+  previous action (state_t = action_t-1 in all 154 episodes), a nearest-neighbour lookup on the six joints alone
+  scores 7.79 deg on the held-out chunks (Friday's ACT 7.79, the weekend's 6.05, holding still 13.29), the
+  heading is chosen in ~2 % of the frames (standing at the look pose), the real-only baseline recalls its 13
+  layouts and is blind on new ones; the CVAE's latent is unused (KL 0.000). So: the 30-minute offline probe
+  (procedure and code in research_notes/Why our ACT does not look/our_data_diagnosis.md) on the co-trained
+  150k and ACT v2 first; then **R1 = dataset v2, NO state input, image augmentation on, departure frames x5,
+  whole layouts held out** beside its with-state twin; R2 relative actions, R3 the target marked in the image.
+  The largest measured fix is the state's removal: ACT 0 -> 0.933 height, 0.084 -> 0.517 horizontal
+  generalisation (arXiv 2509.18644 Table V, Pick Pen, two wide wrist cameras, relative actions -- not our setup).
+- **The sim** (`reports/Isaac Sim grasping fidelity.md`): the far-rim losses follow how far the pads reach
+  down the piece (< 13 mm: 8 of 31 into the box; >= 13 mm: 129 of 158) -- the URDF's pads end 12.9 mm past
+  the grip point; **calliper the real pads first**. The paint colours are sRGB values fed as linear
+  (`train/synth/kit_synth.py` CUBE_PAINT -> `diffuse_color_constant`): 2.5-5x too light, in the kit
+  detector's synthetic frames too. Then the settings table in the report (pad colliders, friction correlation
+  6.25 mm, torsional radius 1.5 mm, 240 Hz, softer finger drive + armature, real mimic joints, render flags).
+- **P1 / RSS** (`reports/P1 for RSS 2027 Stage 1.md`): freeze H1 (parity within 10 points), H2 (beats the
+  picker when the cube moves 4 cm after its last look) and HV (the sim ranks >= 6 checkpoints as the M3 does)
+  by 5 Nov; build the automatic reset and measure the teacher under the protocol now; go/no-go 13 Nov at
+  >= 30 % first-attempt grasps on the real grid. **OpenReview accounts for every author now** (up to two weeks).
+- **The base** (`reports/Base localization while turning.md`): the board stamps each lidar scan when it SENDS
+  it (Yahboom's sample firmware: points ~83 ms older than their stamp, spread over 167 ms) -- ~1.4 deg lag and
+  +-1.4 deg smear at 0.3 rad/s; check on the robot (read-only timing audit, 30 min) and whether Yahboom's EKF
+  yaml reads /imu/data (no imu_filter in our launch) or /imu/data_raw. For the scan: each stop's pose from a
+  standing scan fitted to the fence (est. ~0.5 cm, 0.2 deg).
+- **The object scan** (`reports/Object scan geometry.md`): the floor print measures the poses (neighbouring
+  views 16 mm apart on odometry, 3.6-9 with the fuse's cameras, 1.2-3.7 with the splat's); the box's +5 mm
+  height is not a pose error; the tape ghost sits where the box's reading jumped 59 mm (stops 4-5): poses,
+  not coverage. Next: sizes by fitted faces and calliper, the floor disagreement printed by every fuse, the
+  exposure held (`tools/arena_map.py camlock` already does it for the arena scan), the colour lens's
+  distortion on the ChArUco board, an AprilTag ring and one loop-closed graph.
+- **Voice** (`reports/Slovak voice on the robot.md`): the garbled Slovak is Parakeet's language guess; KInIT's
+  Slovak Parakeet (CV24 7.92 % vs 9.07, their noisy set 6.62 vs 24.32; forgets the other languages) for SK/CS,
+  base Parakeet for English, sherpa-onnx with word boosting; own stop/wake models (no product does Slovak);
+  grammar first, the 4B parser would take 2-3 s on the Orin.
+- **A3** (`reports/Teach-to-pick prior art.md`): prompts as engine inputs exist (NanoOWL, Isaac ROS Grounding
+  DINO, YOLO-World exports; our Ultralytics 8.4.175's YOLOE head takes them as `x[-1]`, only `fuse()` bakes
+  them in) -- drop A3 as the claim; a DINOv2 crop engine (1-2 days); P3 = time to the first CORRECT pick and
+  the wrong-twin rate.
+- **Healthcare Challenge** (`reports/Healthcare Challenge 2027 platform.md`): a two-robot team -- our own
+  mobile manipulator (AgileX Ranger Mini 3.0 + 24 V lift column + the Lite 6 + AGX Orin 64 GB + a hard-wired
+  E-stop chain, ~EUR 19-25k excl. VAT) and the M3 as guide; buy in November, Stretch 4 the fallback on
+  20 Dec. **Ask the organisers first** whether our robots may talk to each other during a run (RB 8.1.1.2).
+
 ## This week, to the meeting on Thursday 2026-10-29: sim expert -> ACT that heads for the cube
 
 From the research of 2026-10-26 (reports/Simulácia a VLA pre presný úchop.md; its notes in
@@ -1064,6 +1111,22 @@ never seen that camera or the board.
 - [ ] **The scan's cloud from the splat's cameras:** the splat now corrects each camera (median 3-6 mm,
       up to 17 mm on the can; `splat_poses.json` beside each scan). Fusing with those may fix the box
       coming out ~0.7 cm too tall and its stop-5/6 reading ~6 cm off.
+- [ ] **The scan's colours (2026-10-27, PPISP looked at, the user's find):** [PPISP](https://arxiv.org/abs/2601.18336)
+      (NVIDIA, CVPR 2026 oral; Apache-2.0, github.com/nv-tlabs/ppisp; built into 3DGRUT 1.1, not gsplat) puts a
+      camera behind the splat's render: an exposure and a colour correction a frame, vignetting and a tone curve
+      a camera, and a controller that guesses the first two for new views. Held-out PSNR on 3DGS 22.6 -> 25.4
+      (BilaRF data), 23.1 -> 24.4 (Tanks & Temples), 27.7 -> 28.0 (Mip-NeRF 360); geometry not measured.
+      **It fixes colour only** -- none of the scan's own faults: the box ~0.7 cm too tall, the stop-5/6 reading,
+      the doubled edges (poses), the tape's ghost from high up (never looked from there), the shiny lid (depth).
+      **Measured on the floor of the two saved scans** (`m3pro/tools/scan_photometry.py`): the DCW2's
+      exposure swings x0.89-1.20 (box) / x0.93-1.14 (can) from view to view, B/G 0.89-1.18 / 0.90-1.08 (auto
+      exposure and white balance), the corners 9 / 7 % darker (vignetting) -- but per-view gains take the same
+      floor cell's spread only 8.2 -> 6.9 % / 10.1 -> 9.2 %; what is left sits on the print and tape edges
+      (8.9 % against 4.5 % on plain floor): views landing mm apart, which no camera model fixes.
+      Next, cheapest first: lock the DCW2's auto exposure and white balance during a scan (`tools/arena_map.py
+      camlock` already does it for the arena scan), scan again, rerun the tool; then PPISP in train/splat/train_splat.py if the colours still
+      matter (a wrap round the render + its loss; its CUDA build on hekate's MSVC as gsplat's needed; the
+      console's .splat must bake one exposure + tone curve into the colours).
 
 ## 4. If time is left
 
@@ -1076,6 +1139,8 @@ never seen that camera or the board.
       nine were saved 40-49 mm up, where the arm bends otherwise. Beyond ~25 cm nothing reaches.
 - [ ] **Splat ghost:** from high up a see-through copy of the floor tape floats over the box -- the
       scan only looks from low down. Try a second, higher look at each stop (+~1 min a scan).
+      (2026-10-27, reports/Object scan geometry.md: the doubled tape lies where the box's reading jumped
+      59 mm between stops 4 and 5 -- a pose error more than missing views; fix the poses first.)
 - [ ] **Your lab objects** (2026-10-09 list): the 3 electrical-tape rolls (measure their outside
       diameter), the screwdriver, the yellow cylinder -- Scan with a name teaches them, Splat shows
       them; picking them needs a grip beyond the kit's sizes (a tape roll is at the ~65 mm limit).
