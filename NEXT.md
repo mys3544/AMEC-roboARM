@@ -444,6 +444,24 @@ run started detached (`cotrain_20261026.ps1`, pid 164388): 137 train / 17 held-o
 alone on the A4500 (6.15 beside the sim workers) -> 150k in ~3.6 h, ends ~13:50**; loss 5.52 / 2.27 / 1.76 at
 0.5k / 1k / 2k, grad norm finite after the first AMP steps. Log: roboarm-lerobot\m3_act_cotrain_20261026.log.
 
+**The sim's data against the real (Tuesday 10:30, `tools/m3_sim_report.py`):**
+- `placement out/lerobot/m3_cotrain_20261026` -> its placement.png: **the sim does NOT balance the real
+  data's left lean** -- J1 mean 77 in both (real 40-116, sim 48-103 for 10-90 %; left of straight ahead: real
+  64 %, sim 73 %). The sim misses the right side (J1 > 105) and the left wheel's corner: its box sits at BOX_AT
+  (0.212, -0.195, J1 ~138), the morning's place, and its keep-clear empties the right front -- the robot's box
+  now stands beside it (x 0.10, y -0.215, J1 ~180). Next batch: BOX_AT beside, as now.
+- `misses`: **189 simulated picks, 134 in the box (71 %)**; 26 lifted and lost on the way, 25 never lifted,
+  3 "on the box" (40 mm cubes resting 62-68 mm up over the inside -- stacked on others: in, really; the verdict's
+  6 cm is too strict), 1 let go beside. **The grip's height decides**: the grip point 9 mm over the piece's
+  middle as the fingers shut (median) when it went in, 12-15 mm when it was lost or never rose -- the top edge
+  of a 30 mm cube; so by pitch 83 % at 80-90 deg, 50 % at 40-60 (the far rim, where plan_grasp grips higher:
+  the middle out of reach) and by reach 81 % under 17 cm, 52 % past 23. Not the friction (0.5-0.8: 67/78/66 %),
+  not the arm (it sits within 0.5 deg of its targets), not the card's gripper zero; the fingers press equally
+  little in good and bad picks (2.4-2.6 deg past the piece: they close to its width, as the real M3's do). The
+  real M3 holds the same high grips (8 of 8 Monday evening, 24 cm out too): the sim's grip is weaker than the
+  real one's -- a stiffer FINGER_DRIVE or a few degrees' squeeze in the sim to try. Only picked attempts go into
+  a dataset, so the misses cost sim time, not data -- but they thin out the far rim, where the policy needs it.
+
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning
