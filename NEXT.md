@@ -461,6 +461,20 @@ alone on the A4500 (6.15 beside the sim workers) -> 150k in ~3.6 h, ends ~13:50*
   real M3 holds the same high grips (8 of 8 Monday evening, 24 cm out too): the sim's grip is weaker than the
   real one's -- a stiffer FINGER_DRIVE or a few degrees' squeeze in the sim to try. Only picked attempts go into
   a dataset, so the misses cost sim time, not data -- but they thin out the far rim, where the policy needs it.
+- **Changed for the next batches (40177cb, ec72b81):** a box of its own each episode (`m3_expert.box_place`, the
+  user's: "náhodnú polohu, ale dosiahnuteľnú"): either side, 20-27 cm from J1's axis, turned up to 15 deg, its
+  walls 2 cm off the chassis, seen from one of the picker's box looks, three spots or more the arm carries over
+  -- 16 planned episodes: 52 of 64 picked, all into the box, the picks' J1 39-131 (mean 81; 77 with the box
+  fixed); the finger drive in the episodes 12 / 0.6 / 4 (FINGER_SQUEEZE, set per run over the imported 4 / 0.2 /
+  1.5); a piece under 10 cm over the box's inside is in it (stacked). `evaluate` keeps its box (EVAL_BOX_AT, the
+  old place) and the imported grip, so its runs compare.
+- **The baseline in the sim grid (m3_act_20261026ft, 40k, real data only; 18 cells x 25 s, 29 min with the
+  co-training beside it): reached (2 cm) 5/18, lifted 1/18, in the box 0/18.** J1 after 1.2 s 53-81 wherever
+  the cube was (J1 40-100): it heads left, where the real data are; on the left 3-19 mm short, on the right and
+  far out 36-103 mm. out/sim/eval_20261027_102250_m3_act_20261026ft_040000.jpg.
+- After the co-training (~14:30) the laptop runs on its own (scratchpad after_train.sh): the 150k checkpoint in
+  the same grid, then six episodes (seeds 400000-400005) with the random box and the firmer grip -> 
+  out/sim/after_train_20261027.log, eval_cotrain150k_20261027.log; `m3_sim_report.py misses` on them next.
 
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
