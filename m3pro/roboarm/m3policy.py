@@ -38,7 +38,9 @@ SERVICE = "http://127.0.0.1:8763"
 HZ = 10
 START = {1: 90, 2: 105, 3: 10, 4: 0, 5: 90, 6: 76}   # where every recorded episode began and ended
 LIMITS = {**m3arm.SAFE_LIMITS, 6: (0, 150)}
-FLOOR_CLEAR = 0.008   # m the fingertips keep over the table: the picker's first try
+FLOOR_CLEAR = 0.003   # m the fingertips keep over the table, by the arm model. 8 (the picker's first try) until
+                      # 2026-10-27: with SAG J2 1.1 the recorded grips' fingertips sit 3.4 mm up (median; 96 % under 8),
+                      # where they touched the table -- the policy's learned grip was refused 7 mm up (the user's: 3 mm)
 MAX_DPS = 100.0       # the recordings' fastest: the picker's moves reach 100 deg/s on J1-J5 (m3_pick_20261023b)
 STALE_S = 0.5         # an older picture is the camera stopped, for a policy that looks ten times a second
 JPEG_QUALITY = 90     # as the recorder keeps them

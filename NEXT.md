@@ -478,6 +478,16 @@ alone on the A4500 (6.15 beside the sim workers) -> 150k in ~3.6 h, ends ~13:50*
   **restarted 10:58 with 4 loader workers** (data_s was 0.00: they were never the bottleneck), the same numbers
   again (deterministic), 11.6 steps/s -> ends ~14:35. The crashed log: m3_act_cotrain_20261026_crash1.log.
   Lesson: no Isaac run on Dionysos while it trains.
+- **The same baseline live on the M3 (Tuesday ~11:10-11:18, `tools/m3_policy_trial.py`: the picker's look finds
+  the cube, the policy 25 s on the robot in TensorRT fp16 (6 ms, 10 Hz), the closest the grip point came by the
+  run's log, a look after):** middle (J1 to it 97): 39 mm, J1 96 at 1.2 s; left (61): 71 mm, J1 93; right (113):
+  18 mm, J1 105-107, then refused 7 mm over the floor; right again: 84 mm, down to the floor at J1 85, refused.
+  Nothing grasped. **It goes one way -- J1 ~93-98 on the robot (~65 in the sim) -- wherever the cube is**: it
+  does not look. The real and the sim agree that it fails, not on where it goes (the sim's pictures move it
+  elsewhere): ranking checkpoints by the sim wants policies that see the sim.
+  **The policy's floor margin 8 -> 3 mm (m3policy.FLOOR_CLEAR, the user's):** by the new model (SAG J2 1.1) the 72
+  recorded real grips put the fingertips 3.4 mm up (median; 96 % under 8) -- they touched the table -- so the
+  learned grip was refused at 7 mm. At 3 mm it went down to 1 mm, refused again (at J1 85, not at the cube).
 - After the co-training (~14:35) the laptop runs on its own (scratchpad after_train.sh): the 150k checkpoint in
   the same grid, then six episodes (seeds 400000-400005) with the random box and the firmer grip -> 
   out/sim/after_train_20261027.log, eval_cotrain150k_20261027.log; `m3_sim_report.py misses` on them next.
