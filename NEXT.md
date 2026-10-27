@@ -437,6 +437,13 @@ takes only those); real: out/episodes, 23 recordings incl. Monday evening's 3 (f
 3. no sim workers beside it on the same GPU (the fine-tune ran slower beside them); evaluate in the sim grid and
    on the M3 when it ends; the real-only m3_act_20261026ft (40k, done 15:19) is the baseline to beat.
 
+**Done Tuesday 10:16:** m3_cotrain_20261026 = **154 episodes, 74 sim (8.8k ticks) + 80 real (10.1k ticks: all
+of 10-23's and 10-26's clean-ups and sorts, incl. Monday evening's 9 picks with the new model)**, 4 tasks; the 25
+sim episodes made before the twin left out. Built in ~20 min on the laptop, 146 MB, copied byte for byte; the
+run started detached (`cotrain_20261026.ps1`, pid 164388): 137 train / 17 held-out episodes, **11.5 steps/s
+alone on the A4500 (6.15 beside the sim workers) -> 150k in ~3.6 h, ends ~13:50**; loss 5.52 / 2.27 / 1.76 at
+0.5k / 1k / 2k, grad norm finite after the first AMP steps. Log: roboarm-lerobot\m3_act_cotrain_20261026.log.
+
 ## Tuesday and Wednesday (2026-10-20/21), for Thursday's event out of the lab (2026-10-22)
 
 The user's three for these two days (asked 2026-10-19), and first thing on Tuesday morning
